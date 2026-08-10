@@ -42,10 +42,19 @@ app.post('/api/generate-task', async (req, res) => {
 
     const ai = getGenAIClient(customApiKey);
 
-    const systemInstruction = `You are an expert IB MYP curriculum designer. Write a single classroom task that uses the provided SUBJECT and TOPIC as its strict subject content, but whose design specifically trains the given ATL SKILL CLUSTER in students at the given MYP year (${year || 'MYP 3'}).
-Keep language age-appropriate for MYP year ${year || '3'}.
-The task must have 2 to 4 short parts (labelled A, B, C...) that scaffold the target ATL skill, not just recall subject facts.
-If an interdisciplinary (IDU) subject is given, part of the task must authentically require connecting to that second subject.
+    const systemInstruction = `You are a friendly, encouraging IB MYP educator designing simple, clear, age-appropriate classroom tasks for middle school students (MYP 1 to MYP 5 / Grades 6 to 10).
+
+CRITICAL ACCESSIBILITY & AGE LEVEL MANDATE:
+- DO NOT create DP (Diploma Programme) or university-level complex questions.
+- MAXIMUM difficulty is Grade 10 / MYP 5, but even for MYP 5, questions MUST BE EASY to understand and straightforward to answer.
+- For younger grades (MYP 1, MYP 2, MYP 3, MYP 4 / Grades 6-9), make questions VERY EASY, simple, relatable, and direct.
+- Use clear, simple vocabulary, short sentences, and explicit step-by-step prompts so students immediately know what to write without feeling overwhelmed.
+- Avoid dense academic jargon or complicated sentence structures.
+- Make questions encouraging and fun to attempt so students feel confident.
+- Provide scaffolded prompts (Part A: simple identification or recall; Part B: simple explanation or cause-and-effect; Part C: simple personal reflection or decision).
+- Placeholders must offer friendly, concrete sentence starters (e.g., "For example: I think... because...").
+
+The task must use the provided SUBJECT and TOPIC as its strict subject content and train the given ATL SKILL CLUSTER in students at MYP year (${year || 'MYP 3'}).
 Return ONLY valid JSON matching the schema.`;
 
     const userPrompt = `
@@ -110,26 +119,26 @@ ${iduSubject ? `INTERDISCIPLINARY SECOND SUBJECT: ${iduSubject}` : 'NO IDU'}
     // Fallback template generator if API key is not present or API call fails
     const chosenClust = cluster || 'Critical thinking';
     const fallbackTask = {
-      title: `${chosenClust} Investigation: ${topic}`,
+      title: `${chosenClust} Activity: ${topic}`,
       chosen_cluster: chosenClust,
-      context: `In this ${subject} unit on ${topic}, students examine foundational principles to apply ${chosenClust.toLowerCase()} skills. Consider how specific evidence and reasoning inform decisions in real-world scenarios.`,
-      atl_focus_explainer: `This task helps you develop your ${category || 'Thinking'} skills (${chosenClust}) by guiding you to analyze, question assumptions, and formulate evidence-based arguments.`,
-      idu_note: iduSubject ? `Connects ${subject} concepts on ${topic} with perspectives from ${iduSubject}.` : '',
+      context: `In this ${subject} activity about "${topic}", you will practice your ${chosenClust.toLowerCase()} skills through simple, step-by-step questions.`,
+      atl_focus_explainer: `This task helps you build your ${category || 'Thinking'} skills (${chosenClust}) by guiding you to observe, explain, and share your ideas clearly.`,
+      idu_note: iduSubject ? `Connects ${subject} ideas with ${iduSubject}.` : '',
       parts: [
         {
           label: 'A',
-          prompt: `Identify key facts and variables regarding ${topic} in ${subject}. What baseline assumptions are made?`,
-          placeholder: `State 2-3 essential observations about ${topic}...`
+          prompt: `What are 2 simple things you already know or notice about ${topic} in ${subject}?`,
+          placeholder: `For example: One key fact about ${topic} is...`
         },
         {
           label: 'B',
-          prompt: `Apply the ${chosenClust} framework: Analyze how changes in ${topic} impact outcomes or perspectives.`,
-          placeholder: `Explain the cause-and-effect relationship using domain terminology...`
+          prompt: `How does ${topic} work or affect things around us? Explain in 2-3 short sentences.`,
+          placeholder: `For example: When ${topic} happens, it causes... because...`
         },
         {
           label: 'C',
-          prompt: `Formulate a well-supported conclusion or proposal regarding ${topic}. What counter-arguments might exist?`,
-          placeholder: `Summarize your reasoning and address potential alternative views...`
+          prompt: `What is your opinion or a question you still have about ${topic}? Explain why you think so.`,
+          placeholder: `For example: I think ${topic} is important because...`
         }
       ],
       estimated_minutes: 15
@@ -154,14 +163,15 @@ app.post('/api/evaluate-task', async (req, res) => {
 
     const ai = getGenAIClient(customApiKey);
 
-    const systemInstruction = `You are a strict IB MYP teacher evaluating a student's demonstration of ONE named ATL skill cluster — NOT subject-content recall alone. Grade rigorously; do not give the benefit of the doubt.
+    const systemInstruction = `You are a warm, encouraging IB MYP teacher evaluating middle school student work (MYP 1 to MYP 5 / Grades 6 to 10).
+Evaluate constructively and kindly using age-appropriate middle school expectations. Remember these are MYP students, NOT DP or university students.
 
 Rubric levels:
-- "Developing": Default level. Award when evidence is vague, generic, one-word, off-topic, or only loosely related to cluster indicators.
-- "Applying": Award ONLY if responses show competent, independent, specific use of at least two cluster indicators with concrete details.
-- "Extending": Award ONLY if responses show flexible, insightful use of the skill that goes beyond minimum requirements (e.g. justifies choices, anticipates counterpoints, transfers the skill).
+- "Developing": Student provided brief or partial answers, or needs a little guidance. Give friendly, encouraging feedback on how to expand their ideas.
+- "Applying": Student answered the prompts clearly with good effort and relevant middle-school understanding.
+- "Extending": Student provided thoughtful, complete, or creative answers that clearly address the prompts.
 
-Return ONLY valid JSON matching the specified schema. Write feedback in direct, encouraging second-person voice ("You demonstrated...", "To improve...").`;
+Write feedback in a direct, warm, student-friendly tone ("Great job explaining...", "Next time, try adding...").`;
 
     const userPrompt = `
 SUBJECT: ${meta?.subject || 'General'}

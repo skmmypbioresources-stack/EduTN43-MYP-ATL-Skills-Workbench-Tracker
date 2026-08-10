@@ -40,31 +40,40 @@ export async function generateTaskClient(
   // 2. If user entered a custom Gemini API key, call Gemini directly from browser!
   if (trimmedKey) {
     try {
-      const systemInstruction = `You are an expert IB MYP curriculum designer. Write a single classroom task that uses the provided SUBJECT and TOPIC as its strict subject content, but whose design specifically trains the given ATL SKILL CLUSTER in students at the given MYP year (${meta.year}).
-Keep language age-appropriate for MYP year ${meta.year}.
+      const systemInstruction = `You are a friendly, encouraging IB MYP educator designing simple, clear, age-appropriate classroom tasks for middle school students (MYP 1 to MYP 5 / Grades 6 to 10).
+
+CRITICAL ACCESSIBILITY & AGE LEVEL MANDATE:
+- DO NOT create DP (Diploma Programme) or university-level complex questions.
+- MAXIMUM difficulty is Grade 10 / MYP 5, but even for MYP 5, questions MUST BE EASY to understand and straightforward to answer.
+- For younger grades (MYP 1, MYP 2, MYP 3, MYP 4 / Grades 6-9), make questions VERY EASY, simple, relatable, and direct.
+- Use clear, simple vocabulary, short sentences, and explicit step-by-step prompts so students immediately know what to write without feeling overwhelmed.
+- Avoid dense academic jargon or complicated sentence structures.
+- Make questions encouraging and fun to attempt so students feel confident.
+- Provide scaffolded prompts (Part A: simple identification or recall; Part B: simple explanation or cause-and-effect; Part C: simple personal reflection or decision).
+- Placeholders must offer friendly, concrete sentence starters (e.g., "For example: I think... because...").
 
 Return strictly valid JSON with this EXACT structure (no markdown fences, no text outside JSON):
 {
   "title": "Short catchy task title",
   "chosen_cluster": "${meta.cluster || 'Critical thinking'}",
-  "context": "Clear MYP scenario establishing the real-world or subject context (2-4 sentences).",
-  "atl_focus_explainer": "1-2 sentences explicitly explaining to the student WHICH ATL skill they are practicing.",
-  "idu_note": "Optional interdisciplinary note if applicable",
+  "context": "Clear, simple MYP scenario establishing the topic in 2 short, easy sentences.",
+  "atl_focus_explainer": "1 short sentence explaining what simple skill they are practicing.",
+  "idu_note": "Optional simple interdisciplinary note if applicable",
   "parts": [
     {
       "label": "A",
-      "prompt": "Question prompt testing foundational skill/understanding...",
-      "placeholder": "Helpful placeholder tip..."
+      "prompt": "Simple, easy question prompt asking for basic facts or observations...",
+      "placeholder": "Friendly sentence starter or tip..."
     },
     {
       "label": "B",
-      "prompt": "Question prompt testing deeper application...",
-      "placeholder": "Helpful placeholder tip..."
+      "prompt": "Simple, step-by-step question prompt asking to explain or apply...",
+      "placeholder": "Friendly sentence starter or tip..."
     },
     {
       "label": "C",
-      "prompt": "Question prompt testing critical evaluation...",
-      "placeholder": "Helpful placeholder tip..."
+      "prompt": "Simple question prompt asking for student's opinion or reflection...",
+      "placeholder": "Friendly sentence starter or tip..."
     }
   ],
   "estimated_minutes": 15
@@ -110,26 +119,26 @@ Return strictly valid JSON with this EXACT structure (no markdown fences, no tex
   // 3. Fallback Smart IB MYP Template Generator for offline or static Vercel without key
   const chosenClust = meta.cluster || 'Critical thinking';
   return {
-    title: `${chosenClust} Inquiry: ${meta.topic}`,
+    title: `${chosenClust} Activity: ${meta.topic}`,
     chosen_cluster: chosenClust,
-    context: `In this MYP ${meta.year} ${meta.subject} unit on "${meta.topic}", analyze key principles and apply ${chosenClust.toLowerCase()} skills to formulate evidence-based conclusions.`,
-    atl_focus_explainer: `This task guides you to develop your ${meta.category} skills (${chosenClust}) by scaffolding critical analysis, questioning assumptions, and structured synthesis.`,
-    idu_note: meta.iduSubject ? `Integrates concepts from ${meta.subject} with ${meta.iduSubject}.` : undefined,
+    context: `In this ${meta.subject} activity on "${meta.topic}", you will practice your ${chosenClust.toLowerCase()} skills through simple, step-by-step questions.`,
+    atl_focus_explainer: `This task helps you build your ${meta.category} skills (${chosenClust}) by guiding you to observe, explain, and share your ideas clearly.`,
+    idu_note: meta.iduSubject ? `Connects ${meta.subject} ideas with ${meta.iduSubject}.` : undefined,
     parts: [
       {
         label: 'A',
-        prompt: `Identify key facts, concepts, and variables regarding ${meta.topic} in ${meta.subject}. What assumptions are present?`,
-        placeholder: `State 2-3 essential observations or definitions about ${meta.topic}...`,
+        prompt: `What are 2 simple things you already know or notice about ${meta.topic} in ${meta.subject}?`,
+        placeholder: `For example: One key fact about ${meta.topic} is...`,
       },
       {
         label: 'B',
-        prompt: `Apply the ${chosenClust} framework: Analyze how different factors or perspectives influence outcomes in ${meta.topic}.`,
-        placeholder: `Explain cause-and-effect relationships using subject terminology...`,
+        prompt: `How does ${meta.topic} work or affect things around us? Explain in 2-3 short sentences.`,
+        placeholder: `For example: When ${meta.topic} happens, it causes... because...`,
       },
       {
         label: 'C',
-        prompt: `Evaluate your findings: Formulate a well-supported conclusion or strategy regarding ${meta.topic}. What counter-arguments exist?`,
-        placeholder: `Summarize your reasoning and address potential alternative viewpoints...`,
+        prompt: `What is your opinion or a question you still have about ${meta.topic}? Explain why you think so.`,
+        placeholder: `For example: I think ${meta.topic} is important because...`,
       },
     ],
     estimated_minutes: 15,
@@ -168,13 +177,18 @@ export async function evaluateTaskClient(
   // 2. Direct client call to Gemini if API key is provided
   if (trimmedKey) {
     try {
-      const systemInstruction = `You are a strict IB MYP teacher evaluating a student's demonstration of ONE named ATL skill cluster — NOT subject-content recall alone.
-Evaluate student responses against IB MYP skill levels: "Developing", "Applying", or "Extending".
+      const systemInstruction = `You are a warm, encouraging IB MYP teacher evaluating middle school student work (MYP 1 to MYP 5 / Grades 6 to 10).
+Evaluate constructively and kindly using age-appropriate middle school expectations. Remember these are MYP students, NOT DP or university students.
+
+Rubric levels:
+- "Developing": Student provided brief or partial answers, or needs a little guidance. Give friendly, encouraging feedback on how to expand their ideas.
+- "Applying": Student answered the prompts clearly with good effort and relevant middle-school understanding.
+- "Extending": Student provided thoughtful, complete, or creative answers that clearly address the prompts.
 
 Return strictly valid JSON with this EXACT structure:
 {
   "level": "Developing" | "Applying" | "Extending",
-  "summary": "1-2 paragraphs constructive feedback...",
+  "summary": "1-2 paragraphs friendly constructive feedback...",
   "strengths": ["Strength 1", "Strength 2"],
   "next_steps": ["Actionable step 1", "Actionable step 2"]
 }`;
