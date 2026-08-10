@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { ATLTaskLog, ATLCategoryKey, SkillLevel } from '../types';
+import { ATLTaskLog, ATLCategoryKey } from '../types';
 import { exportToWordDoc } from '../lib/exportUtils';
-import { ATL_DATA, ALL_CLUSTERS, SAMPLE_STUDENTS } from '../data/atlData';
+import { ATL_DATA, ALL_CLUSTERS } from '../data/atlData';
 import {
   BarChart,
   Bar,
@@ -9,30 +9,28 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Legend,
   ResponsiveContainer,
   LineChart,
   Line,
-  PieChart,
-  Pie,
   Cell,
 } from 'recharts';
 import {
   BarChart3,
   TrendingUp,
-  Filter,
   Users,
   Award,
   BookOpen,
-  Calendar,
   Layers,
   Search,
-  Plus,
   Trash2,
   Eye,
   FileText,
   Download,
-  RotateCcw,
+  GraduationCap,
+  School,
+  ChevronRight,
+  UserCheck,
+  Sparkles,
 } from 'lucide-react';
 
 interface DashboardViewProps {
@@ -43,40 +41,116 @@ interface DashboardViewProps {
   onResetSampleLogs: () => void;
 }
 
+// Helpers for MYP Class Normalization & Formatting
+const normalizeMypYear = (yearStr: string | undefined): string => {
+  if (!yearStr) return '3';
+  const clean = String(yearStr).replace(/^MYP\s*/i, '').trim();
+  return clean || '3';
+};
+
+const formatClassLabel = (yearKey: string): string => {
+  const clean = normalizeMypYear(yearKey);
+  switch (clean) {
+    case '1':
+      return 'MYP 1 (Grade 6)';
+    case '2':
+      return 'MYP 2 (Grade 7)';
+    case '3':
+      return 'MYP 3 (Grade 8)';
+    case '4':
+      return 'MYP 4 (Grade 9)';
+    case '5':
+      return 'MYP 5 (Grade 10)';
+    default:
+      return `MYP ${clean}`;
+  }
+};
+
+const formatShortClassTag = (yearKey: string): string => {
+  const clean = normalizeMypYear(yearKey);
+  return `MYP ${clean}`;
+};
+
+const MYP_CLASS_KEYS = ['1', '2', '3', '4', '5'];
+
 export const DashboardView: React.FC<DashboardViewProps> = ({
   logs,
   academicYear,
-  setAcademicYear,
   onDeleteLog,
   onResetSampleLogs,
 }) => {
   // Filters
+  const [selectedClass, setSelectedClass] = useState<string>('All');
   const [selectedTerm, setSelectedTerm] = useState<string>('All');
   const [selectedSubject, setSelectedSubject] = useState<string>('All');
   const [selectedStudent, setSelectedStudent] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedLogForModal, setSelectedLogForModal] = useState<ATLTaskLog | null>(null);
 
-  // Dynamic list of unique students from current logs
-  const availableStudents = useMemo(() => {
-    const studentSet = new Set<string>();
+  // Group students by Class
+  const studentsByClassMap = useMemo(() => {
+    const map: Record<string, { name: string; logsCount: number; mypYear: string }[]> = {
+      '1': [],
+      '2': [],
+      '3': [],
+      '4': [],
+      '5': [],
+    };
+
+    const studentInfo: Record<string, { logsCount: number; mypYear: string }> = {};
+
     logs.forEach((log) => {
-      if (log.studentName && log.studentName.trim()) {
-        studentSet.add(log.studentName.trim());
+      if (log.academicYear === academicYear && log.studentName && log.studentName.trim()) {
+        const name = log.studentName.trim();
+        const yearKey = normalizeMypYear(log.mypYear);
+
+        if (!studentInfo[name]) {
+          studentInfo[name] = { logsCount: 0, mypYear: yearKey };
+        }
+        studentInfo[name].logsCount += 1;
+        studentInfo[name].mypYear = yearKey;
       }
     });
-    return Array.from(studentSet).sort();
-  }, [logs]);
+
+    Object.entries(studentInfo).forEach(([name, info]) => {
+      const yearKey = info.mypYear;
+      if (!map[yearKey]) {
+        map[yearKey] = [];
+      }
+      map[yearKey].push({ name, logsCount: info.logsCount, mypYear: yearKey });
+    });
+
+    // Sort student lists alphabetically
+    Object.keys(map).forEach((k) => {
+      map[k].sort((a, b) => a.name.localeCompare(b.name));
+    });
+
+    return map;
+  }, [logs, academicYear]);
+
+  // Dynamic list of available students based on selected class filter
+  const availableStudentsForClass = useMemo(() => {
+    if (selectedClass === 'All') {
+      const all: string[] = [];
+      MYP_CLASS_KEYS.forEach((ckey) => {
+        const list = studentsByClassMap[ckey] || [];
+        list.forEach((s) => all.push(s.name));
+      });
+      return Array.from(new Set(all)).sort();
+    } else {
+      return (studentsByClassMap[selectedClass] || []).map((s) => s.name);
+    }
+  }, [studentsByClassMap, selectedClass]);
 
   // Student progress report state
   const [reportStudent, setReportStudent] = useState<string>('');
 
-  // Automatically pick the first available student if none selected or if selected student no longer exists
+  // Automatically pick the first available student if current selection is invalid
   React.useEffect(() => {
-    if (availableStudents.length > 0 && (!reportStudent || !availableStudents.includes(reportStudent))) {
-      setReportStudent(availableStudents[0]);
+    if (availableStudentsForClass.length > 0 && (!reportStudent || !availableStudentsForClass.includes(reportStudent))) {
+      setReportStudent(availableStudentsForClass[0]);
     }
-  }, [availableStudents, reportStudent]);
+  }, [availableStudentsForClass, reportStudent]);
 
   // Filtered Logs
   const filteredLogs = useMemo(() => {
@@ -85,16 +159,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       const matchTerm = selectedTerm === 'All' || log.term === selectedTerm || (log.term && log.term.startsWith(selectedTerm));
       const matchSubject = selectedSubject === 'All' || log.subject === selectedSubject;
       const matchStudent = selectedStudent === 'All' || log.studentName === selectedStudent;
+
+      const logClassKey = normalizeMypYear(log.mypYear);
+      const matchClass = selectedClass === 'All' || logClassKey === selectedClass;
+
       const matchSearch =
         !searchQuery ||
         log.topic.toLowerCase().includes(searchQuery.toLowerCase()) ||
         log.taskTitle.toLowerCase().includes(searchQuery.toLowerCase()) ||
         log.cluster.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        log.studentName.toLowerCase().includes(searchQuery.toLowerCase());
+        log.studentName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        formatClassLabel(log.mypYear).toLowerCase().includes(searchQuery.toLowerCase());
 
-      return matchYear && matchTerm && matchSubject && matchStudent && matchSearch;
+      return matchYear && matchTerm && matchSubject && matchStudent && matchClass && matchSearch;
     });
-  }, [logs, academicYear, selectedTerm, selectedSubject, selectedStudent, searchQuery]);
+  }, [logs, academicYear, selectedTerm, selectedSubject, selectedStudent, selectedClass, searchQuery]);
 
   // 1. Skill Cluster Targeting Frequency Data
   const clusterFrequencyData = useMemo(() => {
@@ -142,7 +221,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }));
   }, [filteredLogs]);
 
-  // 3. Academic Year Trend Line (Term distribution)
+  // 3. Academic Term Trend Line
   const trendData = useMemo(() => {
     const terms = ['Term 1', 'Term 2'];
     return terms.map((t) => {
@@ -186,21 +265,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return `${setClust.size} / 10 Clusters`;
   }, [studentLogs]);
 
+  const studentClassTag = useMemo(() => {
+    if (studentLogs.length > 0) {
+      return formatClassLabel(studentLogs[0].mypYear);
+    }
+    return 'MYP Class';
+  }, [studentLogs]);
+
   return (
     <div className="space-y-8">
-      {/* Top Controls & Filter Bar */}
+      {/* Top Header & Global Filter Controls */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-xs font-bold text-indigo-600 uppercase tracking-wider">
-              <BarChart3 className="h-4 w-4" />
-              <span>Academic Year Tracking Dashboard</span>
+              <School className="h-4 w-4" />
+              <span>Class-by-Class Academic Year Analytics</span>
             </div>
             <h2 className="text-2xl font-bold tracking-tight text-slate-900 mt-1">
-              ATL Skill Usage & Trends ({academicYear})
+              ATL Skills Mastery Dashboard ({academicYear})
             </h2>
             <p className="text-xs font-medium text-slate-500 mt-1">
-              Track how many times each Approaches to Learning skill cluster was targeted, monitor usage velocity, and generate progress reports.
+              Organized by MYP Class levels (Grade 6 to Grade 10) to easily analyze class growth, track targeted skill clusters, and generate student reports.
             </p>
           </div>
 
@@ -208,16 +294,39 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <button
               onClick={onResetSampleLogs}
               className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50/50 px-3.5 py-2 text-xs font-bold text-rose-700 hover:border-rose-300 hover:bg-rose-100 transition-all"
-              title="Clear all recorded task analytics logs"
+              title="Clear or reset task analytics logs"
             >
               <Trash2 className="h-3.5 w-3.5" />
-              <span>Clear Analytics Data</span>
+              <span>Reset Analytics Data</span>
             </button>
           </div>
         </div>
 
         {/* Filter Toolbar */}
-        <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 border-t border-slate-100 pt-5">
+        <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 border-t border-slate-100 pt-5">
+          {/* Class / MYP Year Filter */}
+          <div>
+            <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
+              Class / Grade Level
+            </label>
+            <select
+              value={selectedClass}
+              onChange={(e) => {
+                setSelectedClass(e.target.value);
+                setSelectedStudent('All'); // Reset student filter on class change
+              }}
+              className="w-full rounded-xl border border-indigo-200 bg-indigo-50/50 px-3 py-2 text-xs font-bold text-indigo-900 focus:border-indigo-600 focus:bg-white focus:outline-none transition-all"
+            >
+              <option value="All">All Classes (MYP 1 - 5)</option>
+              <option value="1">MYP 1 (Grade 6)</option>
+              <option value="2">MYP 2 (Grade 7)</option>
+              <option value="3">MYP 3 (Grade 8)</option>
+              <option value="4">MYP 4 (Grade 9)</option>
+              <option value="5">MYP 5 (Grade 10)</option>
+            </select>
+          </div>
+
+          {/* Academic Term */}
           <div>
             <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
               Academic Term
@@ -233,6 +342,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </select>
           </div>
 
+          {/* Subject Group */}
           <div>
             <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
               Subject Group
@@ -253,24 +363,45 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </select>
           </div>
 
+          {/* Student Filter */}
           <div>
             <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-              Student / Class
+              Student Name
             </label>
             <select
               value={selectedStudent}
               onChange={(e) => setSelectedStudent(e.target.value)}
               className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-all"
             >
-              <option value="All">All Students & Classes</option>
-              {availableStudents.map((st) => (
-                <option key={st} value={st}>
-                  {st}
-                </option>
-              ))}
+              <option value="All">
+                {selectedClass === 'All' ? 'All Students (All Classes)' : `All Students in ${formatShortClassTag(selectedClass)}`}
+              </option>
+
+              {selectedClass === 'All' ? (
+                MYP_CLASS_KEYS.map((ckey) => {
+                  const list = studentsByClassMap[ckey] || [];
+                  if (list.length === 0) return null;
+                  return (
+                    <optgroup key={ckey} label={formatClassLabel(ckey)}>
+                      {list.map((st) => (
+                        <option key={st.name} value={st.name}>
+                          {st.name} ({st.logsCount} tasks)
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })
+              ) : (
+                (studentsByClassMap[selectedClass] || []).map((st) => (
+                  <option key={st.name} value={st.name}>
+                    {st.name} ({st.logsCount} tasks)
+                  </option>
+                ))
+              )}
             </select>
           </div>
 
+          {/* Search Input */}
           <div>
             <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
               Search Tasks
@@ -289,6 +420,165 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
+      {/* Class Level Selection Tab Bar */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 pb-2">
+        <span className="text-xs font-bold uppercase tracking-wider text-slate-400 mr-2 flex items-center gap-1.5">
+          <GraduationCap className="h-4 w-4 text-indigo-600" />
+          <span>Class View:</span>
+        </span>
+
+        <button
+          onClick={() => {
+            setSelectedClass('All');
+            setSelectedStudent('All');
+          }}
+          className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
+            selectedClass === 'All'
+              ? 'bg-indigo-600 text-white shadow-xs'
+              : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+          }`}
+        >
+          <span>All Classes</span>
+          <span className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
+            selectedClass === 'All' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-600'
+          }`}>
+            {logs.filter(l => l.academicYear === academicYear).length} tasks
+          </span>
+        </button>
+
+        {MYP_CLASS_KEYS.map((ckey) => {
+          const classStudents = studentsByClassMap[ckey] || [];
+          const classLogsCount = logs.filter(
+            (l) => l.academicYear === academicYear && normalizeMypYear(l.mypYear) === ckey
+          ).length;
+
+          return (
+            <button
+              key={ckey}
+              onClick={() => {
+                setSelectedClass(ckey);
+                setSelectedStudent('All');
+              }}
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all ${
+                selectedClass === ckey
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <span>{formatClassLabel(ckey)}</span>
+              <span
+                className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold ${
+                  selectedClass === ckey ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-600'
+                }`}
+              >
+                {classStudents.length} {classStudents.length === 1 ? 'student' : 'students'} • {classLogsCount} tasks
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Class Overview Cards Grid (when viewing All Classes) */}
+      {selectedClass === 'All' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-500">
+              MYP Class Roster & Performance Overview
+            </h3>
+            <span className="text-xs font-semibold text-slate-400">Click any class card to filter dashboard</span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+            {MYP_CLASS_KEYS.map((ckey) => {
+              const students = studentsByClassMap[ckey] || [];
+              const classLogs = logs.filter(
+                (l) => l.academicYear === academicYear && normalizeMypYear(l.mypYear) === ckey
+              );
+              
+              // Top cluster for this class
+              const clustCounts: Record<string, number> = {};
+              classLogs.forEach((l) => {
+                clustCounts[l.cluster] = (clustCounts[l.cluster] || 0) + 1;
+              });
+              let topClust = 'None';
+              let maxC = 0;
+              Object.entries(clustCounts).forEach(([c, cnt]) => {
+                if (cnt > maxC) {
+                  maxC = cnt;
+                  topClust = c;
+                }
+              });
+
+              return (
+                <div
+                  key={ckey}
+                  onClick={() => setSelectedClass(ckey)}
+                  className="group cursor-pointer rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs hover:border-indigo-300 hover:shadow-md transition-all flex flex-col justify-between"
+                >
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="rounded-lg bg-indigo-50 border border-indigo-100 px-2.5 py-1 text-[11px] font-extrabold text-indigo-700">
+                        {formatShortClassTag(ckey)}
+                      </span>
+                      <ChevronRight className="h-4 w-4 text-slate-300 group-hover:text-indigo-600 group-hover:translate-x-0.5 transition-all" />
+                    </div>
+
+                    <h4 className="mt-2 text-sm font-bold text-slate-900">{formatClassLabel(ckey)}</h4>
+                    
+                    <div className="mt-3 space-y-1.5 text-xs text-slate-600 font-medium">
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Students:</span>
+                        <strong className="text-slate-800">{students.length}</strong>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Tasks Logged:</span>
+                        <strong className="text-slate-800">{classLogs.length}</strong>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Top ATL Skill:</span>
+                        <strong className="text-indigo-600 truncate max-w-[110px]">{topClust}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] font-bold text-indigo-600 group-hover:text-indigo-700">
+                    <span>View Class Analytics</span>
+                    <Sparkles className="h-3.5 w-3.5" />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Active Class Highlight Banner */}
+      {selectedClass !== 'All' && (
+        <div className="rounded-2xl border border-indigo-100 bg-indigo-50/70 p-5 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="rounded-xl bg-indigo-600 p-3 text-white shadow-xs">
+              <GraduationCap className="h-6 w-6" />
+            </div>
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wider text-indigo-600">Active Class View</div>
+              <h3 className="text-xl font-black text-indigo-950 tracking-tight">
+                {formatClassLabel(selectedClass)}
+              </h3>
+              <p className="text-xs font-medium text-indigo-800 mt-0.5">
+                Showing analytics for {(studentsByClassMap[selectedClass] || []).length} students and {filteredLogs.length} recorded ATL tasks in {academicYear}.
+              </p>
+            </div>
+          </div>
+
+          <button
+            onClick={() => setSelectedClass('All')}
+            className="self-start md:self-auto rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition-colors"
+          >
+            Switch to All Classes View
+          </button>
+        </div>
+      )}
+
       {/* KPI Highlight Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs hover:border-indigo-200 transition-all">
@@ -299,7 +589,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
           <div className="mt-3 text-3xl font-extrabold text-slate-900">{totalTasks}</div>
-          <p className="mt-1 text-xs font-medium text-slate-500">Targeted practice tasks recorded</p>
+          <p className="mt-1 text-xs font-medium text-slate-500">
+            {selectedClass === 'All' ? 'Targeted practice tasks across all classes' : `Tasks completed by ${formatShortClassTag(selectedClass)} students`}
+          </p>
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-xs hover:border-emerald-200 transition-all">
@@ -353,6 +645,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </h3>
               <p className="text-xs font-medium text-slate-500 mt-0.5">
                 How many times each of the 10 MYP ATL skill clusters was targeted in {academicYear}
+                {selectedClass !== 'All' ? ` for ${formatClassLabel(selectedClass)}` : ' across all classes'}
               </p>
             </div>
           </div>
@@ -370,7 +663,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 />
                 <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#64748b', fontWeight: 600 }} />
                 <Tooltip
-                  contentStyle={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0', borderRadius: '12px', fontSize: '12px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                  contentStyle={{
+                    backgroundColor: '#ffffff',
+                    borderColor: '#e2e8f0',
+                    borderRadius: '12px',
+                    fontSize: '12px',
+                    boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                  }}
                 />
                 <Bar dataKey="count" name="Times Targeted" radius={[6, 6, 0, 0]}>
                   {clusterFrequencyData.map((entry, index) => (
@@ -399,7 +698,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <XAxis dataKey="term" tick={{ fontSize: 11, fill: '#64748b', fontWeight: 600 }} />
                   <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#64748b', fontWeight: 600 }} />
                   <Tooltip
-                    contentStyle={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0', borderRadius: '12px', fontSize: '12px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                    contentStyle={{
+                      backgroundColor: '#ffffff',
+                      borderColor: '#e2e8f0',
+                      borderRadius: '12px',
+                      fontSize: '12px',
+                      boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                    }}
                   />
                   <Line type="monotone" dataKey="totalTasks" name="Total Tasks" stroke="#6366f1" strokeWidth={3} dot={{ r: 5 }} />
                   <Line type="monotone" dataKey="Extending" name="Extending Level" stroke="#10b981" strokeWidth={2} strokeDasharray="4 4" />
@@ -417,6 +722,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </h3>
         <p className="text-xs font-medium text-slate-500 mb-6 mt-0.5">
           Complete breakdown of target count, subject distribution, and active status for all 10 clusters in {academicYear}
+          {selectedClass !== 'All' && ` (${formatClassLabel(selectedClass)})`}
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -461,7 +767,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   />
                 </div>
 
-                <div className="mt-2 text.11px text-slate-500 font-medium">
+                <div className="mt-2 text-[11px] text-slate-500 font-medium">
                   {count > 0 ? (
                     <span>Last used in <strong className="text-slate-800">{clusterLogs[clusterLogs.length - 1].subject}</strong></span>
                   ) : (
@@ -474,19 +780,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
-      {/* Student Progress Report Section */}
-      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+      {/* Class Student Roster Chips & Individual Progress Report */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm space-y-6">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-xs font-bold text-indigo-600 uppercase tracking-wider">
-              <FileText className="h-4 w-4" />
-              <span>Student Progress Report Generator</span>
+              <Users className="h-4 w-4" />
+              <span>Class Roster & Progress Reports</span>
             </div>
             <h3 className="text-xl font-bold text-slate-900 mt-1">
-              Individual ATL Growth Profile
+              Individual Student Growth Profiles
             </h3>
             <p className="text-xs font-medium text-slate-500 mt-0.5">
-              Generate a formal progress summary card for student ePortfolios, parent conferences, or report cards.
+              Select a student to inspect their progress, view skill attainment history, or export a progress report card.
             </p>
           </div>
 
@@ -495,15 +801,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <select
               value={reportStudent}
               onChange={(e) => setReportStudent(e.target.value)}
-              disabled={availableStudents.length === 0}
-              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-bold text-slate-800 focus:border-indigo-600 focus:outline-none disabled:opacity-50"
+              disabled={availableStudentsForClass.length === 0}
+              className="rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-bold text-slate-800 focus:border-indigo-600 focus:outline-none disabled:opacity-50"
             >
-              {availableStudents.length === 0 ? (
+              {availableStudentsForClass.length === 0 ? (
                 <option value="">No student records yet</option>
+              ) : selectedClass === 'All' ? (
+                MYP_CLASS_KEYS.map((ckey) => {
+                  const list = studentsByClassMap[ckey] || [];
+                  if (list.length === 0) return null;
+                  return (
+                    <optgroup key={ckey} label={formatClassLabel(ckey)}>
+                      {list.map((s) => (
+                        <option key={s.name} value={s.name}>
+                          {s.name} ({s.logsCount} tasks)
+                        </option>
+                      ))}
+                    </optgroup>
+                  );
+                })
               ) : (
-                availableStudents.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
+                (studentsByClassMap[selectedClass] || []).map((s) => (
+                  <option key={s.name} value={s.name}>
+                    {s.name} ({s.logsCount} tasks)
                   </option>
                 ))
               )}
@@ -511,12 +831,69 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
+        {/* Quick Clickable Student Chips for Current Class */}
+        {availableStudentsForClass.length > 0 && (
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-100">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5">
+              <UserCheck className="h-3.5 w-3.5 text-indigo-600" />
+              <span>
+                {selectedClass === 'All'
+                  ? 'All Class Rosters (Click student name to view profile):'
+                  : `Roster for ${formatClassLabel(selectedClass)}:`}
+              </span>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {availableStudentsForClass.map((stName) => {
+                const isSelected = reportStudent === stName;
+                const stLogs = logs.filter((l) => l.academicYear === academicYear && l.studentName === stName);
+                const stClassTag = stLogs.length > 0 ? formatShortClassTag(stLogs[0].mypYear) : '';
+
+                return (
+                  <button
+                    key={stName}
+                    onClick={() => setReportStudent(stName)}
+                    className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs font-bold transition-all ${
+                      isSelected
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'bg-white text-slate-700 border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50/50'
+                    }`}
+                  >
+                    <span>{stName}</span>
+                    {stClassTag && (
+                      <span
+                        className={`text-[9px] uppercase px-1.5 py-0.5 rounded-md font-black ${
+                          isSelected ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-500'
+                        }`}
+                      >
+                        {stClassTag}
+                      </span>
+                    )}
+                    <span
+                      className={`text-[10px] rounded-full px-1.5 py-0.2 font-extrabold ${
+                        isSelected ? 'bg-indigo-800 text-white' : 'bg-indigo-50 text-indigo-700'
+                      }`}
+                    >
+                      {stLogs.length}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Student Progress Card Display */}
         <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-6">
           <div className="flex flex-wrap items-center justify-between border-b border-slate-200 pb-4 gap-2">
             <div>
-              <div className="text-xs font-bold uppercase tracking-wider text-slate-400">MYP Student Progress Card</div>
-              <div className="text-2xl font-black text-slate-900 tracking-tight">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">MYP Student Progress Card</span>
+                <span className="rounded-md bg-indigo-100 px-2 py-0.5 text-[10px] font-extrabold text-indigo-700">
+                  {studentClassTag}
+                </span>
+              </div>
+              <div className="text-2xl font-black text-slate-900 tracking-tight mt-0.5">
                 {reportStudent || 'No Student Selected'}
               </div>
               <div className="text-xs font-medium text-slate-500 mt-0.5">Academic Year {academicYear} • ATL Skills Development Log</div>
@@ -534,7 +911,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
           {studentLogs.length === 0 ? (
             <div className="py-8 text-center text-xs text-slate-500 font-medium leading-relaxed">
-              {availableStudents.length === 0 ? (
+              {availableStudentsForClass.length === 0 ? (
                 <span>No student task logs recorded yet for {academicYear}. Start by filling in student details and completing tasks in the <strong>Task Workbench</strong> tab!</span>
               ) : (
                 <span>No logged ATL tasks found for <strong>{reportStudent}</strong> in {academicYear}. Select another student or switch to the Task Workbench to log a new task.</span>
@@ -554,7 +931,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       <th className="py-2.5 px-3">Subject & Topic</th>
                       <th className="py-2.5 px-3">ATL Category & Cluster</th>
                       <th className="py-2.5 px-3 text-center">Level Achieved</th>
-                      <th className="py-2.5 px-3">Key Strength Note</th>
+                      <th className="py-2.5 px-3">Key Feedback Note</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200/60">
@@ -607,6 +984,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </h3>
             <p className="text-xs font-medium text-slate-500 mt-0.5">
               Showing {filteredLogs.length} logged student task evaluations for {academicYear}
+              {selectedClass !== 'All' && ` (${formatClassLabel(selectedClass)})`}
             </p>
           </div>
         </div>
@@ -616,7 +994,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <thead>
               <tr className="border-b border-slate-200 font-bold uppercase text-slate-400 text-[11px]">
                 <th className="py-3 px-3">Date</th>
-                <th className="py-3 px-3">Student / Class</th>
+                <th className="py-3 px-3">Class / Grade</th>
+                <th className="py-3 px-3">Student Name</th>
                 <th className="py-3 px-3">Subject & Topic</th>
                 <th className="py-3 px-3">ATL Skill Cluster</th>
                 <th className="py-3 px-3 text-center">Level</th>
@@ -626,8 +1005,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <tbody className="divide-y divide-slate-100">
               {filteredLogs.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="py-8 text-center text-slate-500 font-medium">
-                    No tasks found matching current filters.
+                  <td colSpan={7} className="py-8 text-center text-slate-500 font-medium">
+                    No tasks found matching current class or filter criteria.
                   </td>
                 </tr>
               ) : (
@@ -637,11 +1016,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       {log.date}
                       <div className="text-[10px] text-slate-400">{log.term}</div>
                     </td>
+                    <td className="py-3 px-3">
+                      <span className="rounded-lg bg-indigo-50 border border-indigo-100 px-2 py-1 text-[11px] font-extrabold text-indigo-700">
+                        {formatShortClassTag(log.mypYear)}
+                      </span>
+                    </td>
                     <td className="py-3 px-3 font-bold text-slate-900">
                       {log.studentName}
                     </td>
                     <td className="py-3 px-3">
-                      <div className="font-bold text-slate-900">{log.subject} (MYP {log.mypYear})</div>
+                      <div className="font-bold text-slate-900">{log.subject}</div>
                       <div className="text-slate-500 font-medium">{log.topic}</div>
                     </td>
                     <td className="py-3 px-3">
@@ -711,9 +1095,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="mt-4 space-y-4 text-xs">
               <div className="grid grid-cols-2 gap-2 bg-slate-50 p-4 rounded-xl font-medium text-slate-800">
                 <div><strong className="text-slate-500">Student:</strong> {selectedLogForModal.studentName}</div>
+                <div><strong className="text-slate-500">Class:</strong> {formatClassLabel(selectedLogForModal.mypYear)}</div>
                 <div><strong className="text-slate-500">Date:</strong> {selectedLogForModal.date} ({selectedLogForModal.term})</div>
-                <div><strong className="text-slate-500">Subject:</strong> {selectedLogForModal.subject} (MYP {selectedLogForModal.mypYear})</div>
+                <div><strong className="text-slate-500">Subject:</strong> {selectedLogForModal.subject}</div>
                 <div><strong className="text-slate-500">ATL Cluster:</strong> {selectedLogForModal.cluster} ({selectedLogForModal.category})</div>
+                <div><strong className="text-slate-500">Level:</strong> {selectedLogForModal.level}</div>
               </div>
 
               <div>

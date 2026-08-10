@@ -7,6 +7,7 @@ import { DashboardView } from './components/DashboardView';
 import { TaskMeta, GeneratedTask, StudentResponseItem, TaskFeedback, ATLTaskLog } from './types';
 import { subscribeToTaskLogs, saveTaskLogToFirestore, deleteTaskLogFromFirestore } from './lib/firebase';
 import { generateTaskClient, evaluateTaskClient } from './lib/geminiClient';
+import { SAMPLE_LOGS } from './data/atlData';
 
 export default function App() {
   // Navigation & Tabs
@@ -66,21 +67,28 @@ export default function App() {
   const [logs, setLogs] = useState<ATLTaskLog[]>(() => {
     try {
       const saved = localStorage.getItem('atl_workbench_logs_v2');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
     } catch (e) {
       console.error('Failed to parse logs from localStorage:', e);
     }
-    return [];
+    return SAMPLE_LOGS;
   });
 
   // Subscribe to real-time Firestore database updates
   useEffect(() => {
     const unsubscribe = subscribeToTaskLogs((firestoreLogs) => {
-      setLogs(firestoreLogs);
-      try {
-        localStorage.setItem('atl_workbench_logs_v2', JSON.stringify(firestoreLogs));
-      } catch (e) {
-        console.error('Failed to cache logs in localStorage:', e);
+      if (firestoreLogs && firestoreLogs.length > 0) {
+        setLogs(firestoreLogs);
+        try {
+          localStorage.setItem('atl_workbench_logs_v2', JSON.stringify(firestoreLogs));
+        } catch (e) {
+          console.error('Failed to cache logs in localStorage:', e);
+        }
+      } else {
+        setLogs((prev) => (prev.length > 0 ? prev : SAMPLE_LOGS));
       }
     });
 
