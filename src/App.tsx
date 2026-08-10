@@ -6,6 +6,7 @@ import { FeedbackStep } from './components/FeedbackStep';
 import { DashboardView } from './components/DashboardView';
 import { TaskMeta, GeneratedTask, StudentResponseItem, TaskFeedback, ATLTaskLog } from './types';
 import { subscribeToTaskLogs, saveTaskLogToFirestore, deleteTaskLogFromFirestore } from './lib/firebase';
+import { generateTaskClient, evaluateTaskClient } from './lib/geminiClient';
 
 export default function App() {
   // Navigation & Tabs
@@ -106,37 +107,13 @@ export default function App() {
     setIsGenerating(true);
 
     try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (customApiKey.trim()) {
-        headers['x-gemini-api-key'] = customApiKey.trim();
-      }
-
-      const response = await fetch('/api/generate-task', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          subject: meta.subject,
-          topic: meta.topic.trim(),
-          year: meta.year,
-          category: meta.category,
-          cluster: meta.cluster,
-          autoCluster,
-          iduSubject: meta.iduSubject,
-          apiKey: customApiKey.trim(),
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Server returned error status ' + response.status);
-      }
-
-      const data: GeneratedTask = await response.json();
-      setTask(data);
+      const generatedTask = await generateTaskClient(meta, autoCluster, customApiKey);
+      setTask(generatedTask);
       setResponses({});
       setStep(2);
     } catch (err: any) {
       console.error('Error generating task:', err);
-      setErrorMessage('Failed to generate task. Please check network connection and try again.');
+      setErrorMessage(err?.message || 'Failed to generate task.');
     } finally {
       setIsGenerating(false);
     }
@@ -152,61 +129,41 @@ export default function App() {
       return;
     }
 
+    if (!task) return;
+
     setIsEvaluating(true);
 
     try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (customApiKey.trim()) {
-        headers['x-gemini-api-key'] = customApiKey.trim();
-      }
-
-      const response = await fetch('/api/evaluate-task', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          task,
-          meta,
-          responses: formattedResponses,
-          apiKey: customApiKey.trim(),
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Server returned error status ' + response.status);
-      }
-
-      const fbData: TaskFeedback = await response.json();
+      const fbData = await evaluateTaskClient(task, meta, formattedResponses, customApiKey);
       setFeedback(fbData);
 
       // Auto Log to Academic Year Tracker & Firestore Cloud Database
-      if (task) {
-        const newLog: ATLTaskLog = {
-          id: 'log-' + Date.now(),
-          date: new Date().toISOString().split('T')[0],
-          academicYear,
-          term,
-          studentName: studentName.trim() || 'Anonymous',
-          subject: meta.subject,
-          topic: meta.topic,
-          mypYear: meta.year,
-          category: meta.category,
-          cluster: task.chosen_cluster || meta.cluster,
-          level: fbData.level,
-          taskTitle: task.title,
-          responses: formattedResponses,
-          feedback: fbData,
-        };
+      const newLog: ATLTaskLog = {
+        id: 'log-' + Date.now(),
+        date: new Date().toISOString().split('T')[0],
+        academicYear,
+        term,
+        studentName: studentName.trim() || 'Anonymous',
+        subject: meta.subject,
+        topic: meta.topic,
+        mypYear: meta.year,
+        category: meta.category,
+        cluster: task.chosen_cluster || meta.cluster,
+        level: fbData.level,
+        taskTitle: task.title,
+        responses: formattedResponses,
+        feedback: fbData,
+      };
 
-        setLogs((prev) => [newLog, ...prev]);
-        saveTaskLogToFirestore(newLog).catch((e) => {
-          console.error('Failed to sync new log to Firestore:', e);
-        });
-      }
+      setLogs((prev) => [newLog, ...prev]);
+      saveTaskLogToFirestore(newLog).catch((e) => {
+        console.error('Failed to sync new log to Firestore:', e);
+      });
 
       setStep(3);
     } catch (err: any) {
       console.error('Error evaluating task:', err);
-      setErrorMessage('Failed to evaluate task. Please check network connection and try again.');
+      setErrorMessage(err?.message || 'Failed to evaluate task.');
     } finally {
       setIsEvaluating(false);
     }

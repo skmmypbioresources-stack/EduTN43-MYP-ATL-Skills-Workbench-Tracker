@@ -94,11 +94,16 @@ ${iduSubject ? `INTERDISCIPLINARY SECOND SUBJECT: ${iduSubject}` : 'NO IDU'}
 
         const text = response.text;
         if (text) {
-          const parsed = JSON.parse(text);
+          const cleanedText = text
+            .replace(/^```json\s*/i, '')
+            .replace(/^```\s*/, '')
+            .replace(/\s*```$/, '')
+            .trim();
+          const parsed = JSON.parse(cleanedText);
           return res.json(parsed);
         }
-      } catch (geminiError) {
-        console.error('Gemini API Error generating task, falling back to smart template:', geminiError);
+      } catch (geminiError: any) {
+        console.error('Gemini API Error generating task, falling back to smart template:', geminiError?.message || geminiError);
       }
     }
 
@@ -205,11 +210,16 @@ ${responses.map((r: any) => `Part ${r.label}: ${r.prompt}\nResponse: ${r.respons
 
         const text = response.text;
         if (text) {
-          const parsed = JSON.parse(text);
+          const cleanedText = text
+            .replace(/^```json\s*/i, '')
+            .replace(/^```\s*/, '')
+            .replace(/\s*```$/, '')
+            .trim();
+          const parsed = JSON.parse(cleanedText);
           return res.json(parsed);
         }
-      } catch (geminiError) {
-        console.error('Gemini API Error evaluating task, falling back to evaluation heuristic:', geminiError);
+      } catch (geminiError: any) {
+        console.error('Gemini API Error evaluating task, falling back to evaluation heuristic:', geminiError?.message || geminiError);
       }
     }
 
