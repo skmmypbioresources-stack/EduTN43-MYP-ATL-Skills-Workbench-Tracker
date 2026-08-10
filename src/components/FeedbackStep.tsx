@@ -102,8 +102,9 @@ export const FeedbackStep: React.FC<FeedbackStepProps> = ({
 
         {/* Printable Document Title Header */}
         <div className="border-b border-slate-200 pb-4 mb-4">
-          <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600">
-            IB MYP Approaches to Learning (ATL) Formative Report
+          <div className="text-[10px] font-bold uppercase tracking-widest text-indigo-600 flex items-center gap-1.5">
+            <span className="font-black text-slate-900 bg-slate-100 px-1.5 py-0.5 rounded text-[9px]">EduTN43</span>
+            <span>• IB MYP Approaches to Learning (ATL) Formative Report</span>
           </div>
           <h2 className="text-xl font-bold text-slate-900 mt-0.5 sm:text-2xl">
             {task.title || 'ATL Task Assessment'}

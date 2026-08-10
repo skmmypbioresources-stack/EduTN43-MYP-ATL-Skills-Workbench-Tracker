@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, BarChart3, Download, Laptop, Monitor, Apple, CheckCircle2, X, Key, Eye, EyeOff, ExternalLink, ShieldCheck } from 'lucide-react';
+import { Sparkles, BarChart3, Download, Laptop, Monitor, Apple, CheckCircle2, X, Key, Eye, EyeOff, ExternalLink, ShieldCheck, GraduationCap } from 'lucide-react';
 
 interface HeaderProps {
   activeTab: 'workbench' | 'dashboard';
@@ -85,9 +85,17 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="mx-auto max-w-7xl">
           {/* Top line badge & Action Buttons */}
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-500">
-              <span className="inline-block h-2.5 w-2.5 rounded-full bg-indigo-600"></span>
-              MYP • Approaches to Learning (ATL) Workbench
+            <div className="flex flex-wrap items-center gap-2.5">
+              {/* EduTN43 Brand Logo */}
+              <div className="flex items-center gap-1.5 rounded-lg bg-indigo-950 px-2.5 py-1 text-white shadow-2xs border border-indigo-800/50">
+                <GraduationCap className="h-4 w-4 text-indigo-400" />
+                <span className="text-xs font-black tracking-tight text-white">Edu<span className="text-indigo-400">TN43</span></span>
+              </div>
+              <span className="text-slate-300 font-light hidden sm:inline">|</span>
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-slate-600">
+                <span className="inline-block h-2 w-2 rounded-full bg-indigo-600"></span>
+                MYP • Approaches to Learning (ATL) Workbench
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2.5">
