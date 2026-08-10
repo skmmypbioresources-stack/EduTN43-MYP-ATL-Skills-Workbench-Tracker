@@ -72,7 +72,7 @@ Return strictly valid JSON with this EXACT structure (no markdown fences, no tex
 
       const userPrompt = `Subject: ${meta.subject}\nTopic: ${meta.topic}\nMYP Year: ${meta.year}\nATL Category: ${meta.category}\nATL Cluster: ${meta.cluster}${meta.iduSubject ? `\nIDU Secondary Subject: ${meta.iduSubject}` : ''}`;
 
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(trimmedKey)}`;
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${encodeURIComponent(trimmedKey)}`;
 
       const res = await fetch(geminiUrl, {
         method: 'POST',
@@ -181,7 +181,7 @@ Return strictly valid JSON with this EXACT structure:
 
       const userPrompt = `Task Title: ${task.title}\nSubject: ${meta.subject}\nMYP Year: ${meta.year}\nATL Cluster: ${task.chosen_cluster || meta.cluster}\n\nStudent Submitted Answers:\n${responses.map((r) => `Part ${r.label} (${r.prompt}):\nAnswer: ${r.response || '(Blank)'}`).join('\n\n')}`;
 
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(trimmedKey)}`;
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${encodeURIComponent(trimmedKey)}`;
 
       const res = await fetch(geminiUrl, {
         method: 'POST',
