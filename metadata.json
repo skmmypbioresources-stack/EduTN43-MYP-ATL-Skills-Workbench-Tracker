@@ -1,0 +1,6 @@
+{
+  "name": "MYP ATL Skills Workbench & Tracker",
+  "description": "IB MYP Approaches to Learning task generator, AI skill evaluator, and academic year tracking dashboard for visualizing trends and student progress reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

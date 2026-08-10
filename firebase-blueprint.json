@@ -1,0 +1,27 @@
+{
+  "entities": {
+    "task_logs": {
+      "title": "Task Log",
+      "description": "Logged student ATL task execution and assessment results across classes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "date": { "type": "string" },
+        "academicYear": { "type": "string" },
+        "term": { "type": "string" },
+        "studentName": { "type": "string" },
+        "subject": { "type": "string" },
+        "topic": { "type": "string" },
+        "mypYear": { "type": "string" },
+        "category": { "type": "string" },
+        "cluster": { "type": "string" },
+        "level": { "type": "string" },
+        "taskTitle": { "type": "string" },
+        "responses": { "type": "array" },
+        "feedback": { "type": "object" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "date", "studentName", "subject", "cluster", "level"]
+    }
+  }
+}

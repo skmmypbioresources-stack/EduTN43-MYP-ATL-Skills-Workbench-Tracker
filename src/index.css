@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+@media print {
+  /* Hide unnecessary UI elements during printing/PDF save */
+  header,
+  footer,
+  nav,
+  .print\:hidden,
+  button,
+  #install-app-btn,
+  #academic-year-select {
+    display: none !important;
+  }
+
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Reset main container layout for clean page printing */
+  main, .mx-auto {
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  #printable-feedback-report,
+  .printable-report {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    background: #ffffff !important;
+  }
+
+  /* Force background colors and text colors to be preserved in PDF */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Avoid awkward page breaks in questions or feedback items */
+  li, .rounded-xl, .border {
+    break-inside: avoid;
+  }
+}

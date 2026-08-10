@@ -1,0 +1,354 @@
+import React, { useState, useEffect } from 'react';
+import { Header } from './components/Header';
+import { SetupStep } from './components/SetupStep';
+import { TaskStep } from './components/TaskStep';
+import { FeedbackStep } from './components/FeedbackStep';
+import { DashboardView } from './components/DashboardView';
+import { TaskMeta, GeneratedTask, StudentResponseItem, TaskFeedback, ATLTaskLog } from './types';
+import { subscribeToTaskLogs, saveTaskLogToFirestore, deleteTaskLogFromFirestore } from './lib/firebase';
+
+export default function App() {
+  // Navigation & Tabs
+  const [activeTab, setActiveTab] = useState<'workbench' | 'dashboard'>('workbench');
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+
+  // Global Academic Year State
+  const [academicYear, setAcademicYear] = useState<string>('2025-2026');
+
+  // Task Configuration Form State
+  const [meta, setMeta] = useState<TaskMeta>({
+    subject: '',
+    topic: '',
+    year: '3',
+    category: 'Communication',
+    cluster: 'Communication',
+    iduSubject: null,
+  });
+
+  const [studentName, setStudentName] = useState<string>('');
+  const [term, setTerm] = useState<string>('Term 1');
+
+  // Custom Student / Teacher Gemini API Key State
+  const [customApiKey, setCustomApiKey] = useState<string>(() => {
+    try {
+      return localStorage.getItem('user_gemini_api_key') || '';
+    } catch (e) {
+      return '';
+    }
+  });
+
+  const handleSaveApiKey = (key: string) => {
+    const trimmed = key.trim();
+    setCustomApiKey(trimmed);
+    try {
+      if (trimmed) {
+        localStorage.setItem('user_gemini_api_key', trimmed);
+      } else {
+        localStorage.removeItem('user_gemini_api_key');
+      }
+    } catch (e) {
+      console.error('Failed to update user_gemini_api_key in localStorage:', e);
+    }
+  };
+
+  // Task & Feedback State
+  const [task, setTask] = useState<GeneratedTask | null>(null);
+  const [responses, setResponses] = useState<Record<number, string>>({});
+  const [feedback, setFeedback] = useState<TaskFeedback | null>(null);
+
+  // Loading & Error States
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isEvaluating, setIsEvaluating] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Task Logs Database State (Firestore with local fallback)
+  const [logs, setLogs] = useState<ATLTaskLog[]>(() => {
+    try {
+      const saved = localStorage.getItem('atl_workbench_logs_v2');
+      if (saved) return JSON.parse(saved);
+    } catch (e) {
+      console.error('Failed to parse logs from localStorage:', e);
+    }
+    return [];
+  });
+
+  // Subscribe to real-time Firestore database updates
+  useEffect(() => {
+    const unsubscribe = subscribeToTaskLogs((firestoreLogs) => {
+      setLogs(firestoreLogs);
+      try {
+        localStorage.setItem('atl_workbench_logs_v2', JSON.stringify(firestoreLogs));
+      } catch (e) {
+        console.error('Failed to cache logs in localStorage:', e);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Handle Task Generation
+  const handleGenerateTask = async (autoCluster: boolean) => {
+    setErrorMessage(null);
+
+    if (!studentName.trim()) {
+      setErrorMessage('Please enter a student or class name so progress can be logged against your details.');
+      return;
+    }
+    if (!meta.subject) {
+      setErrorMessage('Please select a subject group.');
+      return;
+    }
+    if (!meta.topic.trim()) {
+      setErrorMessage('Please type a curriculum topic.');
+      return;
+    }
+
+    setIsGenerating(true);
+
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (customApiKey.trim()) {
+        headers['x-gemini-api-key'] = customApiKey.trim();
+      }
+
+      const response = await fetch('/api/generate-task', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          subject: meta.subject,
+          topic: meta.topic.trim(),
+          year: meta.year,
+          category: meta.category,
+          cluster: meta.cluster,
+          autoCluster,
+          iduSubject: meta.iduSubject,
+          apiKey: customApiKey.trim(),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Server returned error status ' + response.status);
+      }
+
+      const data: GeneratedTask = await response.json();
+      setTask(data);
+      setResponses({});
+      setStep(2);
+    } catch (err: any) {
+      console.error('Error generating task:', err);
+      setErrorMessage('Failed to generate task. Please check network connection and try again.');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // Handle Student Task Submission & AI Evaluation
+  const handleSubmitTask = async (formattedResponses: StudentResponseItem[]) => {
+    setErrorMessage(null);
+
+    const hasAnyResponse = formattedResponses.some((r) => r.response.trim().length > 0);
+    if (!hasAnyResponse) {
+      setErrorMessage('Please type a response to at least one part before submitting for feedback.');
+      return;
+    }
+
+    setIsEvaluating(true);
+
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (customApiKey.trim()) {
+        headers['x-gemini-api-key'] = customApiKey.trim();
+      }
+
+      const response = await fetch('/api/evaluate-task', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          task,
+          meta,
+          responses: formattedResponses,
+          apiKey: customApiKey.trim(),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Server returned error status ' + response.status);
+      }
+
+      const fbData: TaskFeedback = await response.json();
+      setFeedback(fbData);
+
+      // Auto Log to Academic Year Tracker & Firestore Cloud Database
+      if (task) {
+        const newLog: ATLTaskLog = {
+          id: 'log-' + Date.now(),
+          date: new Date().toISOString().split('T')[0],
+          academicYear,
+          term,
+          studentName: studentName.trim() || 'Anonymous',
+          subject: meta.subject,
+          topic: meta.topic,
+          mypYear: meta.year,
+          category: meta.category,
+          cluster: task.chosen_cluster || meta.cluster,
+          level: fbData.level,
+          taskTitle: task.title,
+          responses: formattedResponses,
+          feedback: fbData,
+        };
+
+        setLogs((prev) => [newLog, ...prev]);
+        saveTaskLogToFirestore(newLog).catch((e) => {
+          console.error('Failed to sync new log to Firestore:', e);
+        });
+      }
+
+      setStep(3);
+    } catch (err: any) {
+      console.error('Error evaluating task:', err);
+      setErrorMessage('Failed to evaluate task. Please check network connection and try again.');
+    } finally {
+      setIsEvaluating(false);
+    }
+  };
+
+  // Delete Log
+  const handleDeleteLog = async (id: string) => {
+    setLogs((prev) => prev.filter((l) => l.id !== id));
+    try {
+      await deleteTaskLogFromFirestore(id);
+    } catch (e) {
+      console.error('Failed to delete log from Firestore:', e);
+    }
+  };
+
+  // Clear All Logs
+  const handleResetSampleLogs = async () => {
+    if (window.confirm('Are you sure you want to clear all recorded task analytics logs?')) {
+      const currentLogs = [...logs];
+      setLogs([]);
+      for (const log of currentLogs) {
+        try {
+          await deleteTaskLogFromFirestore(log.id);
+        } catch (e) {
+          console.error('Error deleting log from Firestore:', e);
+        }
+      }
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#f8fafc] text-slate-900 font-sans antialiased">
+      <Header
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        academicYear={academicYear}
+        setAcademicYear={setAcademicYear}
+        totalLogsCount={logs.length}
+        customApiKey={customApiKey}
+        onSaveApiKey={handleSaveApiKey}
+      />
+
+      {/* Main Content Area */}
+      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-8">
+        {activeTab === 'workbench' ? (
+          <div>
+            {/* Step Indicators */}
+            <div className="mx-auto mb-8 flex max-w-xl items-center justify-between gap-3">
+              <div className="flex-1">
+                <div
+                  className={`h-2 rounded-full transition-all ${
+                    step >= 1 ? 'bg-indigo-600 shadow-xs' : 'bg-slate-200'
+                  }`}
+                />
+                <span className={`mt-1.5 block text-center text-[10px] font-bold uppercase tracking-wider ${
+                  step === 1 ? 'text-indigo-600' : 'text-slate-400'
+                }`}>1. Task Config</span>
+              </div>
+              <div className="flex-1">
+                <div
+                  className={`h-2 rounded-full transition-all ${
+                    step >= 2 ? 'bg-indigo-600 shadow-xs' : 'bg-slate-200'
+                  }`}
+                />
+                <span className={`mt-1.5 block text-center text-[10px] font-bold uppercase tracking-wider ${
+                  step === 2 ? 'text-indigo-600' : 'text-slate-400'
+                }`}>2. Student Work</span>
+              </div>
+              <div className="flex-1">
+                <div
+                  className={`h-2 rounded-full transition-all ${
+                    step >= 3 ? 'bg-emerald-600 shadow-xs' : 'bg-slate-200'
+                  }`}
+                />
+                <span className={`mt-1.5 block text-center text-[10px] font-bold uppercase tracking-wider ${
+                  step === 3 ? 'text-emerald-600' : 'text-slate-400'
+                }`}>3. Evaluation</span>
+              </div>
+            </div>
+
+            {/* Workbench Views */}
+            <div className="mx-auto max-w-4xl">
+              {step === 1 && (
+                <SetupStep
+                  meta={meta}
+                  setMeta={setMeta}
+                  studentName={studentName}
+                  setStudentName={setStudentName}
+                  term={term}
+                  setTerm={setTerm}
+                  onGenerate={handleGenerateTask}
+                  isLoading={isGenerating}
+                  errorMessage={errorMessage}
+                />
+              )}
+
+              {step === 2 && task && (
+                <TaskStep
+                  task={task}
+                  meta={meta}
+                  studentName={studentName}
+                  responses={responses}
+                  setResponses={setResponses}
+                  onBack={() => setStep(1)}
+                  onSubmit={handleSubmitTask}
+                  isLoading={isEvaluating}
+                  errorMessage={errorMessage}
+                />
+              )}
+
+              {step === 3 && feedback && task && (
+                <FeedbackStep
+                  feedback={feedback}
+                  task={task}
+                  meta={meta}
+                  studentName={studentName}
+                  responses={Object.entries(responses).map(([idx, resp]) => ({
+                    label: task.parts[Number(idx)]?.label || String.fromCharCode(65 + Number(idx)),
+                    prompt: task.parts[Number(idx)]?.prompt || '',
+                    response: resp,
+                  }))}
+                  onNewTask={() => setStep(1)}
+                  onGoToDashboard={() => setActiveTab('dashboard')}
+                />
+              )}
+            </div>
+          </div>
+        ) : (
+          <DashboardView
+            logs={logs}
+            academicYear={academicYear}
+            setAcademicYear={setAcademicYear}
+            onDeleteLog={handleDeleteLog}
+            onResetSampleLogs={handleResetSampleLogs}
+          />
+        )}
+      </main>
+
+      {/* Footer */}
+      <footer className="mt-16 border-t border-slate-200 bg-white py-6 text-center text-xs font-medium text-slate-500 print:hidden">
+        <p>IB MYP Approaches to Learning (ATL) Workbench & Analytics Engine • Bento Grid Design Edition</p>
+      </footer>
+    </div>
+  );
+}
