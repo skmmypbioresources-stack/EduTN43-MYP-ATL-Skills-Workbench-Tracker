@@ -202,6 +202,15 @@ export default function App() {
     }
   };
 
+  // Teacher Password Authorization State for Analytics Dashboard
+  const [isAnalyticsUnlocked, setIsAnalyticsUnlocked] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem('atl_analytics_unlocked') === 'true';
+    } catch (e) {
+      return false;
+    }
+  });
+
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-900 font-sans antialiased">
       <Header
@@ -212,6 +221,7 @@ export default function App() {
         totalLogsCount={logs.length}
         customApiKey={customApiKey}
         onSaveApiKey={handleSaveApiKey}
+        isAnalyticsUnlocked={isAnalyticsUnlocked}
       />
 
       {/* Main Content Area */}
@@ -306,6 +316,8 @@ export default function App() {
             setAcademicYear={setAcademicYear}
             onDeleteLog={handleDeleteLog}
             onResetSampleLogs={handleResetSampleLogs}
+            isUnlocked={isAnalyticsUnlocked}
+            setIsUnlocked={setIsAnalyticsUnlocked}
           />
         )}
       </main>

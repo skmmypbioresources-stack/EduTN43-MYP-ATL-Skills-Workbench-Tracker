@@ -31,6 +31,13 @@ import {
   ChevronRight,
   UserCheck,
   Sparkles,
+  Lock,
+  Unlock,
+  ShieldCheck,
+  Key,
+  EyeOff,
+  ShieldAlert,
+  Check,
 } from 'lucide-react';
 
 interface DashboardViewProps {
@@ -39,6 +46,8 @@ interface DashboardViewProps {
   setAcademicYear: (year: string) => void;
   onDeleteLog: (id: string) => void;
   onResetSampleLogs: () => void;
+  isUnlocked: boolean;
+  setIsUnlocked: (unlocked: boolean) => void;
 }
 
 // Helpers for MYP Class Normalization & Formatting
@@ -78,7 +87,83 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   academicYear,
   onDeleteLog,
   onResetSampleLogs,
+  isUnlocked,
+  setIsUnlocked,
 }) => {
+  // Teacher Password Authorization State
+  const [teacherPassword, setTeacherPassword] = useState<string>(() => {
+    try {
+      return localStorage.getItem('atl_teacher_password') || 'mypteacher';
+    } catch (e) {
+      return 'mypteacher';
+    }
+  });
+
+  const [enteredPassword, setEnteredPassword] = useState<string>('');
+  const [showPassword, setShowPassword] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+
+  // Change Password Modal State
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState<boolean>(false);
+  const [currentPassInput, setCurrentPassInput] = useState<string>('');
+  const [newPassInput, setNewPassInput] = useState<string>('');
+  const [confirmPassInput, setConfirmPassInput] = useState<string>('');
+  const [changePassError, setChangePassError] = useState<string | null>(null);
+  const [changePassSuccess, setChangePassSuccess] = useState<boolean>(false);
+
+  const handleUnlockSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (enteredPassword.trim() === teacherPassword) {
+      setIsUnlocked(true);
+      setAuthError(null);
+      setEnteredPassword('');
+      try {
+        sessionStorage.setItem('atl_analytics_unlocked', 'true');
+      } catch (e) {}
+    } else {
+      setAuthError('Incorrect teacher password. Please try again.');
+    }
+  };
+
+  const handleLockAnalytics = () => {
+    setIsUnlocked(false);
+    try {
+      sessionStorage.removeItem('atl_analytics_unlocked');
+    } catch (e) {}
+  };
+
+  const handleChangePasswordSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (currentPassInput.trim() !== teacherPassword) {
+      setChangePassError('Current password is incorrect.');
+      return;
+    }
+    if (!newPassInput || newPassInput.trim().length < 3) {
+      setChangePassError('New password must be at least 3 characters long.');
+      return;
+    }
+    if (newPassInput.trim() !== confirmPassInput.trim()) {
+      setChangePassError('New passwords do not match.');
+      return;
+    }
+
+    const trimmed = newPassInput.trim();
+    setTeacherPassword(trimmed);
+    try {
+      localStorage.setItem('atl_teacher_password', trimmed);
+    } catch (e) {}
+
+    setChangePassSuccess(true);
+    setChangePassError(null);
+    setTimeout(() => {
+      setShowChangePasswordModal(false);
+      setChangePassSuccess(false);
+      setCurrentPassInput('');
+      setNewPassInput('');
+      setConfirmPassInput('');
+    }, 1500);
+  };
+
   // Filters
   const [selectedClass, setSelectedClass] = useState<string>('All');
   const [selectedTerm, setSelectedTerm] = useState<string>('All');
@@ -272,6 +357,75 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return 'MYP Class';
   }, [studentLogs]);
 
+  if (!isUnlocked) {
+    return (
+      <div className="mx-auto max-w-lg py-8">
+        <div className="rounded-3xl border border-indigo-100 bg-white p-8 shadow-xl text-center">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-md shadow-indigo-200 mb-4">
+            <Lock className="h-8 w-8" />
+          </div>
+
+          <div className="inline-flex items-center gap-1.5 rounded-full bg-indigo-50 border border-indigo-100 px-3.5 py-1 text-xs font-bold text-indigo-700 uppercase tracking-wider mb-2">
+            <ShieldCheck className="h-3.5 w-3.5 text-indigo-600" />
+            <span>Teacher Access Authorization</span>
+          </div>
+
+          <h2 className="text-2xl font-black tracking-tight text-slate-900">
+            Year Analytics Protected
+          </h2>
+
+          <p className="text-xs font-medium text-slate-500 mt-2 leading-relaxed">
+            Year Analytics contain student evaluation logs, MYP class progress matrices, and individual growth reports. Please enter the teacher password to view.
+          </p>
+
+          <form onSubmit={handleUnlockSubmit} className="mt-6 space-y-4 text-left">
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                Teacher Password
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={enteredPassword}
+                  onChange={(e) => {
+                    setEnteredPassword(e.target.value);
+                    if (authError) setAuthError(null);
+                  }}
+                  placeholder="Enter teacher password..."
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 pl-4 pr-10 py-3 text-sm font-semibold text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-all shadow-2xs"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-3.5 text-slate-400 hover:text-slate-600 transition-colors"
+                  title={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? <EyeOff className="h-4.5 w-4.5" /> : <Eye className="h-4.5 w-4.5" />}
+                </button>
+              </div>
+
+              {authError && (
+                <div className="mt-2.5 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700 flex items-center gap-2">
+                  <ShieldAlert className="h-4 w-4 shrink-0 text-rose-600" />
+                  <span>{authError}</span>
+                </div>
+              )}
+            </div>
+
+            <button
+              type="submit"
+              className="w-full flex items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white shadow-md shadow-indigo-200 hover:bg-indigo-700 transition-all cursor-pointer"
+            >
+              <Unlock className="h-4 w-4" />
+              <span>Unlock Year Analytics</span>
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8">
       {/* Top Header & Global Filter Controls */}
@@ -290,7 +444,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setShowChangePasswordModal(true)}
+              className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-bold text-slate-700 hover:border-indigo-300 hover:bg-indigo-50/50 transition-all"
+              title="Change default or custom teacher password"
+            >
+              <Key className="h-3.5 w-3.5 text-indigo-600" />
+              <span>Password Settings</span>
+            </button>
+
+            <button
+              onClick={handleLockAnalytics}
+              className="flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50/70 px-3.5 py-2 text-xs font-bold text-amber-800 hover:border-amber-300 hover:bg-amber-100 transition-all"
+              title="Lock Year Analytics view"
+            >
+              <Lock className="h-3.5 w-3.5 text-amber-600" />
+              <span>Lock Analytics</span>
+            </button>
+
             <button
               onClick={onResetSampleLogs}
               className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50/50 px-3.5 py-2 text-xs font-bold text-rose-700 hover:border-rose-300 hover:bg-rose-100 transition-all"
@@ -1164,6 +1336,108 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Change Password Modal */}
+      {showChangePasswordModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+              <div className="flex items-center gap-2">
+                <div className="rounded-lg bg-indigo-50 p-2 text-indigo-600">
+                  <Key className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Teacher Password Settings</h3>
+                  <p className="text-xs text-slate-500">Update password used to protect Year Analytics</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowChangePasswordModal(false);
+                  setChangePassError(null);
+                  setChangePassSuccess(false);
+                }}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleChangePasswordSubmit} className="mt-4 space-y-4 text-xs">
+              {changePassSuccess ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-center font-bold text-emerald-800 flex flex-col items-center gap-2">
+                  <Check className="h-6 w-6 text-emerald-600" />
+                  <span>Teacher password updated successfully!</span>
+                </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                      Current Password
+                    </label>
+                    <input
+                      type="password"
+                      value={currentPassInput}
+                      onChange={(e) => setCurrentPassInput(e.target.value)}
+                      placeholder="Enter current password..."
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-semibold text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                      New Password
+                    </label>
+                    <input
+                      type="password"
+                      value={newPassInput}
+                      onChange={(e) => setNewPassInput(e.target.value)}
+                      placeholder="Enter new teacher password..."
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-semibold text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1">
+                      Confirm New Password
+                    </label>
+                    <input
+                      type="password"
+                      value={confirmPassInput}
+                      onChange={(e) => setConfirmPassInput(e.target.value)}
+                      placeholder="Confirm new password..."
+                      className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-semibold text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
+                    />
+                  </div>
+
+                  {changePassError && (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50 p-2.5 font-bold text-rose-700 flex items-center gap-1.5">
+                      <ShieldAlert className="h-4 w-4 shrink-0 text-rose-600" />
+                      <span>{changePassError}</span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setShowChangePasswordModal(false)}
+                      className="rounded-xl border border-slate-200 bg-white px-4 py-2 font-bold text-slate-600 hover:bg-slate-50 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white shadow-xs hover:bg-indigo-700 transition-colors"
+                    >
+                      Save New Password
+                    </button>
+                  </div>
+                </>
+              )}
+            </form>
           </div>
         </div>
       )}

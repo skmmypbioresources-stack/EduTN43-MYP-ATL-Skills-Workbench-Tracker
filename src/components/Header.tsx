@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, BarChart3, Download, Laptop, Monitor, Apple, CheckCircle2, X, Key, Eye, EyeOff, ExternalLink, ShieldCheck, GraduationCap } from 'lucide-react';
+import { Sparkles, BarChart3, Download, Laptop, Monitor, Apple, CheckCircle2, X, Key, Eye, EyeOff, ExternalLink, ShieldCheck, GraduationCap, Lock } from 'lucide-react';
 
 interface HeaderProps {
   activeTab: 'workbench' | 'dashboard';
@@ -9,6 +9,7 @@ interface HeaderProps {
   totalLogsCount: number;
   customApiKey: string;
   onSaveApiKey: (key: string) => void;
+  isAnalyticsUnlocked?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -19,6 +20,7 @@ export const Header: React.FC<HeaderProps> = ({
   totalLogsCount,
   customApiKey,
   onSaveApiKey,
+  isAnalyticsUnlocked = false,
 }) => {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallModal, setShowInstallModal] = useState(false);
@@ -190,6 +192,9 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 <BarChart3 className="h-4 w-4" />
                 <span>Year Analytics</span>
+                {!isAnalyticsUnlocked && (
+                  <Lock className={`h-3 w-3 shrink-0 ${activeTab === 'dashboard' ? 'text-amber-300' : 'text-amber-500'}`} title="Protected by Teacher Password" />
+                )}
                 <span className={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
                   activeTab === 'dashboard'
                     ? 'bg-white/20 text-white'
