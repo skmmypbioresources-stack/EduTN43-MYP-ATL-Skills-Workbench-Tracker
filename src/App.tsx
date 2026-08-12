@@ -4,8 +4,15 @@ import { SetupStep } from './components/SetupStep';
 import { TaskStep } from './components/TaskStep';
 import { FeedbackStep } from './components/FeedbackStep';
 import { DashboardView } from './components/DashboardView';
-import { TaskMeta, GeneratedTask, StudentResponseItem, TaskFeedback, ATLTaskLog } from './types';
-import { subscribeToTaskLogs, saveTaskLogToFirestore, deleteTaskLogFromFirestore } from './lib/firebase';
+import { TaskMeta, GeneratedTask, StudentResponseItem, TaskFeedback, ATLTaskLog, AssignedTask, ATLCategoryKey } from './types';
+import {
+  subscribeToTaskLogs,
+  saveTaskLogToFirestore,
+  deleteTaskLogFromFirestore,
+  subscribeToAssignedTasks,
+  saveAssignedTaskToFirestore,
+  deleteAssignedTaskFromFirestore
+} from './lib/firebase';
 import { generateTaskClient, evaluateTaskClient } from './lib/geminiClient';
 import { SAMPLE_LOGS } from './data/atlData';
 
@@ -77,9 +84,12 @@ export default function App() {
     return SAMPLE_LOGS;
   });
 
-  // Subscribe to real-time Firestore database updates
+  // Assigned Common Tasks State (Firestore)
+  const [assignedTasks, setAssignedTasks] = useState<AssignedTask[]>([]);
+
+  // Subscribe to real-time Firestore database updates for logs & assigned tasks
   useEffect(() => {
-    const unsubscribe = subscribeToTaskLogs((firestoreLogs) => {
+    const unsubscribeLogs = subscribeToTaskLogs((firestoreLogs) => {
       if (firestoreLogs && firestoreLogs.length > 0) {
         setLogs(firestoreLogs);
         try {
@@ -92,8 +102,79 @@ export default function App() {
       }
     });
 
-    return () => unsubscribe();
+    const unsubscribeAssigned = subscribeToAssignedTasks((tasks) => {
+      setAssignedTasks(tasks.filter((t) => t.active !== false));
+    });
+
+    return () => {
+      unsubscribeLogs();
+      unsubscribeAssigned();
+    };
   }, []);
+
+  // Handle Launching a Teacher Assigned Task
+  const handleSelectAssignedTask = (assignedTask: AssignedTask) => {
+    setErrorMessage(null);
+    if (!studentName.trim()) {
+      setErrorMessage('Please enter your Student or Class Name above before starting the assigned task.');
+      return;
+    }
+
+    setMeta({
+      subject: assignedTask.subject,
+      topic: assignedTask.topic,
+      year: assignedTask.mypYear,
+      category: assignedTask.category,
+      cluster: assignedTask.cluster,
+      iduSubject: null,
+    });
+    setTask(assignedTask.task);
+    setResponses({});
+    setStep(2);
+  };
+
+  // Handle Teacher Creating & Publishing an Assigned Task
+  const handleCreateAssignedTask = async (taskData: {
+    teacherName: string;
+    subject: string;
+    topic: string;
+    mypYear: string;
+    category: ATLCategoryKey;
+    cluster: string;
+  }) => {
+    const taskMeta: TaskMeta = {
+      subject: taskData.subject,
+      topic: taskData.topic,
+      year: taskData.mypYear,
+      category: taskData.category,
+      cluster: taskData.cluster,
+    };
+
+    const generatedTask = await generateTaskClient(taskMeta, false, customApiKey);
+
+    const newAssignedTask: AssignedTask = {
+      id: 'assigned-' + Date.now(),
+      title: generatedTask.title || `${taskData.subject} - ${taskData.topic}`,
+      subject: taskData.subject,
+      topic: taskData.topic,
+      mypYear: taskData.mypYear,
+      category: taskData.category,
+      cluster: taskData.cluster,
+      task: generatedTask,
+      teacherName: taskData.teacherName || 'Teacher',
+      createdAt: new Date().toISOString(),
+      academicYear,
+      term,
+      active: true,
+    };
+
+    await saveAssignedTaskToFirestore(newAssignedTask);
+  };
+
+  // Handle Deleting an Assigned Task
+  const handleDeleteAssignedTask = async (taskId: string) => {
+    await deleteAssignedTaskFromFirestore(taskId);
+  };
 
   // Handle Task Generation
   const handleGenerateTask = async (autoCluster: boolean) => {
@@ -275,6 +356,8 @@ export default function App() {
                   onGenerate={handleGenerateTask}
                   isLoading={isGenerating}
                   errorMessage={errorMessage}
+                  assignedTasks={assignedTasks}
+                  onSelectAssignedTask={handleSelectAssignedTask}
                 />
               )}
 
@@ -318,6 +401,9 @@ export default function App() {
             onResetSampleLogs={handleResetSampleLogs}
             isUnlocked={isAnalyticsUnlocked}
             setIsUnlocked={setIsAnalyticsUnlocked}
+            assignedTasks={assignedTasks}
+            onCreateAssignedTask={handleCreateAssignedTask}
+            onDeleteAssignedTask={handleDeleteAssignedTask}
           />
         )}
       </main>

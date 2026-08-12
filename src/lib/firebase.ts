@@ -11,7 +11,7 @@ import {
   enableIndexedDbPersistence
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { ATLTaskLog } from '../types';
+import { ATLTaskLog, AssignedTask } from '../types';
 
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
@@ -117,3 +117,82 @@ export async function deleteTaskLogFromFirestore(logId: string): Promise<void> {
     throw err;
   }
 }
+
+const ASSIGNED_COLLECTION_NAME = 'assigned_tasks';
+
+/**
+ * Subscribe to real-time updates for teacher assigned tasks
+ */
+export function subscribeToAssignedTasks(
+  onUpdate: (tasks: AssignedTask[]) => void,
+  onError?: (error: Error) => void
+) {
+  try {
+    const tasksRef = collection(db, ASSIGNED_COLLECTION_NAME);
+    const q = query(tasksRef, orderBy('createdAt', 'desc'));
+
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const tasks: AssignedTask[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          tasks.push({
+            id: docSnap.id,
+            title: data.title || 'Assigned Common Task',
+            subject: data.subject || 'Sciences',
+            topic: data.topic || 'General Topic',
+            mypYear: data.mypYear || '1',
+            category: data.category || 'Thinking',
+            cluster: data.cluster || 'Critical thinking',
+            task: data.task,
+            teacherName: data.teacherName || 'Teacher',
+            createdAt: data.createdAt || new Date().toISOString(),
+            academicYear: data.academicYear || '2025-2026',
+            term: data.term || 'Term 1',
+            active: data.active !== false
+          });
+        });
+        onUpdate(tasks);
+      },
+      (err) => {
+        console.error('Firestore assigned tasks subscription error:', err);
+        if (onError) onError(err);
+      }
+    );
+  } catch (err) {
+    console.error('Failed to set up assigned tasks listener:', err);
+    if (onError) onError(err as Error);
+    return () => {};
+  }
+}
+
+/**
+ * Save a new or updated assigned task to Firestore
+ */
+export async function saveAssignedTaskToFirestore(assignedTask: AssignedTask): Promise<void> {
+  try {
+    const docRef = doc(db, ASSIGNED_COLLECTION_NAME, assignedTask.id);
+    await setDoc(docRef, {
+      ...assignedTask,
+      createdAt: assignedTask.createdAt || new Date().toISOString()
+    });
+  } catch (err) {
+    console.error('Failed to save assigned task to Firestore:', err);
+    throw err;
+  }
+}
+
+/**
+ * Delete an assigned task from Firestore
+ */
+export async function deleteAssignedTaskFromFirestore(taskId: string): Promise<void> {
+  try {
+    const docRef = doc(db, ASSIGNED_COLLECTION_NAME, taskId);
+    await deleteDoc(docRef);
+  } catch (err) {
+    console.error('Failed to delete assigned task from Firestore:', err);
+    throw err;
+  }
+}
+

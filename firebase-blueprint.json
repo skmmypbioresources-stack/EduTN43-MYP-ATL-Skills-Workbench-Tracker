@@ -22,6 +22,27 @@
         "createdAt": { "type": "string" }
       },
       "required": ["id", "date", "studentName", "subject", "cluster", "level"]
+    },
+    "assigned_tasks": {
+      "title": "Assigned Task",
+      "description": "Teacher-created common ATL tasks assigned to all students",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "subject": { "type": "string" },
+        "topic": { "type": "string" },
+        "mypYear": { "type": "string" },
+        "category": { "type": "string" },
+        "cluster": { "type": "string" },
+        "task": { "type": "object" },
+        "teacherName": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "academicYear": { "type": "string" },
+        "term": { "type": "string" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["id", "title", "subject", "topic", "task", "createdAt"]
     }
   }
 }

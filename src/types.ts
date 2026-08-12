@@ -69,3 +69,20 @@ export interface ATLTaskLog {
   responses: StudentResponseItem[];
   feedback: TaskFeedback;
 }
+
+export interface AssignedTask {
+  id: string;
+  title: string;
+  subject: string;
+  topic: string;
+  mypYear: string;
+  category: ATLCategoryKey;
+  cluster: string;
+  task: GeneratedTask;
+  teacherName?: string;
+  createdAt: string; // ISO String
+  academicYear: string;
+  term: string;
+  active: boolean;
+}
+

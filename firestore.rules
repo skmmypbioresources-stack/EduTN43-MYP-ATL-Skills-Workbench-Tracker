@@ -4,5 +4,8 @@ service cloud.firestore {
     match /task_logs/{logId} {
       allow read, write: if true;
     }
+    match /assigned_tasks/{taskId} {
+      allow read, write: if true;
+    }
   }
 }

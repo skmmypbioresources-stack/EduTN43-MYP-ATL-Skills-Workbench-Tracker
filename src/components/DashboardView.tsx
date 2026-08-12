@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { ATLTaskLog, ATLCategoryKey } from '../types';
+import { ATLTaskLog, ATLCategoryKey, AssignedTask } from '../types';
 import { exportToWordDoc } from '../lib/exportUtils';
 import { ATL_DATA, ALL_CLUSTERS } from '../data/atlData';
 import {
@@ -38,6 +38,10 @@ import {
   EyeOff,
   ShieldAlert,
   Check,
+  ClipboardList,
+  Plus,
+  Send,
+  RefreshCw,
 } from 'lucide-react';
 
 interface DashboardViewProps {
@@ -48,6 +52,16 @@ interface DashboardViewProps {
   onResetSampleLogs: () => void;
   isUnlocked: boolean;
   setIsUnlocked: (unlocked: boolean) => void;
+  assignedTasks?: AssignedTask[];
+  onCreateAssignedTask?: (taskData: {
+    teacherName: string;
+    subject: string;
+    topic: string;
+    mypYear: string;
+    category: ATLCategoryKey;
+    cluster: string;
+  }) => Promise<void>;
+  onDeleteAssignedTask?: (taskId: string) => Promise<void>;
 }
 
 // Helpers for MYP Class Normalization & Formatting
@@ -89,7 +103,66 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onResetSampleLogs,
   isUnlocked,
   setIsUnlocked,
+  assignedTasks = [],
+  onCreateAssignedTask,
+  onDeleteAssignedTask,
 }) => {
+  // Assigned Tasks Creator State
+  const [showAssignModal, setShowAssignModal] = useState<boolean>(false);
+  const [newTeacherName, setNewTeacherName] = useState<string>('');
+  const [newSubject, setNewSubject] = useState<string>('Sciences');
+  const [newTopic, setNewTopic] = useState<string>('');
+  const [newMypYear, setNewMypYear] = useState<string>('3');
+  const [newCategory, setNewCategory] = useState<ATLCategoryKey>('Thinking');
+  const [newCluster, setNewCluster] = useState<string>('Critical thinking');
+  const [isPublishingTask, setIsPublishingTask] = useState<boolean>(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
+  const [publishSuccess, setPublishSuccess] = useState<string | null>(null);
+
+  // Update cluster when newCategory changes
+  React.useEffect(() => {
+    const availableClusters = Object.keys(ATL_DATA[newCategory]?.clusters || {});
+    if (availableClusters.length > 0 && !availableClusters.includes(newCluster)) {
+      setNewCluster(availableClusters[0]);
+    }
+  }, [newCategory]);
+
+  const handlePublishAssignedTask = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTopic.trim()) {
+      setPublishError('Please enter a curriculum topic for the assigned task.');
+      return;
+    }
+
+    if (!onCreateAssignedTask) return;
+
+    setIsPublishingTask(true);
+    setPublishError(null);
+    setPublishSuccess(null);
+
+    try {
+      await onCreateAssignedTask({
+        teacherName: newTeacherName.trim(),
+        subject: newSubject,
+        topic: newTopic.trim(),
+        mypYear: newMypYear,
+        category: newCategory,
+        cluster: newCluster,
+      });
+
+      setPublishSuccess('Task generated and assigned to all students successfully!');
+      setNewTopic('');
+      setTimeout(() => {
+        setPublishSuccess(null);
+        setShowAssignModal(false);
+      }, 1500);
+    } catch (err: any) {
+      console.error('Failed to publish assigned task:', err);
+      setPublishError(err?.message || 'Failed to generate and assign task.');
+    } finally {
+      setIsPublishingTask(false);
+    }
+  };
   // Teacher Password Authorization State
   const [teacherPassword, setTeacherPassword] = useState<string>(() => {
     try {
@@ -446,6 +519,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
           <div className="flex flex-wrap items-center gap-2">
             <button
+              onClick={() => setShowAssignModal(true)}
+              className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-2 text-xs font-bold text-white shadow-xs hover:bg-indigo-700 transition-all cursor-pointer"
+              title="Create a common task and assign to all students"
+            >
+              <Plus className="h-4 w-4" />
+              <span>Create & Assign Common Task</span>
+            </button>
+
+            <button
               onClick={() => setShowChangePasswordModal(true)}
               className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-bold text-slate-700 hover:border-indigo-300 hover:bg-indigo-50/50 transition-all"
               title="Change default or custom teacher password"
@@ -472,6 +554,87 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span>Reset Analytics Data</span>
             </button>
           </div>
+        </div>
+
+        {/* Assigned Tasks Teacher Management Panel */}
+        <div className="mt-6 border-t border-slate-100 pt-5">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+            <div className="flex items-center gap-2">
+              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700">
+                <ClipboardList className="h-4 w-4" />
+              </div>
+              <div>
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
+                  Published Common Class Tasks ({assignedTasks.length})
+                </h3>
+                <p className="text-[11px] text-slate-500 font-medium">
+                  Standardized AI tasks assigned by teachers for common student evaluation
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowAssignModal(true)}
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition-all"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              <span>Assign New Task</span>
+            </button>
+          </div>
+
+          {assignedTasks.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 p-4 text-center">
+              <p className="text-xs font-medium text-slate-500">
+                No common tasks published yet. Click <strong className="text-indigo-600 font-bold">"Assign New Task"</strong> to create a shared task that appears on every student's workbench.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {assignedTasks.map((at) => (
+                <div
+                  key={at.id}
+                  className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs"
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-2 mb-1.5">
+                      <span className="rounded-md bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
+                        {at.subject} • MYP {at.mypYear}
+                      </span>
+                      <span className="text-[10px] text-slate-400 font-medium">
+                        {at.teacherName ? `By ${at.teacherName}` : 'Teacher Task'}
+                      </span>
+                    </div>
+
+                    <h4 className="text-xs font-bold text-slate-800 line-clamp-1">
+                      {at.title || at.task?.title || at.topic}
+                    </h4>
+                    <p className="text-[11px] text-slate-500 line-clamp-2 mt-0.5">
+                      {at.topic} ({at.cluster})
+                    </p>
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2 text-[10px]">
+                    <span className="text-emerald-700 font-bold flex items-center gap-1">
+                      <Check className="h-3 w-3 text-emerald-600" /> Active on Workbench
+                    </span>
+
+                    {onDeleteAssignedTask && (
+                      <button
+                        onClick={async () => {
+                          if (confirm(`Remove assigned task "${at.title}"?`)) {
+                            await onDeleteAssignedTask(at.id);
+                          }
+                        }}
+                        className="text-rose-600 hover:text-rose-800 font-bold hover:underline cursor-pointer"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Filter Toolbar */}
@@ -1433,6 +1596,186 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       className="rounded-xl bg-indigo-600 px-4 py-2 font-bold text-white shadow-xs hover:bg-indigo-700 transition-colors"
                     >
                       Save New Password
+                    </button>
+                  </div>
+                </>
+              )}
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Assign Common Task Modal */}
+      {showAssignModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="rounded-xl bg-indigo-600 p-2.5 text-white shadow-xs">
+                  <ClipboardList className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Create & Assign Common Task</h3>
+                  <p className="text-xs text-slate-500">Generates a shared task that appears on every student's workbench</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAssignModal(false);
+                  setPublishError(null);
+                  setPublishSuccess(null);
+                }}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handlePublishAssignedTask} className="mt-4 space-y-4 text-xs">
+              {publishSuccess ? (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-6 text-center font-bold text-emerald-800 flex flex-col items-center gap-2">
+                  <Check className="h-8 w-8 text-emerald-600" />
+                  <span className="text-sm font-bold">{publishSuccess}</span>
+                  <p className="text-xs font-normal text-emerald-700 mt-1">Students will now see this task on Step 1 of their workbench.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                        Teacher Name (Optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={newTeacherName}
+                        onChange={(e) => setNewTeacherName(e.target.value)}
+                        placeholder="e.g. Ms. Smith"
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                        Grade / MYP Level <span className="text-rose-600">*</span>
+                      </label>
+                      <select
+                        value={newMypYear}
+                        onChange={(e) => setNewMypYear(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
+                      >
+                        <option value="1">MYP 1 (Grade 6)</option>
+                        <option value="2">MYP 2 (Grade 7)</option>
+                        <option value="3">MYP 3 (Grade 8)</option>
+                        <option value="4">MYP 4 (Grade 9)</option>
+                        <option value="5">MYP 5 (Grade 10)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                        Subject Group <span className="text-rose-600">*</span>
+                      </label>
+                      <select
+                        value={newSubject}
+                        onChange={(e) => setNewSubject(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
+                      >
+                        <option value="Sciences">Sciences</option>
+                        <option value="Mathematics">Mathematics</option>
+                        <option value="Language and Literature">Language and Literature</option>
+                        <option value="Language Acquisition">Language Acquisition</option>
+                        <option value="Individuals and Societies">Individuals and Societies</option>
+                        <option value="Arts">Arts</option>
+                        <option value="Physical and Health Education">Physical and Health Education</option>
+                        <option value="Design">Design</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                        Curriculum Topic <span className="text-rose-600">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={newTopic}
+                        onChange={(e) => setNewTopic(e.target.value)}
+                        placeholder="e.g. Mitosis & Cell Division"
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                        ATL Skill Category
+                      </label>
+                      <select
+                        value={newCategory}
+                        onChange={(e) => setNewCategory(e.target.value as ATLCategoryKey)}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
+                      >
+                        <option value="Communication">Communication</option>
+                        <option value="Social">Social</option>
+                        <option value="Self-management">Self-management</option>
+                        <option value="Research">Research</option>
+                        <option value="Thinking">Thinking</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                        Skill Cluster
+                      </label>
+                      <select
+                        value={newCluster}
+                        onChange={(e) => setNewCluster(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
+                      >
+                        {Object.keys(ATL_DATA[newCategory]?.clusters || {}).map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {publishError && (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50 p-2.5 font-bold text-rose-700 flex items-center gap-1.5 text-xs">
+                      <ShieldAlert className="h-4 w-4 shrink-0 text-rose-600" />
+                      <span>{publishError}</span>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setShowAssignModal(false)}
+                      disabled={isPublishingTask}
+                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 font-bold text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={isPublishingTask}
+                      className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 font-bold text-white shadow-xs hover:bg-indigo-700 transition-colors disabled:opacity-50 cursor-pointer"
+                    >
+                      {isPublishingTask ? (
+                        <>
+                          <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+                          <span>Generating & Publishing Task…</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="h-4 w-4" />
+                          <span>Generate & Assign Task</span>
+                        </>
+                      )}
                     </button>
                   </div>
                 </>
