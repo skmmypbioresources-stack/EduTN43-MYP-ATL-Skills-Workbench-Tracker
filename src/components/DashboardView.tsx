@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { ATLTaskLog, ATLCategoryKey, AssignedTask } from '../types';
-import { exportToWordDoc } from '../lib/exportUtils';
+import { exportToWordDoc, exportToPdf } from '../lib/exportUtils';
 import { ATL_DATA, ALL_CLUSTERS } from '../data/atlData';
 import {
   BarChart,
@@ -42,6 +42,7 @@ import {
   Plus,
   Send,
   RefreshCw,
+  MessageSquareQuote,
 } from 'lucide-react';
 
 interface DashboardViewProps {
@@ -183,6 +184,62 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [confirmPassInput, setConfirmPassInput] = useState<string>('');
   const [changePassError, setChangePassError] = useState<string | null>(null);
   const [changePassSuccess, setChangePassSuccess] = useState<boolean>(false);
+
+  // Delete Authorization Password State (Password: DELETETASK)
+  const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
+  const [deleteActionType, setDeleteActionType] = useState<'log' | 'assignedTask' | 'resetLogs' | null>(null);
+  const [itemToDelete, setItemToDelete] = useState<{ id: string; title?: string } | null>(null);
+  const [deletePasswordInput, setDeletePasswordInput] = useState<string>('');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const promptDeleteLog = (logId: string, title?: string) => {
+    setDeleteActionType('log');
+    setItemToDelete({ id: logId, title: title || 'Student Evaluation Record' });
+    setDeletePasswordInput('');
+    setDeleteError(null);
+    setShowDeleteModal(true);
+  };
+
+  const promptDeleteAssignedTask = (taskId: string, title?: string) => {
+    setDeleteActionType('assignedTask');
+    setItemToDelete({ id: taskId, title: title || 'Assigned Common Task' });
+    setDeletePasswordInput('');
+    setDeleteError(null);
+    setShowDeleteModal(true);
+  };
+
+  const promptResetAnalytics = () => {
+    setDeleteActionType('resetLogs');
+    setItemToDelete({ id: 'all', title: 'All Year Analytics Student Task Logs & Evaluation Records' });
+    setDeletePasswordInput('');
+    setDeleteError(null);
+    setShowDeleteModal(true);
+  };
+
+  const handleConfirmDelete = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (deletePasswordInput.trim() !== 'DELETETASK') {
+      setDeleteError('Incorrect delete password. Password DELETETASK is required to delete data.');
+      return;
+    }
+
+    if (deleteActionType === 'log' && itemToDelete) {
+      onDeleteLog(itemToDelete.id);
+      if (selectedLogForModal?.id === itemToDelete.id) {
+        setSelectedLogForModal(null);
+      }
+    } else if (deleteActionType === 'assignedTask' && itemToDelete && onDeleteAssignedTask) {
+      onDeleteAssignedTask(itemToDelete.id);
+    } else if (deleteActionType === 'resetLogs') {
+      onResetSampleLogs();
+    }
+
+    setShowDeleteModal(false);
+    setDeleteActionType(null);
+    setItemToDelete(null);
+    setDeletePasswordInput('');
+    setDeleteError(null);
+  };
 
   const handleUnlockSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -546,8 +603,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </button>
 
             <button
-              onClick={onResetSampleLogs}
-              className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50/50 px-3.5 py-2 text-xs font-bold text-rose-700 hover:border-rose-300 hover:bg-rose-100 transition-all"
+              onClick={promptResetAnalytics}
+              className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50/50 px-3.5 py-2 text-xs font-bold text-rose-700 hover:border-rose-300 hover:bg-rose-100 transition-all cursor-pointer"
               title="Clear or reset task analytics logs"
             >
               <Trash2 className="h-3.5 w-3.5" />
@@ -620,11 +677,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
                     {onDeleteAssignedTask && (
                       <button
-                        onClick={async () => {
-                          if (confirm(`Remove assigned task "${at.title}"?`)) {
-                            await onDeleteAssignedTask(at.id);
-                          }
-                        }}
+                        onClick={() => promptDeleteAssignedTask(at.id, at.title || at.topic)}
                         className="text-rose-600 hover:text-rose-800 font-bold hover:underline cursor-pointer"
                       >
                         Delete
@@ -1390,8 +1443,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           <Eye className="h-4 w-4" />
                         </button>
                         <button
-                          onClick={() => onDeleteLog(log.id)}
-                          className="p-2 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                          onClick={() => promptDeleteLog(log.id, `${log.studentName} (${log.subject} - ${log.topic})`)}
+                          className="p-2 text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
                           title="Delete Log"
                         >
                           <Trash2 className="h-4 w-4" />
@@ -1465,37 +1518,77 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </div>
               </div>
 
+              {/* Student Self-Reflection inside Modal */}
+              {selectedLogForModal.studentReflection && (
+                <div>
+                  <strong className="block text-xs font-bold uppercase tracking-wider text-emerald-700 mb-1.5 flex items-center gap-1.5">
+                    <MessageSquareQuote className="h-4 w-4 text-emerald-600" />
+                    Student Post-Task Self-Reflection:
+                  </strong>
+                  <div className="bg-emerald-50 border border-emerald-200 p-3.5 rounded-xl text-emerald-950 font-medium leading-relaxed">
+                    "{selectedLogForModal.studentReflection}"
+                  </div>
+                </div>
+              )}
+
               {/* Action Buttons inside Modal */}
               <div className="pt-4 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
-                <button
-                  onClick={() =>
-                    exportToWordDoc({
-                      studentName: selectedLogForModal.studentName,
-                      subject: selectedLogForModal.subject,
-                      topic: selectedLogForModal.topic,
-                      mypYear: selectedLogForModal.mypYear,
-                      academicYear: selectedLogForModal.academicYear,
-                      term: selectedLogForModal.term,
-                      category: selectedLogForModal.category,
-                      cluster: selectedLogForModal.cluster,
-                      level: selectedLogForModal.level,
-                      taskTitle: selectedLogForModal.taskTitle,
-                      responses: selectedLogForModal.responses,
-                      feedback: selectedLogForModal.feedback,
-                    })
-                  }
-                  className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100 transition-colors"
-                >
-                  <FileText className="h-4 w-4" />
-                  <span>Download Word Doc (.doc)</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() =>
+                      exportToWordDoc({
+                        studentName: selectedLogForModal.studentName,
+                        subject: selectedLogForModal.subject,
+                        topic: selectedLogForModal.topic,
+                        mypYear: selectedLogForModal.mypYear,
+                        academicYear: selectedLogForModal.academicYear,
+                        term: selectedLogForModal.term,
+                        category: selectedLogForModal.category,
+                        cluster: selectedLogForModal.cluster,
+                        level: selectedLogForModal.level,
+                        taskTitle: selectedLogForModal.taskTitle,
+                        responses: selectedLogForModal.responses,
+                        feedback: selectedLogForModal.feedback,
+                        studentReflection: selectedLogForModal.studentReflection,
+                      })
+                    }
+                    className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100 transition-colors cursor-pointer"
+                  >
+                    <FileText className="h-4 w-4" />
+                    <span>Download Word Doc (.doc)</span>
+                  </button>
+
+                  <button
+                    onClick={() =>
+                      exportToPdf({
+                        studentName: selectedLogForModal.studentName,
+                        subject: selectedLogForModal.subject,
+                        topic: selectedLogForModal.topic,
+                        mypYear: selectedLogForModal.mypYear,
+                        academicYear: selectedLogForModal.academicYear,
+                        term: selectedLogForModal.term,
+                        category: selectedLogForModal.category,
+                        cluster: selectedLogForModal.cluster,
+                        level: selectedLogForModal.level,
+                        taskTitle: selectedLogForModal.taskTitle,
+                        responses: selectedLogForModal.responses,
+                        feedback: selectedLogForModal.feedback,
+                        studentReflection: selectedLogForModal.studentReflection,
+                      })
+                    }
+                    className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                  >
+                    <Download className="h-4 w-4" />
+                    <span>Print / Save PDF</span>
+                  </button>
+                </div>
 
                 <button
-                  onClick={() => window.print()}
-                  className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 transition-colors"
+                  onClick={() => promptDeleteLog(selectedLogForModal.id, `${selectedLogForModal.studentName} (${selectedLogForModal.subject} - ${selectedLogForModal.topic})`)}
+                  className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100 transition-colors cursor-pointer"
                 >
-                  <Download className="h-4 w-4" />
-                  <span>Print / Save PDF</span>
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>Delete Record</span>
                 </button>
               </div>
             </div>
@@ -1780,6 +1873,89 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   </div>
                 </>
               )}
+            </form>
+          </div>
+        </div>
+      )}
+      {/* Delete Password Authorization Modal */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-2xl border border-rose-200 bg-white p-6 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="rounded-xl bg-rose-100 p-2.5 text-rose-600">
+                  <ShieldAlert className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Delete Authorization Required</h3>
+                  <p className="text-xs text-rose-600 font-semibold">Protected Action in Year Analytics</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeleteModal(false);
+                  setDeleteError(null);
+                  setDeletePasswordInput('');
+                }}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmDelete} className="mt-4 space-y-4 text-xs">
+              <div className="rounded-xl border border-rose-100 bg-rose-50/60 p-3.5 text-slate-700 leading-relaxed font-medium">
+                You are about to delete:
+                <div className="font-bold text-slate-900 mt-1 text-sm">
+                  {itemToDelete?.title || 'Selected Record'}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                  Enter Delete Password <span className="text-rose-600">*</span>
+                </label>
+                <input
+                  type="password"
+                  value={deletePasswordInput}
+                  onChange={(e) => {
+                    setDeletePasswordInput(e.target.value);
+                    if (deleteError) setDeleteError(null);
+                  }}
+                  placeholder="Enter delete password (DELETETASK)..."
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-semibold text-slate-800 focus:border-rose-600 focus:bg-white focus:outline-none transition-all"
+                  autoFocus
+                />
+              </div>
+
+              {deleteError && (
+                <div className="rounded-xl border border-rose-200 bg-rose-50 p-2.5 font-bold text-rose-700 flex items-center gap-1.5">
+                  <ShieldAlert className="h-4 w-4 shrink-0 text-rose-600" />
+                  <span>{deleteError}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDeleteModal(false);
+                    setDeleteError(null);
+                    setDeletePasswordInput('');
+                  }}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 font-bold text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-rose-600 px-5 py-2.5 font-bold text-white shadow-xs hover:bg-rose-700 transition-colors cursor-pointer"
+                >
+                  <Trash2 className="h-4 w-4" />
+                  <span>Confirm Delete</span>
+                </button>
+              </div>
             </form>
           </div>
         </div>
