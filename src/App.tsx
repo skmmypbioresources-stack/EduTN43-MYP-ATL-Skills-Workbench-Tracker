@@ -376,6 +376,7 @@ export default function App() {
                   errorMessage={errorMessage}
                   assignedTasks={assignedTasks}
                   onSelectAssignedTask={handleSelectAssignedTask}
+                  onDeleteAssignedTask={handleDeleteAssignedTask}
                 />
               )}
 
