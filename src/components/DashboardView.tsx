@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { ATLTaskLog, ATLCategoryKey, AssignedTask } from '../types';
 import { exportToWordDoc, exportToPdf, exportToCsvSpreadsheet, getAvailableMonthsFromLogs } from '../lib/exportUtils';
 import { ATL_DATA, ALL_CLUSTERS } from '../data/atlData';
+import { MYPCriteriaSelector } from './MYPCriteriaSelector';
 import {
   BarChart,
   Bar,
@@ -44,6 +45,7 @@ import {
   RefreshCw,
   MessageSquareQuote,
   FileSpreadsheet,
+  Target,
 } from 'lucide-react';
 
 interface DashboardViewProps {
@@ -120,6 +122,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [newCluster, setNewCluster] = useState<string>('Critical thinking');
   const [newIduToggle, setNewIduToggle] = useState<boolean>(false);
   const [newIduSubject, setNewIduSubject] = useState<string>('Sciences');
+  const [newSelectedCriteria, setNewSelectedCriteria] = useState<string[]>([]);
+  const [newSelectedStrands, setNewSelectedStrands] = useState<string[]>([]);
   const [isPublishingTask, setIsPublishingTask] = useState<boolean>(false);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [publishSuccess, setPublishSuccess] = useState<string | null>(null);
@@ -154,11 +158,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         category: newCategory,
         cluster: newCluster,
         iduSubject: newIduToggle ? newIduSubject : null,
+        criteria: newSelectedCriteria,
+        strands: newSelectedStrands,
       });
 
       setPublishSuccess('Task generated and assigned to all students successfully!');
       setNewTopic('');
       setNewIduToggle(false);
+      setNewSelectedCriteria([]);
+      setNewSelectedStrands([]);
       setTimeout(() => {
         setPublishSuccess(null);
         setShowAssignModal(false);
@@ -695,13 +703,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 >
                   <div>
                     <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
-                      <div className="flex items-center gap-1">
+                      <div className="flex flex-wrap items-center gap-1">
                         <span className="rounded-md bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
                           {at.subject} • MYP {at.mypYear}
                         </span>
                         {at.task?.idu_note && (
                           <span className="rounded-md bg-purple-50 border border-purple-200 px-1.5 py-0.5 text-[10px] font-bold text-purple-700 flex items-center gap-1">
                             <Layers className="h-3 w-3 text-purple-600" /> IDU
+                          </span>
+                        )}
+                        {(at.criteria || at.task?.target_criteria) && (at.criteria || at.task?.target_criteria)!.length > 0 && (
+                          <span className="rounded-md bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 flex items-center gap-1">
+                            <Target className="h-3 w-3 text-emerald-600" />
+                            {(at.criteria || at.task?.target_criteria)!.map((c) => c.replace('Criterion ', '')).join(', ')}
                           </span>
                         )}
                       </div>
@@ -1380,6 +1394,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <td className="py-3 px-3">
                           <div className="font-bold text-slate-900">{log.subject}</div>
                           <div className="text-slate-500 font-medium">{log.topic}</div>
+                          {log.criteria && log.criteria.length > 0 && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {log.criteria.map((c, i) => (
+                                <span key={i} className="inline-block rounded-md bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[9px] font-bold text-emerald-800">
+                                  {c.replace('Criterion ', '')}
+                                </span>
+                              ))}
+                            </div>
+                          )}
                         </td>
                         <td className="py-3 px-3">
                           <div className="font-bold text-indigo-700">{log.cluster}</div>
@@ -1473,6 +1496,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <td className="py-3 px-3">
                       <div className="font-bold text-slate-900">{log.subject}</div>
                       <div className="text-slate-500 font-medium">{log.topic}</div>
+                      {log.criteria && log.criteria.length > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {log.criteria.map((c, i) => (
+                            <span key={i} className="inline-block rounded-md bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[9px] font-bold text-emerald-800">
+                              {c.replace('Criterion ', '')}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 px-3">
                       <span className="font-bold text-indigo-700">{log.cluster}</span>
@@ -1608,6 +1640,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         responses: selectedLogForModal.responses,
                         feedback: selectedLogForModal.feedback,
                         studentReflection: selectedLogForModal.studentReflection,
+                        criteria: selectedLogForModal.criteria,
+                        strands: selectedLogForModal.strands,
                       })
                     }
                     className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100 transition-colors cursor-pointer"
@@ -1632,6 +1666,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         responses: selectedLogForModal.responses,
                         feedback: selectedLogForModal.feedback,
                         studentReflection: selectedLogForModal.studentReflection,
+                        criteria: selectedLogForModal.criteria,
+                        strands: selectedLogForModal.strands,
                       })
                     }
                     className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
@@ -1934,6 +1970,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </select>
                       </div>
                     )}
+
+                    {/* MYP Assessment Criteria & Strands Selector */}
+                    <div className="pt-2">
+                      <MYPCriteriaSelector
+                        selectedCriteria={newSelectedCriteria}
+                        selectedStrands={newSelectedStrands}
+                        onChange={(crit, str) => {
+                          setNewSelectedCriteria(crit);
+                          setNewSelectedStrands(str);
+                        }}
+                      />
+                    </div>
                   </div>
 
                   {publishError && (

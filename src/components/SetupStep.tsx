@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { ATL_DATA } from '../data/atlData';
 import { ATLCategoryKey, TaskMeta, AssignedTask } from '../types';
-import { Sparkles, HelpCircle, Layers, Link as LinkIcon, User, ClipboardList, CheckCircle2, ArrowRight, Trash2, ShieldAlert } from 'lucide-react';
+import { MYPCriteriaSelector } from './MYPCriteriaSelector';
+import { Sparkles, HelpCircle, Layers, Link as LinkIcon, User, ClipboardList, CheckCircle2, ArrowRight, Trash2, ShieldAlert, Target } from 'lucide-react';
 
 interface SetupStepProps {
   meta: TaskMeta;
@@ -145,6 +146,12 @@ export const SetupStep: React.FC<SetupStepProps> = ({
                     {at.task?.idu_note && (
                       <span className="rounded-md bg-purple-50 border border-purple-200 px-2 py-0.5 text-purple-700 flex items-center gap-1">
                         <Layers className="h-3 w-3 text-purple-600" /> IDU
+                      </span>
+                    )}
+                    {(at.criteria || at.task?.target_criteria) && (at.criteria || at.task?.target_criteria)!.length > 0 && (
+                      <span className="rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-emerald-800 flex items-center gap-1">
+                        <Target className="h-3 w-3 text-emerald-600" />
+                        {(at.criteria || at.task?.target_criteria)!.map((c) => c.replace('Criterion ', '')).join(', ')}
                       </span>
                     )}
                     {at.teacherName && (
@@ -410,6 +417,15 @@ export const SetupStep: React.FC<SetupStepProps> = ({
             </select>
           </div>
         )}
+
+        {/* MYP Assessment Criteria & Strands Selector */}
+        <div className="border-t border-slate-200 pt-4">
+          <MYPCriteriaSelector
+            selectedCriteria={meta.criteria || []}
+            selectedStrands={meta.strands || []}
+            onChange={(crit, str) => setMeta({ ...meta, criteria: crit, strands: str })}
+          />
+        </div>
 
         {/* Error message display */}
         {errorMessage && (

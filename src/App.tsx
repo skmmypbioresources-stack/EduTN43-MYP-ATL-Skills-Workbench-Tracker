@@ -129,6 +129,8 @@ export default function App() {
       category: assignedTask.category,
       cluster: assignedTask.cluster,
       iduSubject: null,
+      criteria: assignedTask.criteria || assignedTask.task?.target_criteria,
+      strands: assignedTask.strands || assignedTask.task?.target_strands,
     });
     setTask(assignedTask.task);
     setResponses({});
@@ -144,6 +146,8 @@ export default function App() {
     category: ATLCategoryKey;
     cluster: string;
     iduSubject?: string | null;
+    criteria?: string[];
+    strands?: string[];
   }) => {
     const taskMeta: TaskMeta = {
       subject: taskData.subject,
@@ -152,6 +156,8 @@ export default function App() {
       category: taskData.category,
       cluster: taskData.cluster,
       iduSubject: taskData.iduSubject || null,
+      criteria: taskData.criteria,
+      strands: taskData.strands,
     };
 
     const generatedTask = await generateTaskClient(taskMeta, false, customApiKey);
@@ -170,6 +176,8 @@ export default function App() {
       academicYear,
       term,
       active: true,
+      criteria: taskData.criteria || generatedTask.target_criteria,
+      strands: taskData.strands || generatedTask.target_strands,
     };
 
     await saveAssignedTaskToFirestore(newAssignedTask);
@@ -249,6 +257,8 @@ export default function App() {
         taskTitle: task.title,
         responses: formattedResponses,
         feedback: fbData,
+        criteria: meta.criteria || task.target_criteria,
+        strands: meta.strands || task.target_strands,
       };
 
       setLogs((prev) => [newLog, ...prev]);

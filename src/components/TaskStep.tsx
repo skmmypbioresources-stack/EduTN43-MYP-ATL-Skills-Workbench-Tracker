@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { GeneratedTask, TaskMeta, StudentResponseItem } from '../types';
-import { ArrowLeft, Send, Clock, BookOpen, Layers, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, Send, Clock, BookOpen, Layers, ShieldAlert, Target } from 'lucide-react';
 
 interface TaskStepProps {
   task: GeneratedTask;
@@ -72,6 +72,29 @@ export const TaskStep: React.FC<TaskStepProps> = ({
       <div className="mt-5 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-5 text-sm leading-relaxed text-indigo-950 font-medium shadow-2xs">
         {task.context}
       </div>
+
+      {/* Target MYP Criteria & Strands Box */}
+      {((task.target_criteria && task.target_criteria.length > 0) || (meta.criteria && meta.criteria.length > 0)) && (
+        <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 text-xs text-emerald-950">
+          <div className="flex items-center gap-2 font-bold text-emerald-900 mb-1">
+            <Target className="h-4 w-4 text-emerald-600" />
+            <span className="uppercase tracking-wider">Target MYP Assessment Criteria & Strands:</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5 mt-1.5">
+            {(task.target_criteria || meta.criteria)!.map((crit, cIdx) => (
+              <span key={cIdx} className="rounded-md bg-white border border-emerald-200 px-2 py-0.5 text-xs font-extrabold text-emerald-800 shadow-2xs">
+                {crit}
+              </span>
+            ))}
+          </div>
+          {(task.target_strands || meta.strands) && (task.target_strands || meta.strands)!.length > 0 && (
+            <div className="mt-2 text-[11px] text-emerald-800 border-t border-emerald-200/60 pt-2 space-y-0.5">
+              <span className="font-bold text-emerald-900">Focused Strands: </span>
+              {(task.target_strands || meta.strands)!.join(' • ')}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ATL Focus Box */}
       <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs text-slate-600">

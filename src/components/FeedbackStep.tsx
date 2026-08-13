@@ -127,6 +127,8 @@ export const FeedbackStep: React.FC<FeedbackStepProps> = ({
         studentReflection: reflectionText.trim() || undefined,
         attemptNumber: attemptCount,
         previousLevels: pastLevels,
+        criteria: (task.target_criteria && task.target_criteria.length > 0) ? task.target_criteria : meta.criteria,
+        strands: (task.target_strands && task.target_strands.length > 0) ? task.target_strands : meta.strands,
       };
       await exportToPdf(reportData);
     } catch (err) {
@@ -156,6 +158,8 @@ export const FeedbackStep: React.FC<FeedbackStepProps> = ({
       studentReflection: reflectionText.trim() || undefined,
       attemptNumber: attemptCount,
       previousLevels: pastLevels,
+      criteria: (task.target_criteria && task.target_criteria.length > 0) ? task.target_criteria : meta.criteria,
+      strands: (task.target_strands && task.target_strands.length > 0) ? task.target_strands : meta.strands,
     });
   };
 

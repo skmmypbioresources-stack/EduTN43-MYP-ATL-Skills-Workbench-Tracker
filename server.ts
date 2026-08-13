@@ -25,6 +25,65 @@ function getGenAIClient(customKey?: string) {
   });
 }
 
+// Helper function to handle transient 503/429 model overload errors with automatic retries and model fallbacks
+async function generateContentWithRetry(
+  ai: GoogleGenAI,
+  params: {
+    systemInstruction: string;
+    contents: string;
+    temperature: number;
+    responseMimeType: string;
+    responseSchema: any;
+  },
+  maxRetriesPerModel = 2
+) {
+  const models = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+  let lastErr: any = null;
+
+  for (const modelName of models) {
+    for (let attempt = 1; attempt <= maxRetriesPerModel; attempt++) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelName,
+          contents: params.contents,
+          config: {
+            systemInstruction: params.systemInstruction,
+            temperature: params.temperature,
+            responseMimeType: params.responseMimeType,
+            responseSchema: params.responseSchema,
+          },
+        });
+        return response;
+      } catch (err: any) {
+        lastErr = err;
+        const msg = String(err?.message || err);
+        const code = err?.status || err?.code;
+        const isTransient =
+          code === 503 ||
+          code === 429 ||
+          msg.includes('503') ||
+          msg.includes('high demand') ||
+          msg.includes('UNAVAILABLE') ||
+          msg.includes('RESOURCE_EXHAUSTED') ||
+          msg.includes('overloaded');
+
+        if (isTransient) {
+          console.warn(`[Gemini Retry] Model ${modelName} attempt ${attempt} failed (${msg}). Retrying...`);
+          if (attempt < maxRetriesPerModel) {
+            await new Promise((resolve) => setTimeout(resolve, attempt * 1200));
+            continue;
+          }
+          console.warn(`[Gemini Fallback] Model ${modelName} exhausted retries, trying next model...`);
+          break;
+        } else {
+          throw err;
+        }
+      }
+    }
+  }
+  throw lastErr;
+}
+
 // Health check endpoint
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
@@ -33,7 +92,7 @@ app.get('/api/health', (req, res) => {
 // Task Generator API
 app.post('/api/generate-task', async (req, res) => {
   try {
-    const { subject, topic, year, category, cluster, autoCluster, iduSubject, apiKey: bodyApiKey } = req.body;
+    const { subject, topic, year, category, cluster, autoCluster, iduSubject, criteria, strands, apiKey: bodyApiKey } = req.body;
     const customApiKey = (req.headers['x-gemini-api-key'] as string) || bodyApiKey;
 
     if (!subject || !topic) {
@@ -42,19 +101,26 @@ app.post('/api/generate-task', async (req, res) => {
 
     const ai = getGenAIClient(customApiKey);
 
-    const systemInstruction = `You are a friendly, encouraging IB MYP educator designing simple, clear, age-appropriate classroom tasks for middle school students (MYP 1 to MYP 5 / Grades 6 to 10).
+    const systemInstruction = `You are a friendly, encouraging IB MYP educator designing simple, clear, age-appropriate classroom tasks for middle school students.
 
-CRITICAL ACCESSIBILITY & AGE LEVEL MANDATE:
-- DO NOT create DP (Diploma Programme) or university-level complex questions.
-- MAXIMUM difficulty is Grade 10 / MYP 5, but even for MYP 5, questions MUST BE EASY to understand and straightforward to answer.
-- For younger grades (MYP 1, MYP 2, MYP 3, MYP 4 / Grades 6-9), make questions VERY EASY, simple, relatable, and direct.
-- Use clear, simple vocabulary, short sentences, and explicit step-by-step prompts so students immediately know what to write without feeling overwhelmed.
-- Avoid dense academic jargon or complicated sentence structures.
-- Make questions encouraging and fun to attempt so students feel confident.
-- Provide scaffolded prompts (Part A: simple identification or recall; Part B: simple explanation or cause-and-effect; Part C: simple personal reflection or decision).
-- Placeholders must offer friendly, concrete sentence starters (e.g., "For example: I think... because...").
+CRITICAL MANDATES:
+1. STRICT QUESTION COUNT: Generate EXACTLY 4 scaffolded question parts (Part A, Part B, Part C, and Part D) - NEVER 3, NEVER 5.
+   - Part A: Identify & Recall (basic facts or direct observations).
+   - Part B: Explain & Describe (simple cause-and-effect or process).
+   - Part C: Apply Knowledge (using ideas in a practical scenario or simple situation).
+   - Part D: Analyze & Reflect (a simple decision, challenge, or real-world impact).
 
-The task must use the provided SUBJECT and TOPIC as its strict subject content and train the given ATL SKILL CLUSTER in students at MYP year (${year || 'MYP 3'}).
+2. STRICT YEAR-LEVEL APPROPRIATENESS & AGE CALIBRATION:
+   - Target MYP Year: MYP ${year || '3'} (Grade ${Number(year || 3) + 5}).
+   - STRICTLY adapt question complexity, depth, and wording to ONLY the selected MYP year level:
+     * MYP 1 (Grade 6, ages 11-12): Keep questions EXTREMELY simple, basic, encouraging, and direct! MYP 1 students are just entering middle school — DO NOT give them complex multi-part prompts or heavy academic jargon. Use short sentence structures and relatable everyday examples so they build confidence.
+     * MYP 2 & MYP 3 (Grades 7-8): Standard middle school level with guided explanations and simple application.
+     * MYP 4 & MYP 5 (Grades 9-10): Grade 9-10 level with basic analysis, but strictly within middle school bounds (DO NOT use DP / university level concepts).
+   - Keep context crisp (2 short sentences) and placeholders friendly with clear sentence starters (e.g., "For example: I notice that...").
+${criteria && criteria.length > 0 ? `- EXPLICITLY FOCUS TASK PROMPTS ON TARGET MYP CRITERIA: ${criteria.join(', ')}` : ''}
+${strands && strands.length > 0 ? `- TARGET SPECIFIC STRANDS:\n  ${strands.join('\n  ')}` : ''}
+
+The task must use the provided SUBJECT and TOPIC as its strict subject content and train the given ATL SKILL CLUSTER in students at MYP year (${year || '3'}).
 Return ONLY valid JSON matching the schema.`;
 
     const userPrompt = `
@@ -64,40 +130,42 @@ MYP YEAR: MYP ${year || '3'}
 ATL CATEGORY: ${category || 'Thinking'}
 ATL CLUSTER: ${cluster || 'Critical thinking'}
 ${iduSubject ? `INTERDISCIPLINARY SECOND SUBJECT: ${iduSubject}` : 'NO IDU'}
+${criteria && criteria.length > 0 ? `TARGET MYP CRITERIA: ${criteria.join(', ')}` : ''}
+${strands && strands.length > 0 ? `TARGET STRANDS:\n${strands.join('\n')}` : ''}
     `;
 
     if (ai) {
       try {
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.6-flash',
+        const response = await generateContentWithRetry(ai, {
           contents: userPrompt,
-          config: {
-            systemInstruction,
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                title: { type: Type.STRING, description: 'Short engaging task title' },
-                chosen_cluster: { type: Type.STRING, description: 'The ATL cluster targeted' },
-                context: { type: Type.STRING, description: '2-3 sentence framing grounded in the subject topic' },
-                atl_focus_explainer: { type: Type.STRING, description: '1-2 sentences telling the student what skill this builds and why' },
-                idu_note: { type: Type.STRING, description: '1-2 sentence note on interdisciplinary link, if applicable' },
-                parts: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      label: { type: Type.STRING, description: 'Part label e.g. A, B, C' },
-                      prompt: { type: Type.STRING, description: 'Part instruction text' },
-                      placeholder: { type: Type.STRING, description: 'Short hint of what a response should contain' }
-                    },
-                    required: ['label', 'prompt']
-                  }
-                },
-                estimated_minutes: { type: Type.NUMBER, description: 'Estimated time in minutes' }
+          systemInstruction,
+          temperature: 0.3,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING, description: 'Short engaging task title' },
+              chosen_cluster: { type: Type.STRING, description: 'The ATL cluster targeted' },
+              context: { type: Type.STRING, description: '2 sentence framing grounded in the subject topic' },
+              atl_focus_explainer: { type: Type.STRING, description: '1 sentence telling the student what skill this builds and why' },
+              idu_note: { type: Type.STRING, description: '1 sentence note on interdisciplinary link, if applicable' },
+              target_criteria: { type: Type.ARRAY, items: { type: Type.STRING }, description: 'Target MYP criteria' },
+              target_strands: { type: Type.ARRAY, items: { type: Type.STRING }, description: 'Target MYP strands' },
+              parts: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    label: { type: Type.STRING, description: 'Part label: strictly A, B, C, D' },
+                    prompt: { type: Type.STRING, description: 'Part instruction text calibrated strictly to target MYP year level' },
+                    placeholder: { type: Type.STRING, description: 'Short sentence starter' }
+                  },
+                  required: ['label', 'prompt']
+                }
               },
-              required: ['title', 'chosen_cluster', 'context', 'atl_focus_explainer', 'parts', 'estimated_minutes']
-            }
+              estimated_minutes: { type: Type.NUMBER, description: 'Estimated time in minutes' }
+            },
+            required: ['title', 'chosen_cluster', 'context', 'atl_focus_explainer', 'parts', 'estimated_minutes']
           }
         });
 
@@ -109,6 +177,15 @@ ${iduSubject ? `INTERDISCIPLINARY SECOND SUBJECT: ${iduSubject}` : 'NO IDU'}
             .replace(/\s*```$/, '')
             .trim();
           const parsed = JSON.parse(cleanedText);
+          if (parsed.parts && parsed.parts.length > 4) {
+            parsed.parts = parsed.parts.slice(0, 4);
+          }
+          if (criteria && criteria.length > 0 && !parsed.target_criteria) {
+            parsed.target_criteria = criteria;
+          }
+          if (strands && strands.length > 0 && !parsed.target_strands) {
+            parsed.target_strands = strands;
+          }
           return res.json(parsed);
         }
       } catch (geminiError: any) {
@@ -121,24 +198,29 @@ ${iduSubject ? `INTERDISCIPLINARY SECOND SUBJECT: ${iduSubject}` : 'NO IDU'}
     const fallbackTask = {
       title: `${chosenClust} Activity: ${topic}`,
       chosen_cluster: chosenClust,
-      context: `In this ${subject} activity about "${topic}", you will practice your ${chosenClust.toLowerCase()} skills through simple, step-by-step questions.`,
-      atl_focus_explainer: `This task helps you build your ${category || 'Thinking'} skills (${chosenClust}) by guiding you to observe, explain, and share your ideas clearly.`,
+      context: `In this ${subject} activity about "${topic}", you will practice your ${chosenClust.toLowerCase()} skills through 4 step-by-step questions.`,
+      atl_focus_explainer: `This task helps you build your ${category || 'Thinking'} skills (${chosenClust}) by guiding you to observe, explain, apply, and reflect on ideas.`,
       idu_note: iduSubject ? `Connects ${subject} ideas with ${iduSubject}.` : '',
       parts: [
         {
           label: 'A',
-          prompt: `What are 2 simple things you already know or notice about ${topic} in ${subject}?`,
+          prompt: `Identify & State: What are 2 simple facts or observations you know about ${topic} in ${subject}?`,
           placeholder: `For example: One key fact about ${topic} is...`
         },
         {
           label: 'B',
-          prompt: `How does ${topic} work or affect things around us? Explain in 2-3 short sentences.`,
+          prompt: `Explain & Describe: How does ${topic} work or function? Explain in 2 short sentences.`,
           placeholder: `For example: When ${topic} happens, it causes... because...`
         },
         {
           label: 'C',
-          prompt: `What is your opinion or a question you still have about ${topic}? Explain why you think so.`,
-          placeholder: `For example: I think ${topic} is important because...`
+          prompt: `Apply Knowledge: How can you use what you learned about ${topic} in a real situation or example?`,
+          placeholder: `For example: In a real scenario, we can apply ${topic} by...`
+        },
+        {
+          label: 'D',
+          prompt: `Analyze & Reflect: What is an important decision, advantage, or question about ${topic}? Explain your idea.`,
+          placeholder: `For example: An important idea about ${topic} is... because...`
         }
       ],
       estimated_minutes: 15
@@ -187,34 +269,32 @@ ${responses.map((r: any) => `Part ${r.label}: ${r.prompt}\nResponse: ${r.respons
 
     if (ai) {
       try {
-        const response = await ai.models.generateContent({
-          model: 'gemini-3.6-flash',
+        const response = await generateContentWithRetry(ai, {
           contents: userPrompt,
-          config: {
-            systemInstruction,
-            responseMimeType: 'application/json',
-            responseSchema: {
-              type: Type.OBJECT,
-              properties: {
-                level: {
-                  type: Type.STRING,
-                  enum: ['Developing', 'Applying', 'Extending'],
-                  description: 'The overall performance level on the ATL skill rubric'
-                },
-                summary: { type: Type.STRING, description: '2-3 sentence overview grounded in evidence from their responses' },
-                strengths: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING },
-                  description: 'Bullet points highlighting what worked well'
-                },
-                next_steps: {
-                  type: Type.ARRAY,
-                  items: { type: Type.STRING },
-                  description: 'Actionable steps to advance to the next level'
-                }
+          systemInstruction,
+          temperature: 0.2,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              level: {
+                type: Type.STRING,
+                enum: ['Developing', 'Applying', 'Extending'],
+                description: 'The overall performance level on the ATL skill rubric'
               },
-              required: ['level', 'summary', 'strengths', 'next_steps']
-            }
+              summary: { type: Type.STRING, description: '2-3 sentence overview grounded in evidence from their responses' },
+              strengths: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: 'Bullet points highlighting what worked well'
+              },
+              next_steps: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: 'Actionable steps to advance to the next level'
+              }
+            },
+            required: ['level', 'summary', 'strengths', 'next_steps']
           }
         });
 

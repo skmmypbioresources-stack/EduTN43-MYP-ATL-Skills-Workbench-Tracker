@@ -25,6 +25,8 @@ export interface GeneratedTask {
   context: string;
   atl_focus_explainer: string;
   idu_note?: string;
+  target_criteria?: string[];
+  target_strands?: string[];
   parts: TaskPart[];
   estimated_minutes: number;
 }
@@ -36,6 +38,8 @@ export interface TaskMeta {
   category: ATLCategoryKey;
   cluster: string;
   iduSubject?: string | null;
+  criteria?: string[];
+  strands?: string[];
 }
 
 export type SkillLevel = 'Developing' | 'Applying' | 'Extending';
@@ -70,6 +74,8 @@ export interface ATLTaskLog {
   feedback: TaskFeedback;
   studentReflection?: string;
   attemptNumber?: number;
+  criteria?: string[];
+  strands?: string[];
 }
 
 export interface AssignedTask {
@@ -86,5 +92,7 @@ export interface AssignedTask {
   academicYear: string;
   term: string;
   active: boolean;
+  criteria?: string[];
+  strands?: string[];
 }
 

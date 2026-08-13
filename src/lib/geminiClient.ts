@@ -1,9 +1,80 @@
 import { GeneratedTask, TaskFeedback, TaskMeta, StudentResponseItem } from '../types';
 
 /**
- * Direct Client-Side Gemini API generator for static hosts (Vercel, GitHub Pages, Desktop App)
- * as well as full-stack server proxy.
+ * Direct Client-Side Gemini API generator with retries and model fallbacks for transient 503 errors.
  */
+
+async function fetchGeminiWithRetry(
+  apiKey: string,
+  systemInstruction: string,
+  userPrompt: string,
+  temperature = 0.3
+): Promise<string> {
+  const models = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+  let lastErrMessage = '';
+
+  for (const model of models) {
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        const res = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: `${systemInstruction}\n\n${userPrompt}` }] }],
+            generationConfig: {
+              temperature,
+              responseMimeType: 'application/json',
+            },
+          }),
+        });
+
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          const errMsg = errJson?.error?.message || `Gemini API status ${res.status}`;
+          lastErrMessage = errMsg;
+          const isTransient =
+            res.status === 503 ||
+            res.status === 429 ||
+            errMsg.includes('503') ||
+            errMsg.includes('high demand') ||
+            errMsg.includes('UNAVAILABLE') ||
+            errMsg.includes('RESOURCE_EXHAUSTED');
+
+          if (isTransient) {
+            console.warn(`[Client Gemini Retry] Model ${model} attempt ${attempt} failed (${errMsg}). Retrying...`);
+            if (attempt < 2) {
+              await new Promise((r) => setTimeout(r, 1200));
+              continue;
+            }
+            console.warn(`[Client Gemini Fallback] Model ${model} exhausted retries, trying fallback model...`);
+            break;
+          } else {
+            throw new Error(errMsg);
+          }
+        }
+
+        const geminiData = await res.json();
+        const rawText = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (rawText) {
+          return rawText;
+        }
+      } catch (err: any) {
+        lastErrMessage = err?.message || String(err);
+        if (
+          attempt < 2 &&
+          (lastErrMessage.includes('503') ||
+            lastErrMessage.includes('UNAVAILABLE') ||
+            lastErrMessage.includes('high demand'))
+        ) {
+          await new Promise((r) => setTimeout(r, 1200));
+          continue;
+        }
+      }
+    }
+  }
+  throw new Error(lastErrMessage || 'Gemini API call failed across all models.');
+}
 
 export async function generateTaskClient(
   meta: TaskMeta,
@@ -26,6 +97,8 @@ export async function generateTaskClient(
           cluster: meta.cluster,
           autoCluster,
           iduSubject: meta.iduSubject,
+          criteria: meta.criteria,
+          strands: meta.strands,
         }),
       });
 
@@ -40,17 +113,24 @@ export async function generateTaskClient(
   // 2. If user entered a custom Gemini API key, call Gemini directly from browser!
   if (trimmedKey) {
     try {
-      const systemInstruction = `You are a friendly, encouraging IB MYP educator designing simple, clear, age-appropriate classroom tasks for middle school students (MYP 1 to MYP 5 / Grades 6 to 10).
+      const systemInstruction = `You are a friendly, encouraging IB MYP educator designing simple, clear, age-appropriate classroom tasks for middle school students.
 
-CRITICAL ACCESSIBILITY & AGE LEVEL MANDATE:
-- DO NOT create DP (Diploma Programme) or university-level complex questions.
-- MAXIMUM difficulty is Grade 10 / MYP 5, but even for MYP 5, questions MUST BE EASY to understand and straightforward to answer.
-- For younger grades (MYP 1, MYP 2, MYP 3, MYP 4 / Grades 6-9), make questions VERY EASY, simple, relatable, and direct.
-- Use clear, simple vocabulary, short sentences, and explicit step-by-step prompts so students immediately know what to write without feeling overwhelmed.
-- Avoid dense academic jargon or complicated sentence structures.
-- Make questions encouraging and fun to attempt so students feel confident.
-- Provide scaffolded prompts (Part A: simple identification or recall; Part B: simple explanation or cause-and-effect; Part C: simple personal reflection or decision).
-- Placeholders must offer friendly, concrete sentence starters (e.g., "For example: I think... because...").
+CRITICAL MANDATES:
+1. STRICT QUESTION COUNT: Generate EXACTLY 4 scaffolded question parts (Part A, Part B, Part C, and Part D) - NEVER 3, NEVER 5.
+   - Part A: Identify & Recall (basic facts or direct observations).
+   - Part B: Explain & Describe (simple cause-and-effect or process).
+   - Part C: Apply Knowledge (using ideas in a practical scenario or simple situation).
+   - Part D: Analyze & Reflect (a simple decision, challenge, or real-world impact).
+
+2. STRICT YEAR-LEVEL APPROPRIATENESS & AGE CALIBRATION:
+   - Target MYP Year: MYP ${meta.year || '3'} (Grade ${Number(meta.year || 3) + 5}).
+   - STRICTLY adapt question complexity, depth, and wording to ONLY the selected MYP year level:
+     * MYP 1 (Grade 6, ages 11-12): Keep questions EXTREMELY simple, basic, encouraging, and direct! MYP 1 students are just entering middle school — DO NOT give them complex multi-part prompts or heavy academic jargon. Use short sentence structures and relatable everyday examples so they build confidence.
+     * MYP 2 & MYP 3 (Grades 7-8): Standard middle school level with guided explanations and simple application.
+     * MYP 4 & MYP 5 (Grades 9-10): Grade 9-10 level with basic analysis, but strictly within middle school bounds (DO NOT use DP / university level concepts).
+   - Keep context crisp (2 short sentences) and placeholders friendly with clear sentence starters (e.g., "For example: I notice that...").
+${meta.criteria && meta.criteria.length > 0 ? `- Target Criteria: ${meta.criteria.join(', ')}` : ''}
+${meta.strands && meta.strands.length > 0 ? `- Target Strands:\n  ${meta.strands.join('\n  ')}` : ''}
 
 Return strictly valid JSON with this EXACT structure (no markdown fences, no text outside JSON):
 {
@@ -59,56 +139,47 @@ Return strictly valid JSON with this EXACT structure (no markdown fences, no tex
   "context": "Clear, simple MYP scenario establishing the topic in 2 short, easy sentences.",
   "atl_focus_explainer": "1 short sentence explaining what simple skill they are practicing.",
   "idu_note": "Optional simple interdisciplinary note if applicable",
+  "target_criteria": ${JSON.stringify(meta.criteria || [])},
+  "target_strands": ${JSON.stringify(meta.strands || [])},
   "parts": [
     {
       "label": "A",
-      "prompt": "Simple, easy question prompt asking for basic facts or observations...",
-      "placeholder": "Friendly sentence starter or tip..."
+      "prompt": "Identify & State prompt...",
+      "placeholder": "Friendly sentence starter..."
     },
     {
       "label": "B",
-      "prompt": "Simple, step-by-step question prompt asking to explain or apply...",
-      "placeholder": "Friendly sentence starter or tip..."
+      "prompt": "Explain & Describe prompt...",
+      "placeholder": "Friendly sentence starter..."
     },
     {
       "label": "C",
-      "prompt": "Simple question prompt asking for student's opinion or reflection...",
-      "placeholder": "Friendly sentence starter or tip..."
+      "prompt": "Apply Knowledge prompt...",
+      "placeholder": "Friendly sentence starter..."
+    },
+    {
+      "label": "D",
+      "prompt": "Analyze & Reflect prompt...",
+      "placeholder": "Friendly sentence starter..."
     }
   ],
   "estimated_minutes": 15
 }`;
 
-      const userPrompt = `Subject: ${meta.subject}\nTopic: ${meta.topic}\nMYP Year: ${meta.year}\nATL Category: ${meta.category}\nATL Cluster: ${meta.cluster}${meta.iduSubject ? `\nIDU Secondary Subject: ${meta.iduSubject}` : ''}`;
+      const userPrompt = `Subject: ${meta.subject}\nTopic: ${meta.topic}\nMYP Year: ${meta.year}\nATL Category: ${meta.category}\nATL Cluster: ${meta.cluster}${meta.iduSubject ? `\nIDU Secondary Subject: ${meta.iduSubject}` : ''}${meta.criteria ? `\nTarget Criteria: ${meta.criteria.join(', ')}` : ''}${meta.strands ? `\nTarget Strands: ${meta.strands.join('; ')}` : ''}`;
 
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${encodeURIComponent(trimmedKey)}`;
-
-      const res = await fetch(geminiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: `${systemInstruction}\n\n${userPrompt}` }] }],
-          generationConfig: {
-            temperature: 0.7,
-            responseMimeType: 'application/json',
-          },
-        }),
-      });
-
-      if (!res.ok) {
-        const errJson = await res.json().catch(() => ({}));
-        throw new Error(errJson?.error?.message || `Gemini API returned status ${res.status}`);
-      }
-
-      const geminiData = await res.json();
-      const rawText = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
+      const rawText = await fetchGeminiWithRetry(trimmedKey, systemInstruction, userPrompt, 0.3);
       if (rawText) {
         const cleanedText = rawText
           .replace(/^```json\s*/i, '')
           .replace(/^```\s*/, '')
           .replace(/\s*```$/, '')
           .trim();
-        return JSON.parse(cleanedText);
+        const parsed = JSON.parse(cleanedText);
+        if (parsed.parts && parsed.parts.length > 4) {
+          parsed.parts = parsed.parts.slice(0, 4);
+        }
+        return parsed;
       }
     } catch (apiErr: any) {
       console.warn('Direct client Gemini API error, falling back to smart template:', apiErr?.message || apiErr);
@@ -121,24 +192,29 @@ Return strictly valid JSON with this EXACT structure (no markdown fences, no tex
   return {
     title: `${chosenClust} Activity: ${meta.topic}`,
     chosen_cluster: chosenClust,
-    context: `In this ${meta.subject} activity on "${meta.topic}", you will practice your ${chosenClust.toLowerCase()} skills through simple, step-by-step questions.`,
-    atl_focus_explainer: `This task helps you build your ${meta.category} skills (${chosenClust}) by guiding you to observe, explain, and share your ideas clearly.`,
+    context: `In this ${meta.subject} activity on "${meta.topic}", you will practice your ${chosenClust.toLowerCase()} skills through 4 simple, step-by-step questions.`,
+    atl_focus_explainer: `This task helps you build your ${meta.category} skills (${chosenClust}) by guiding you to observe, explain, apply, and reflect on ideas.`,
     idu_note: meta.iduSubject ? `Connects ${meta.subject} ideas with ${meta.iduSubject}.` : undefined,
     parts: [
       {
         label: 'A',
-        prompt: `What are 2 simple things you already know or notice about ${meta.topic} in ${meta.subject}?`,
+        prompt: `Identify & State: What are 2 simple things you already know or notice about ${meta.topic} in ${meta.subject}?`,
         placeholder: `For example: One key fact about ${meta.topic} is...`,
       },
       {
         label: 'B',
-        prompt: `How does ${meta.topic} work or affect things around us? Explain in 2-3 short sentences.`,
+        prompt: `Explain & Describe: How does ${meta.topic} work or affect things around us? Explain in 2 short sentences.`,
         placeholder: `For example: When ${meta.topic} happens, it causes... because...`,
       },
       {
         label: 'C',
-        prompt: `What is your opinion or a question you still have about ${meta.topic}? Explain why you think so.`,
-        placeholder: `For example: I think ${meta.topic} is important because...`,
+        prompt: `Apply Knowledge: How can you use what you learned about ${meta.topic} in a real situation or example?`,
+        placeholder: `For example: In a real scenario, we can apply ${meta.topic} by...`,
+      },
+      {
+        label: 'D',
+        prompt: `Analyze & Reflect: What is an important decision, advantage, or question about ${meta.topic}? Explain your idea.`,
+        placeholder: `For example: An important idea about ${meta.topic} is... because...`,
       },
     ],
     estimated_minutes: 15,
@@ -195,31 +271,14 @@ Return strictly valid JSON with this EXACT structure:
 
       const userPrompt = `Task Title: ${task.title}\nSubject: ${meta.subject}\nMYP Year: ${meta.year}\nATL Cluster: ${task.chosen_cluster || meta.cluster}\n\nStudent Submitted Answers:\n${responses.map((r) => `Part ${r.label} (${r.prompt}):\nAnswer: ${r.response || '(Blank)'}`).join('\n\n')}`;
 
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${encodeURIComponent(trimmedKey)}`;
-
-      const res = await fetch(geminiUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: `${systemInstruction}\n\n${userPrompt}` }] }],
-          generationConfig: {
-            temperature: 0.3,
-            responseMimeType: 'application/json',
-          },
-        }),
-      });
-
-      if (res.ok) {
-        const geminiData = await res.json();
-        const rawText = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (rawText) {
-          const cleanedText = rawText
-            .replace(/^```json\s*/i, '')
-            .replace(/^```\s*/, '')
-            .replace(/\s*```$/, '')
-            .trim();
-          return JSON.parse(cleanedText);
-        }
+      const rawText = await fetchGeminiWithRetry(trimmedKey, systemInstruction, userPrompt, 0.2);
+      if (rawText) {
+        const cleanedText = rawText
+          .replace(/^```json\s*/i, '')
+          .replace(/^```\s*/, '')
+          .replace(/\s*```$/, '')
+          .trim();
+        return JSON.parse(cleanedText);
       }
     } catch (err: any) {
       console.warn('Direct Gemini evaluation error, using heuristic fallback:', err?.message || err);

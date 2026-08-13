@@ -18,6 +18,8 @@ export interface ReportData {
   studentReflection?: string;
   attemptNumber?: number;
   previousLevels?: string[];
+  criteria?: string[];
+  strands?: string[];
 }
 
 function generateReportHtml(data: ReportData): string {
@@ -82,6 +84,26 @@ function generateReportHtml(data: ReportData): string {
           </td>
         </tr>
       </table>
+
+      ${
+        (data.criteria && data.criteria.length > 0) || (data.strands && data.strands.length > 0)
+          ? `
+        <div style="margin-bottom: 20px; border: 1px solid #a7f3d0; background-color: #ecfdf5; border-left: 4px solid #059669; padding: 12px 14px; border-radius: 6px; font-size: 10.5pt; color: #064e3b;">
+          <div style="font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: #047857; margin-bottom: 4px; font-size: 9.5pt;">Target MYP Assessment Criteria & Strands</div>
+          ${
+            data.criteria && data.criteria.length > 0
+              ? `<div><strong>Target Criteria:</strong> ${data.criteria.map((c) => sanitize(c)).join(', ')}</div>`
+              : ''
+          }
+          ${
+            data.strands && data.strands.length > 0
+              ? `<div style="margin-top: 4px; font-size: 10pt; color: #065f46;"><strong>Focused Strands:</strong> ${data.strands.map((s) => sanitize(s)).join(' • ')}</div>`
+              : ''
+          }
+        </div>
+      `
+          : ''
+      }
 
       ${
         data.context
@@ -310,6 +332,26 @@ export function exportToWordDoc(data: ReportData) {
       </table>
 
       ${
+        (data.criteria && data.criteria.length > 0) || (data.strands && data.strands.length > 0)
+          ? `
+        <div style="margin-bottom: 20px; border: 1px solid #a7f3d0; background-color: #ecfdf5; border-left: 4px solid #059669; padding: 12px 14px; border-radius: 6px; font-size: 10.5pt; color: #064e3b;">
+          <div style="font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: #047857; margin-bottom: 4px; font-size: 9.5pt;">Target MYP Assessment Criteria & Strands</div>
+          ${
+            data.criteria && data.criteria.length > 0
+              ? `<div><strong>Target Criteria:</strong> ${data.criteria.map((c) => sanitize(c)).join(', ')}</div>`
+              : ''
+          }
+          ${
+            data.strands && data.strands.length > 0
+              ? `<div style="margin-top: 4px; font-size: 10pt; color: #065f46;"><strong>Focused Strands:</strong> ${data.strands.map((s) => sanitize(s)).join(' • ')}</div>`
+              : ''
+          }
+        </div>
+      `
+          : ''
+      }
+
+      ${
         data.context
           ? `
         <div class="section-heading">Task Context & Background</div>
@@ -416,6 +458,8 @@ export function exportToCsvSpreadsheet(logs: ATLTaskLog[], filenamePrefix = 'ATL
     'Subject Group',
     'Curriculum Topic',
     'Task Title',
+    'Target MYP Criteria',
+    'Target Strands',
     'ATL Category',
     'ATL Skill Cluster',
     'Level Achieved',
@@ -442,6 +486,8 @@ export function exportToCsvSpreadsheet(logs: ATLTaskLog[], filenamePrefix = 'ATL
       escapeCsv(log.subject),
       escapeCsv(log.topic),
       escapeCsv(log.taskTitle || 'ATL Skill Assessment'),
+      escapeCsv(log.criteria && log.criteria.length > 0 ? log.criteria.join('; ') : 'N/A'),
+      escapeCsv(log.strands && log.strands.length > 0 ? log.strands.join('; ') : 'N/A'),
       escapeCsv(log.category),
       escapeCsv(log.cluster),
       escapeCsv(log.level),
