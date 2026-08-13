@@ -91,15 +91,38 @@ export function subscribeToTaskLogs(
 }
 
 /**
+ * Helper to recursively strip 'undefined' properties before sending to Firestore
+ */
+function removeUndefinedFields<T>(obj: T): T {
+  if (obj === null || obj === undefined) {
+    return null as any;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(removeUndefinedFields) as any;
+  }
+  if (typeof obj === 'object') {
+    const cleaned: Record<string, any> = {};
+    for (const [key, value] of Object.entries(obj)) {
+      if (value !== undefined) {
+        cleaned[key] = removeUndefinedFields(value);
+      }
+    }
+    return cleaned as T;
+  }
+  return obj;
+}
+
+/**
  * Save a new or updated task log to Firestore
  */
 export async function saveTaskLogToFirestore(log: ATLTaskLog): Promise<void> {
   try {
     const docRef = doc(db, COLLECTION_NAME, log.id);
-    await setDoc(docRef, {
+    const dataToSave = removeUndefinedFields({
       ...log,
       createdAt: new Date().toISOString()
     });
+    await setDoc(docRef, dataToSave);
   } catch (err) {
     console.error('Failed to save log to Firestore:', err);
     throw err;
@@ -112,9 +135,9 @@ export async function saveTaskLogToFirestore(log: ATLTaskLog): Promise<void> {
 export async function updateTaskLogReflectionInFirestore(logId: string, reflection: string): Promise<void> {
   try {
     const docRef = doc(db, COLLECTION_NAME, logId);
-    await updateDoc(docRef, {
+    await updateDoc(docRef, removeUndefinedFields({
       studentReflection: reflection
-    });
+    }));
   } catch (err) {
     console.error('Failed to update student reflection in Firestore:', err);
     throw err;
@@ -189,10 +212,11 @@ export function subscribeToAssignedTasks(
 export async function saveAssignedTaskToFirestore(assignedTask: AssignedTask): Promise<void> {
   try {
     const docRef = doc(db, ASSIGNED_COLLECTION_NAME, assignedTask.id);
-    await setDoc(docRef, {
+    const dataToSave = removeUndefinedFields({
       ...assignedTask,
       createdAt: assignedTask.createdAt || new Date().toISOString()
     });
+    await setDoc(docRef, dataToSave);
   } catch (err) {
     console.error('Failed to save assigned task to Firestore:', err);
     throw err;
