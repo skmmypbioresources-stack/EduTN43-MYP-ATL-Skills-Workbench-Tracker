@@ -143,6 +143,7 @@ export default function App() {
     mypYear: string;
     category: ATLCategoryKey;
     cluster: string;
+    iduSubject?: string | null;
   }) => {
     const taskMeta: TaskMeta = {
       subject: taskData.subject,
@@ -150,6 +151,7 @@ export default function App() {
       year: taskData.mypYear,
       category: taskData.category,
       cluster: taskData.cluster,
+      iduSubject: taskData.iduSubject || null,
     };
 
     const generatedTask = await generateTaskClient(taskMeta, false, customApiKey);

@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { ATLTaskLog, ATLCategoryKey, AssignedTask } from '../types';
-import { exportToWordDoc, exportToPdf } from '../lib/exportUtils';
+import { exportToWordDoc, exportToPdf, exportToCsvSpreadsheet, getAvailableMonthsFromLogs } from '../lib/exportUtils';
 import { ATL_DATA, ALL_CLUSTERS } from '../data/atlData';
 import {
   BarChart,
@@ -43,6 +43,7 @@ import {
   Send,
   RefreshCw,
   MessageSquareQuote,
+  FileSpreadsheet,
 } from 'lucide-react';
 
 interface DashboardViewProps {
@@ -61,6 +62,7 @@ interface DashboardViewProps {
     mypYear: string;
     category: ATLCategoryKey;
     cluster: string;
+    iduSubject?: string | null;
   }) => Promise<void>;
   onDeleteAssignedTask?: (taskId: string) => Promise<void>;
 }
@@ -116,6 +118,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [newMypYear, setNewMypYear] = useState<string>('3');
   const [newCategory, setNewCategory] = useState<ATLCategoryKey>('Thinking');
   const [newCluster, setNewCluster] = useState<string>('Critical thinking');
+  const [newIduToggle, setNewIduToggle] = useState<boolean>(false);
+  const [newIduSubject, setNewIduSubject] = useState<string>('Sciences');
   const [isPublishingTask, setIsPublishingTask] = useState<boolean>(false);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [publishSuccess, setPublishSuccess] = useState<string | null>(null);
@@ -149,10 +153,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         mypYear: newMypYear,
         category: newCategory,
         cluster: newCluster,
+        iduSubject: newIduToggle ? newIduSubject : null,
       });
 
       setPublishSuccess('Task generated and assigned to all students successfully!');
       setNewTopic('');
+      setNewIduToggle(false);
       setTimeout(() => {
         setPublishSuccess(null);
         setShowAssignModal(false);
@@ -191,6 +197,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [itemToDelete, setItemToDelete] = useState<{ id: string; title?: string } | null>(null);
   const [deletePasswordInput, setDeletePasswordInput] = useState<string>('');
   const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // Monthly Report Spreadsheet Export Modal State
+  const [showMonthlyExportModal, setShowMonthlyExportModal] = useState<boolean>(false);
+  const [selectedExportMonth, setSelectedExportMonth] = useState<string>('ALL');
+  const [selectedExportClass, setSelectedExportClass] = useState<string>('ALL');
+  const [selectedExportSubject, setSelectedExportSubject] = useState<string>('ALL');
+
+  const availableMonths = useMemo(() => {
+    return getAvailableMonthsFromLogs(logs);
+  }, [logs]);
+
+  const monthlyFilteredLogs = useMemo(() => {
+    return logs.filter((log) => {
+      if (selectedExportMonth !== 'ALL') {
+        const ym = log.date ? log.date.substring(0, 7) : '';
+        if (ym !== selectedExportMonth) return false;
+      }
+      if (selectedExportClass !== 'ALL') {
+        if (log.mypYear !== selectedExportClass) return false;
+      }
+      if (selectedExportSubject !== 'ALL') {
+        if (log.subject !== selectedExportSubject) return false;
+      }
+      return true;
+    });
+  }, [logs, selectedExportMonth, selectedExportClass, selectedExportSubject]);
 
   const promptDeleteLog = (logId: string, title?: string) => {
     setDeleteActionType('log');
@@ -585,6 +617,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </button>
 
             <button
+              onClick={() => setShowMonthlyExportModal(true)}
+              className="flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-bold text-emerald-800 hover:border-emerald-300 hover:bg-emerald-100 transition-all cursor-pointer shadow-2xs"
+              title="Download monthly or custom task evaluation report as an Excel spreadsheet (.csv)"
+            >
+              <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
+              <span>Monthly Excel Report</span>
+            </button>
+
+            <button
               onClick={() => setShowChangePasswordModal(true)}
               className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-bold text-slate-700 hover:border-indigo-300 hover:bg-indigo-50/50 transition-all"
               title="Change default or custom teacher password"
@@ -653,10 +694,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs"
                 >
                   <div>
-                    <div className="flex items-center justify-between gap-2 mb-1.5">
-                      <span className="rounded-md bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
-                        {at.subject} • MYP {at.mypYear}
-                      </span>
+                    <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
+                      <div className="flex items-center gap-1">
+                        <span className="rounded-md bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
+                          {at.subject} • MYP {at.mypYear}
+                        </span>
+                        {at.task?.idu_note && (
+                          <span className="rounded-md bg-purple-50 border border-purple-200 px-1.5 py-0.5 text-[10px] font-bold text-purple-700 flex items-center gap-1">
+                            <Layers className="h-3 w-3 text-purple-600" /> IDU
+                          </span>
+                        )}
+                      </div>
                       <span className="text-[10px] text-slate-400 font-medium">
                         {at.teacherName ? `By ${at.teacherName}` : 'Teacher Task'}
                       </span>
@@ -1365,7 +1413,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Task Log History Table */}
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
           <div>
             <h3 className="text-xl font-bold text-slate-900">
               Academic Year Task History Log
@@ -1375,6 +1423,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               {selectedClass !== 'All' && ` (${formatClassLabel(selectedClass)})`}
             </p>
           </div>
+
+          <button
+            onClick={() => exportToCsvSpreadsheet(filteredLogs, `ATL_Task_Logs_${selectedClass === 'All' ? 'All_Classes' : 'MYP' + selectedClass}`)}
+            disabled={filteredLogs.length === 0}
+            className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+            title="Export currently filtered history logs as Excel spreadsheet (.csv)"
+          >
+            <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
+            <span>Export History Spreadsheet (.csv)</span>
+          </button>
         </div>
 
         <div className="overflow-x-auto">
@@ -1837,6 +1895,47 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </div>
                   </div>
 
+                  {/* IDU Connection Toggle & Secondary Subject Option */}
+                  <div className="border-t border-slate-100 pt-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="text-xs font-bold text-slate-800">Interdisciplinary connection (IDU)</div>
+                        <div className="text-[11px] text-slate-500 font-medium">Require students to synthesize concepts with a secondary MYP subject group.</div>
+                      </div>
+                      <label className="relative inline-flex cursor-pointer items-center">
+                        <input
+                          type="checkbox"
+                          checked={newIduToggle}
+                          onChange={(e) => setNewIduToggle(e.target.checked)}
+                          className="peer sr-only"
+                        />
+                        <div className="peer h-5 w-9 rounded-full bg-slate-200 after:absolute after:top-0.5 after:left-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-xs after:transition-all peer-checked:bg-indigo-600 peer-checked:after:translate-x-full"></div>
+                      </label>
+                    </div>
+
+                    {newIduToggle && (
+                      <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
+                        <label className="block text-[11px] font-bold text-indigo-900 uppercase tracking-wider mb-1">
+                          Secondary Subject Group (IDU Partner)
+                        </label>
+                        <select
+                          value={newIduSubject}
+                          onChange={(e) => setNewIduSubject(e.target.value)}
+                          className="w-full rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:outline-none"
+                        >
+                          <option value="Sciences">Sciences</option>
+                          <option value="Mathematics">Mathematics</option>
+                          <option value="Language and Literature">Language and Literature</option>
+                          <option value="Language Acquisition">Language Acquisition</option>
+                          <option value="Individuals and Societies">Individuals and Societies</option>
+                          <option value="Arts">Arts</option>
+                          <option value="Physical and Health Education">Physical and Health Education</option>
+                          <option value="Design">Design</option>
+                        </select>
+                      </div>
+                    )}
+                  </div>
+
                   {publishError && (
                     <div className="rounded-xl border border-rose-200 bg-rose-50 p-2.5 font-bold text-rose-700 flex items-center gap-1.5 text-xs">
                       <ShieldAlert className="h-4 w-4 shrink-0 text-rose-600" />
@@ -1957,6 +2056,151 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Monthly Report Spreadsheet Export Modal */}
+      {showMonthlyExportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700">
+                  <FileSpreadsheet className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-extrabold text-slate-900">
+                    Monthly Excel Spreadsheet Report
+                  </h3>
+                  <p className="text-[11px] text-slate-500 font-medium">
+                    Export student ATL skill evaluations to Microsoft Excel or Google Sheets
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowMonthlyExportModal(false)}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-4 space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    Select Month
+                  </label>
+                  <select
+                    value={selectedExportMonth}
+                    onChange={(e) => setSelectedExportMonth(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-800 focus:border-emerald-600 focus:bg-white focus:outline-none transition-all"
+                  >
+                    <option value="ALL">All Recorded Months</option>
+                    {availableMonths.map((m) => (
+                      <option key={m.value} value={m.value}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
+                    MYP Class / Grade
+                  </label>
+                  <select
+                    value={selectedExportClass}
+                    onChange={(e) => setSelectedExportClass(e.target.value)}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-800 focus:border-emerald-600 focus:bg-white focus:outline-none transition-all"
+                  >
+                    <option value="ALL">All MYP Classes</option>
+                    <option value="1">MYP 1 (Grade 6)</option>
+                    <option value="2">MYP 2 (Grade 7)</option>
+                    <option value="3">MYP 3 (Grade 8)</option>
+                    <option value="4">MYP 4 (Grade 9)</option>
+                    <option value="5">MYP 5 (Grade 10)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
+                  Subject Group Filter
+                </label>
+                <select
+                  value={selectedExportSubject}
+                  onChange={(e) => setSelectedExportSubject(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-semibold text-slate-800 focus:border-emerald-600 focus:bg-white focus:outline-none transition-all"
+                >
+                  <option value="ALL">All Subject Groups</option>
+                  <option value="Sciences">Sciences</option>
+                  <option value="Mathematics">Mathematics</option>
+                  <option value="Language and Literature">Language and Literature</option>
+                  <option value="Language Acquisition">Language Acquisition</option>
+                  <option value="Individuals and Societies">Individuals and Societies</option>
+                  <option value="Arts">Arts</option>
+                  <option value="Physical and Health Education">Physical and Health Education</option>
+                  <option value="Design">Design</option>
+                </select>
+              </div>
+
+              {/* Export Metrics Summary Box */}
+              <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-4 space-y-2">
+                <div className="flex items-center justify-between text-xs font-bold text-emerald-900">
+                  <span>Matching Tasks to Export:</span>
+                  <span className="text-sm font-black bg-emerald-200/80 px-2.5 py-0.5 rounded-lg text-emerald-950">
+                    {monthlyFilteredLogs.length} Logged Evaluations
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-emerald-200/50 text-[11px] text-emerald-800">
+                  <div className="rounded-lg bg-white/80 p-2 text-center border border-emerald-100">
+                    <div className="font-extrabold text-emerald-700">
+                      {monthlyFilteredLogs.filter((l) => l.level === 'Extending').length}
+                    </div>
+                    <div className="text-[10px] text-slate-500 font-medium">Extending</div>
+                  </div>
+                  <div className="rounded-lg bg-white/80 p-2 text-center border border-emerald-100">
+                    <div className="font-extrabold text-indigo-700">
+                      {monthlyFilteredLogs.filter((l) => l.level === 'Applying').length}
+                    </div>
+                    <div className="text-[10px] text-slate-500 font-medium">Applying</div>
+                  </div>
+                  <div className="rounded-lg bg-white/80 p-2 text-center border border-emerald-100">
+                    <div className="font-extrabold text-amber-700">
+                      {monthlyFilteredLogs.filter((l) => l.level === 'Developing').length}
+                    </div>
+                    <div className="text-[10px] text-slate-500 font-medium">Developing</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setShowMonthlyExportModal(false)}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 font-bold text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={monthlyFilteredLogs.length === 0}
+                  onClick={() => {
+                    const monthName = selectedExportMonth === 'ALL' ? 'All_Months' : selectedExportMonth;
+                    const className = selectedExportClass === 'ALL' ? 'All_Classes' : `MYP${selectedExportClass}`;
+                    exportToCsvSpreadsheet(monthlyFilteredLogs, `ATL_Monthly_Report_${monthName}_${className}`);
+                    setShowMonthlyExportModal(false);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-5 py-2.5 font-bold text-white shadow-xs hover:bg-emerald-700 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Download className="h-4 w-4" />
+                  <span>Download Excel (.csv)</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

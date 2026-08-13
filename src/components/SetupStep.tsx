@@ -142,6 +142,11 @@ export const SetupStep: React.FC<SetupStepProps> = ({
                     <span className="rounded-md bg-slate-100 border border-slate-200 px-2 py-0.5 text-slate-600">
                       {at.category}
                     </span>
+                    {at.task?.idu_note && (
+                      <span className="rounded-md bg-purple-50 border border-purple-200 px-2 py-0.5 text-purple-700 flex items-center gap-1">
+                        <Layers className="h-3 w-3 text-purple-600" /> IDU
+                      </span>
+                    )}
                     {at.teacherName && (
                       <span className="text-slate-400 font-medium ml-auto">
                         By {at.teacherName}

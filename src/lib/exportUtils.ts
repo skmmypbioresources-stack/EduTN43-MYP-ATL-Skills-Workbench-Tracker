@@ -1,4 +1,4 @@
-import { TaskFeedback, TaskMeta, GeneratedTask, StudentResponseItem } from '../types';
+import { TaskFeedback, TaskMeta, GeneratedTask, StudentResponseItem, ATLTaskLog } from '../types';
 import html2pdf from 'html2pdf.js';
 
 export interface ReportData {
@@ -377,6 +377,94 @@ export function exportToWordDoc(data: ReportData) {
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Get sorted unique YYYY-MM months present in task logs
+ */
+export function getAvailableMonthsFromLogs(logs: ATLTaskLog[]): { value: string; label: string }[] {
+  const monthsSet = new Set<string>();
+  logs.forEach((log) => {
+    if (log.date) {
+      const ym = log.date.substring(0, 7); // e.g. "2026-08"
+      if (/^\d{4}-\d{2}$/.test(ym)) {
+        monthsSet.add(ym);
+      }
+    }
+  });
+
+  const sorted = Array.from(monthsSet).sort().reverse();
+  return sorted.map((ym) => {
+    const [year, month] = ym.split('-');
+    const dateObj = new Date(parseInt(year, 10), parseInt(month, 10) - 1, 1);
+    const label = dateObj.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    return { value: ym, label };
+  });
+}
+
+/**
+ * Generates and downloads a CSV spreadsheet compatible with Microsoft Excel and Google Sheets
+ */
+export function exportToCsvSpreadsheet(logs: ATLTaskLog[], filenamePrefix = 'ATL_Monthly_Analytics_Report') {
+  const headers = [
+    'Date Logged',
+    'Academic Year',
+    'Term',
+    'Student Name',
+    'MYP Grade / Level',
+    'Subject Group',
+    'Curriculum Topic',
+    'Task Title',
+    'ATL Category',
+    'ATL Skill Cluster',
+    'Level Achieved',
+    'Attempt #',
+    'Feedback Summary',
+    'Key Strengths',
+    'Next Steps',
+    'Student Post-Task Reflection'
+  ];
+
+  const escapeCsv = (val: any) => {
+    if (val === null || val === undefined) return '""';
+    const str = String(val).replace(/"/g, '""');
+    return `"${str}"`;
+  };
+
+  const rows = logs.map((log) =>
+    [
+      escapeCsv(log.date),
+      escapeCsv(log.academicYear),
+      escapeCsv(log.term),
+      escapeCsv(log.studentName || 'Anonymous'),
+      escapeCsv(`MYP ${log.mypYear}`),
+      escapeCsv(log.subject),
+      escapeCsv(log.topic),
+      escapeCsv(log.taskTitle || 'ATL Skill Assessment'),
+      escapeCsv(log.category),
+      escapeCsv(log.cluster),
+      escapeCsv(log.level),
+      escapeCsv(log.attemptNumber || 1),
+      escapeCsv(log.feedback?.summary || ''),
+      escapeCsv(log.feedback?.strengths?.join(' | ') || ''),
+      escapeCsv(log.feedback?.next_steps?.join(' | ') || ''),
+      escapeCsv(log.studentReflection || '')
+    ].join(',')
+  );
+
+  const csvContent = '\ufeff' + [headers.map(escapeCsv).join(','), ...rows].join('\n');
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+
+  const currentDate = new Date().toISOString().split('T')[0];
+  link.setAttribute('download', `${filenamePrefix}_${currentDate}.csv`);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
   URL.revokeObjectURL(url);
 }
 
