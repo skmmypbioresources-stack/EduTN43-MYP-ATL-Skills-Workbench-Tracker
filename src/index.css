@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+@page {
+  size: auto;
+  margin: 12mm 15mm 12mm 15mm;
+}
+
 @media print {
   /* Hide unnecessary UI elements during printing/PDF save */
   header,
@@ -17,6 +22,8 @@
     color: #000000 !important;
     margin: 0 !important;
     padding: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 
   /* Reset main container layout for clean page printing */
@@ -43,7 +50,7 @@
   }
 
   /* Avoid awkward page breaks in questions or feedback items */
-  li, .rounded-xl, .border {
+  li, .rounded-xl, .border, .grid {
     break-inside: avoid;
   }
 }

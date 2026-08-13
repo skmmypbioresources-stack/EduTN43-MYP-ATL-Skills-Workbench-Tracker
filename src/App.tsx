@@ -8,6 +8,7 @@ import { TaskMeta, GeneratedTask, StudentResponseItem, TaskFeedback, ATLTaskLog,
 import {
   subscribeToTaskLogs,
   saveTaskLogToFirestore,
+  updateTaskLogReflectionInFirestore,
   deleteTaskLogFromFirestore,
   subscribeToAssignedTasks,
   saveAssignedTaskToFirestore,
@@ -64,6 +65,7 @@ export default function App() {
   const [task, setTask] = useState<GeneratedTask | null>(null);
   const [responses, setResponses] = useState<Record<number, string>>({});
   const [feedback, setFeedback] = useState<TaskFeedback | null>(null);
+  const [currentLogId, setCurrentLogId] = useState<string | null>(null);
 
   // Loading & Error States
   const [isGenerating, setIsGenerating] = useState(false);
@@ -227,8 +229,11 @@ export default function App() {
       setFeedback(fbData);
 
       // Auto Log to Academic Year Tracker & Firestore Cloud Database
+      const newLogId = 'log-' + Date.now();
+      setCurrentLogId(newLogId);
+
       const newLog: ATLTaskLog = {
-        id: 'log-' + Date.now(),
+        id: newLogId,
         date: new Date().toISOString().split('T')[0],
         academicYear,
         term,
@@ -255,6 +260,19 @@ export default function App() {
       setErrorMessage(err?.message || 'Failed to evaluate task.');
     } finally {
       setIsEvaluating(false);
+    }
+  };
+
+  // Handle Saving Student Post-Task Reflection
+  const handleSaveReflection = async (logId: string, reflectionText: string) => {
+    try {
+      await updateTaskLogReflectionInFirestore(logId, reflectionText);
+      setLogs((prev) =>
+        prev.map((log) => (log.id === logId ? { ...log, studentReflection: reflectionText } : log))
+      );
+    } catch (e) {
+      console.error('Failed to update reflection in Firestore:', e);
+      throw e;
     }
   };
 
@@ -310,7 +328,7 @@ export default function App() {
         {activeTab === 'workbench' ? (
           <div>
             {/* Step Indicators */}
-            <div className="mx-auto mb-8 flex max-w-xl items-center justify-between gap-3">
+            <div className="mx-auto mb-8 flex max-w-xl items-center justify-between gap-3 print:hidden">
               <div className="flex-1">
                 <div
                   className={`h-2 rounded-full transition-all ${
@@ -388,6 +406,9 @@ export default function App() {
                   }))}
                   onNewTask={() => setStep(1)}
                   onGoToDashboard={() => setActiveTab('dashboard')}
+                  currentLogId={currentLogId}
+                  logs={logs}
+                  onSaveReflection={handleSaveReflection}
                 />
               )}
             </div>

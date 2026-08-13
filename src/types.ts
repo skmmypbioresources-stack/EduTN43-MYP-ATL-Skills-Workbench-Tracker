@@ -68,6 +68,8 @@ export interface ATLTaskLog {
   taskTitle: string;
   responses: StudentResponseItem[];
   feedback: TaskFeedback;
+  studentReflection?: string;
+  attemptNumber?: number;
 }
 
 export interface AssignedTask {

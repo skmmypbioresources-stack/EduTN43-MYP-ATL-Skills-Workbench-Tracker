@@ -4,6 +4,7 @@ import {
   collection,
   doc,
   setDoc,
+  updateDoc,
   deleteDoc,
   onSnapshot,
   query,
@@ -101,6 +102,21 @@ export async function saveTaskLogToFirestore(log: ATLTaskLog): Promise<void> {
     });
   } catch (err) {
     console.error('Failed to save log to Firestore:', err);
+    throw err;
+  }
+}
+
+/**
+ * Update student reflection on a task log in Firestore
+ */
+export async function updateTaskLogReflectionInFirestore(logId: string, reflection: string): Promise<void> {
+  try {
+    const docRef = doc(db, COLLECTION_NAME, logId);
+    await updateDoc(docRef, {
+      studentReflection: reflection
+    });
+  } catch (err) {
+    console.error('Failed to update student reflection in Firestore:', err);
     throw err;
   }
 }

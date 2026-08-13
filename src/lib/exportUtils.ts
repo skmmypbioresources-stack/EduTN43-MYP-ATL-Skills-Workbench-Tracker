@@ -1,4 +1,5 @@
 import { TaskFeedback, TaskMeta, GeneratedTask, StudentResponseItem } from '../types';
+import html2pdf from 'html2pdf.js';
 
 export interface ReportData {
   studentName: string;
@@ -14,15 +15,158 @@ export interface ReportData {
   context?: string;
   responses: StudentResponseItem[];
   feedback: TaskFeedback;
+  studentReflection?: string;
+  attemptNumber?: number;
+  previousLevels?: string[];
+}
+
+function generateReportHtml(data: ReportData): string {
+  const sanitize = (text: string) => text ? text.replace(/</g, '&lt;').replace(/>/g, '&gt;') : '';
+
+  const strengthsHtml = data.feedback.strengths
+    .map((s) => `<li style="margin-bottom: 6px; color: #166534;"><strong>✓</strong> ${sanitize(s)}</li>`)
+    .join('');
+
+  const nextStepsHtml = data.feedback.next_steps
+    .map((ns) => `<li style="margin-bottom: 6px; color: #3730a3;"><strong>→</strong> ${sanitize(ns)}</li>`)
+    .join('');
+
+  const responsesHtml = data.responses
+    .map(
+      (r) => `
+      <div style="margin-bottom: 16px; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; background-color: #f8fafc;">
+        <p style="margin: 0 0 8px 0; font-weight: bold; color: #4338ca; font-size: 13px;">
+          Question / Part ${sanitize(r.label)}: ${sanitize(r.prompt)}
+        </p>
+        <div style="background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; font-size: 12px; color: #1e293b; white-space: pre-wrap;">
+          <strong>Student Answer:</strong><br/>
+          ${r.response ? sanitize(r.response) : '<em>(No response provided / Left blank)</em>'}
+        </div>
+      </div>
+    `
+    )
+    .join('');
+
+  const attemptText = data.attemptNumber ? `Attempt #${data.attemptNumber} for ${sanitize(data.cluster)}` : null;
+  const progressionText = data.previousLevels && data.previousLevels.length > 0
+    ? [...data.previousLevels, data.level].join(' ➔ ')
+    : data.level;
+
+  return `
+    <div style="font-family: 'Segoe UI', Arial, sans-serif; color: #0f172a; line-height: 1.5; padding: 20px; background: #ffffff;">
+      <div style="border-bottom: 3px solid #4f46e5; padding-bottom: 12px; margin-bottom: 20px;">
+        <div style="font-size: 9pt; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;">EduTN43 • IB MYP Approaches to Learning (ATL) Skill Development Report</div>
+        <div style="font-size: 18pt; font-weight: bold; color: #1e1b4b;">${sanitize(data.taskTitle || 'ATL Skill Task Assessment')}</div>
+      </div>
+
+      <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px; background-color: #f1f5f9;">
+        <tr>
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt;"><strong>Student Name:</strong> ${sanitize(data.studentName || 'Anonymous')}</td>
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt;"><strong>Academic Year:</strong> ${sanitize(data.academicYear)} (${sanitize(data.term)})</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt;"><strong>Subject & Topic:</strong> ${sanitize(data.subject)} (MYP ${sanitize(data.mypYear)}) — ${sanitize(data.topic)}</td>
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt;"><strong>ATL Cluster:</strong> ${sanitize(data.cluster)} (${sanitize(data.category)})</td>
+        </tr>
+        <tr>
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt;">
+            <strong>Demonstrated Skill Level:</strong> 
+            <span style="display: inline-block; padding: 4px 12px; border-radius: 12px; font-weight: bold; font-size: 11pt; color: #ffffff; background-color: ${
+              data.level === 'Extending' ? '#10b981' : data.level === 'Applying' ? '#4f46e5' : '#f59e0b'
+            };">${sanitize(data.level)}</span>
+          </td>
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt;">
+            <strong>Skill Attempt & Growth:</strong><br/>
+            ${attemptText ? `<strong>${attemptText}</strong><br/>` : ''}
+            <span>Progression: ${sanitize(progressionText)}</span>
+          </td>
+        </tr>
+      </table>
+
+      ${
+        data.context
+          ? `
+        <div style="font-size: 12pt; font-weight: bold; color: #312e81; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; margin-top: 20px; margin-bottom: 10px; text-transform: uppercase;">Task Context & Background</div>
+        <p style="font-size: 10.5pt; color: #334155; font-style: italic; background: #fafafa; padding: 10px; border-radius: 6px; border: 1px solid #f1f5f9; margin-bottom: 20px;">
+          ${sanitize(data.context)}
+        </p>
+      `
+          : ''
+      }
+
+      <div style="font-size: 12pt; font-weight: bold; color: #312e81; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; margin-top: 20px; margin-bottom: 10px; text-transform: uppercase;">Task Questions & Student Submitted Answers</div>
+      ${responsesHtml}
+
+      <div style="font-size: 12pt; font-weight: bold; color: #312e81; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; margin-top: 20px; margin-bottom: 10px; text-transform: uppercase;">ATL Skill Feedback & Evaluation</div>
+      <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-left: 4px solid #4f46e5; padding: 12px; border-radius: 6px; font-size: 11pt; margin-bottom: 16px;">
+        <strong>Overview:</strong><br/>
+        ${sanitize(data.feedback.summary)}
+      </div>
+
+      <table style="width: 100%; margin-top: 16px; border-collapse: collapse; margin-bottom: 20px;">
+        <tr valign="top">
+          <td style="width: 50%; padding-right: 10px;">
+            <div style="font-weight: bold; color: #15803d; font-size: 11pt; margin-bottom: 6px;">Key Strengths Demonstrated:</div>
+            <ul style="padding-left: 20px; margin: 0; font-size: 10.5pt;">
+              ${strengthsHtml}
+            </ul>
+          </td>
+          <td style="width: 50%; padding-left: 10px;">
+            <div style="font-weight: bold; color: #4338ca; font-size: 11pt; margin-bottom: 6px;">Next Steps for Skill Progression:</div>
+            <ul style="padding-left: 20px; margin: 0; font-size: 10.5pt;">
+              ${nextStepsHtml}
+            </ul>
+          </td>
+        </tr>
+      </table>
+
+      ${
+        data.studentReflection
+          ? `
+        <div style="font-size: 12pt; font-weight: bold; color: #312e81; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; margin-top: 20px; margin-bottom: 10px; text-transform: uppercase;">Student Self-Reflection & Learning Log</div>
+        <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-left: 4px solid #16a34a; padding: 12px; border-radius: 6px; font-size: 11pt; color: #14532d;">
+          <strong>Student Post-Task Reflection:</strong><br/>
+          ${sanitize(data.studentReflection)}
+        </div>
+      `
+          : ''
+      }
+
+      <div style="margin-top: 30px; border-top: 1px solid #cbd5e1; padding-top: 8px; font-size: 9pt; color: #94a3b8; text-align: center;">
+        * Generated by EduTN43 • MYP ATL Skills Workbench & Tracker. Skill Development Report for teaching and learning dialogue.
+      </div>
+    </div>
+  `;
 }
 
 /**
- * Generates and downloads a Microsoft Word (.doc) report containing:
- * - Student & Course Metadata
- * - ATL Skill Cluster & Achieved Level
- * - Task Title, Context & Questions
- * - Submitted Student Answers
- * - Formative AI Feedback (Overview, Strengths & Next Steps)
+ * Downloads a high-resolution PDF document directly using html2pdf.js
+ */
+export async function exportToPdf(data: ReportData): Promise<void> {
+  const htmlContent = generateReportHtml(data);
+  const element = document.createElement('div');
+  element.innerHTML = htmlContent;
+  document.body.appendChild(element);
+
+  const fileName = `ATL_Report_${(data.studentName || 'Student').replace(/\s+/g, '_')}_${(data.subject || 'Subject').replace(/\s+/g, '_')}.pdf`;
+
+  const opt = {
+    margin: [8, 10, 8, 10] as [number, number, number, number],
+    filename: fileName,
+    image: { type: 'jpeg' as const, quality: 0.98 },
+    html2canvas: { scale: 2, useCORS: true, logging: false },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' as const }
+  };
+
+  try {
+    await html2pdf().set(opt).from(element).save();
+  } finally {
+    document.body.removeChild(element);
+  }
+}
+
+/**
+ * Generates and downloads a Microsoft Word (.doc) report
  */
 export function exportToWordDoc(data: ReportData) {
   const sanitize = (text: string) => text ? text.replace(/</g, '&lt;').replace(/>/g, '&gt;') : '';
@@ -37,7 +181,7 @@ export function exportToWordDoc(data: ReportData) {
 
   const responsesHtml = data.responses
     .map(
-      (r, i) => `
+      (r) => `
       <div style="margin-bottom: 16px; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; background-color: #f8fafc;">
         <p style="margin: 0 0 8px 0; font-weight: bold; color: #4338ca; font-size: 13px;">
           Question / Part ${sanitize(r.label)}: ${sanitize(r.prompt)}
@@ -51,11 +195,16 @@ export function exportToWordDoc(data: ReportData) {
     )
     .join('');
 
+  const attemptText = data.attemptNumber ? `Attempt #${data.attemptNumber} for ${sanitize(data.cluster)}` : null;
+  const progressionText = data.previousLevels && data.previousLevels.length > 0
+    ? [...data.previousLevels, data.level].join(' ➔ ')
+    : data.level;
+
   const htmlContent = `
     <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
     <head>
       <meta charset='utf-8'>
-      <title>ATL Formative Assessment Report - ${sanitize(data.studentName)}</title>
+      <title>ATL Skill Development Report - ${sanitize(data.studentName)}</title>
       <style>
         body {
           font-family: 'Calibri', 'Segoe UI', Arial, sans-serif;
@@ -121,11 +270,20 @@ export function exportToWordDoc(data: ReportData) {
           border-radius: 6px;
           font-size: 11pt;
         }
+        .reflection-box {
+          background-color: #f0fdf4;
+          border: 1px solid #bbf7d0;
+          border-left: 4px solid #16a34a;
+          padding: 12px;
+          border-radius: 6px;
+          font-size: 11pt;
+          color: #14532d;
+        }
       </style>
     </head>
     <body>
       <div class="header-box">
-        <div class="subtitle">EduTN43 • IB MYP Approaches to Learning (ATL) Formative Assessment Report</div>
+        <div class="subtitle">EduTN43 • IB MYP Approaches to Learning (ATL) Skill Development Report</div>
         <div class="title">${sanitize(data.taskTitle || 'ATL Skill Task Assessment')}</div>
       </div>
 
@@ -139,9 +297,14 @@ export function exportToWordDoc(data: ReportData) {
           <td><strong>ATL Cluster:</strong> ${sanitize(data.cluster)} (${sanitize(data.category)})</td>
         </tr>
         <tr>
-          <td colspan="2">
+          <td>
             <strong>Demonstrated Skill Level:</strong> 
             <span class="badge">${sanitize(data.level)}</span>
+          </td>
+          <td>
+            <strong>Skill Attempt & Growth:</strong><br/>
+            ${attemptText ? `<strong>${attemptText}</strong><br/>` : ''}
+            <span>Progression: ${sanitize(progressionText)}</span>
           </td>
         </tr>
       </table>
@@ -160,7 +323,7 @@ export function exportToWordDoc(data: ReportData) {
       <div class="section-heading">Task Questions & Student Submitted Answers</div>
       ${responsesHtml}
 
-      <div class="section-heading">Formative Assessment Feedback</div>
+      <div class="section-heading">ATL Skill Feedback & Evaluation</div>
       <div class="summary-box">
         <strong>Overview:</strong><br/>
         ${sanitize(data.feedback.summary)}
@@ -169,13 +332,13 @@ export function exportToWordDoc(data: ReportData) {
       <table style="width: 100%; margin-top: 16px; border-collapse: collapse;">
         <tr valign="top">
           <td style="width: 50%; padding-right: 10px;">
-            <div style="font-weight: bold; color: #15803d; font-size: 11pt; margin-bottom: 6px;">Key Strengths:</div>
+            <div style="font-weight: bold; color: #15803d; font-size: 11pt; margin-bottom: 6px;">Key Strengths Demonstrated:</div>
             <ul style="padding-left: 20px; margin: 0;">
               ${strengthsHtml}
             </ul>
           </td>
           <td style="width: 50%; padding-left: 10px;">
-            <div style="font-weight: bold; color: #4338ca; font-size: 11pt; margin-bottom: 6px;">Next Steps for Growth:</div>
+            <div style="font-weight: bold; color: #4338ca; font-size: 11pt; margin-bottom: 6px;">Next Steps for Skill Progression:</div>
             <ul style="padding-left: 20px; margin: 0;">
               ${nextStepsHtml}
             </ul>
@@ -183,8 +346,20 @@ export function exportToWordDoc(data: ReportData) {
         </tr>
       </table>
 
+      ${
+        data.studentReflection
+          ? `
+        <div class="section-heading">Student Self-Reflection & Learning Log</div>
+        <div class="reflection-box">
+          <strong>Student Post-Task Reflection:</strong><br/>
+          ${sanitize(data.studentReflection)}
+        </div>
+      `
+          : ''
+      }
+
       <div style="margin-top: 30px; border-top: 1px solid #cbd5e1; padding-top: 8px; font-size: 9pt; color: #94a3b8; text-align: center;">
-        * Generated by EduTN43 • MYP ATL Skills Workbench & Tracker. Formative indicator for teaching and learning dialogue.
+        * Generated by EduTN43 • MYP ATL Skills Workbench & Tracker. Skill Development Report for teaching and learning dialogue.
       </div>
     </body>
     </html>
@@ -204,3 +379,4 @@ export function exportToWordDoc(data: ReportData) {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
+
