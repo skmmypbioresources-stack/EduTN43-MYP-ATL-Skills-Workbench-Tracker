@@ -8,16 +8,27 @@ export const ATL_DATA: Record<ATLCategoryKey, ATLCategoryData> = {
     textColor: '#312e81',
     clusters: {
       'Communication': {
-        description: 'Exchanging thoughts, messages and information effectively through interaction, literacy and use of a variety of media.',
+        description: 'Exchanging thoughts, messages and information effectively through oral presentations, terminology, and discussions.',
         indicators: [
-          'Give and receive meaningful feedback',
-          'Use a variety of speaking techniques to communicate with different audiences',
-          'Use appropriate forms of writing for different purposes and audiences',
-          'Use a variety of media to communicate with a range of audiences',
-          'Interpret and use non-verbal communication effectively',
-          'Negotiate ideas and knowledge with peers and teachers',
-          'Structure information logically in summaries, reports or essays',
-          'Use and interpret a range of discipline-specific terms and symbols'
+          'Present experimental results orally.',
+          'Explain biological processes using correct terminology.',
+          'Participate in scientific discussions and debates.'
+        ]
+      },
+      'Collaboration': {
+        description: 'Working effectively in teams during investigations, sharing roles fairly, and exchanging constructive peer feedback.',
+        indicators: [
+          'Conduct laboratory investigations in teams.',
+          'Divide roles fairly during practical work.',
+          'Give and receive constructive peer feedback.'
+        ]
+      },
+      'Literacy': {
+        description: 'Writing scientific explanations and lab reports, interpreting graphs and data tables, and using subject-specific vocabulary.',
+        indicators: [
+          'Write lab reports and scientific explanations.',
+          'Interpret graphs, data tables, and diagrams.',
+          'Cite scientific sources appropriately and use subject-specific vocabulary.'
         ]
       }
     }
@@ -167,6 +178,7 @@ export const ATL_DATA: Record<ATLCategoryKey, ATLCategoryData> = {
 export const ALL_CLUSTERS = [
   { name: 'Communication', category: 'Communication' },
   { name: 'Collaboration', category: 'Social' },
+  { name: 'Literacy', category: 'Communication' },
   { name: 'Organization', category: 'Self-management' },
   { name: 'Affective', category: 'Self-management' },
   { name: 'Reflection', category: 'Self-management' },

@@ -1,8 +1,26 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { ATL_DATA } from '../data/atlData';
 import { ATLCategoryKey, TaskMeta, AssignedTask } from '../types';
 import { MYPCriteriaSelector } from './MYPCriteriaSelector';
-import { Sparkles, HelpCircle, Layers, Link as LinkIcon, User, ClipboardList, CheckCircle2, ArrowRight, Trash2, ShieldAlert, Target } from 'lucide-react';
+import {
+  Sparkles,
+  HelpCircle,
+  Layers,
+  Link as LinkIcon,
+  User,
+  ClipboardList,
+  CheckCircle2,
+  ArrowRight,
+  Trash2,
+  ShieldAlert,
+  Target,
+  GraduationCap,
+  Filter,
+  UserCheck,
+  Check,
+  School,
+  BookOpen
+} from 'lucide-react';
 
 interface SetupStepProps {
   meta: TaskMeta;
@@ -18,6 +36,40 @@ interface SetupStepProps {
   onSelectAssignedTask?: (task: AssignedTask) => void;
   onDeleteAssignedTask?: (taskId: string) => void;
 }
+
+const normalizeMypYear = (year: string): string => {
+  const clean = String(year || '').trim().toLowerCase();
+  if (clean.includes('1') || clean.includes('6')) return '1';
+  if (clean.includes('2') || clean.includes('7')) return '2';
+  if (clean.includes('3') || clean.includes('8')) return '3';
+  if (clean.includes('4') || clean.includes('9')) return '4';
+  if (clean.includes('5') || clean.includes('10')) return '5';
+  return clean || '3';
+};
+
+const formatClassLabel = (year: string) => {
+  const norm = normalizeMypYear(year);
+  switch (norm) {
+    case '1': return 'MYP 1 (Grade 6)';
+    case '2': return 'MYP 2 (Grade 7)';
+    case '3': return 'MYP 3 (Grade 8)';
+    case '4': return 'MYP 4 (Grade 9)';
+    case '5': return 'MYP 5 (Grade 10)';
+    default: return `MYP ${year}`;
+  }
+};
+
+const formatShortClassTag = (year: string) => {
+  const norm = normalizeMypYear(year);
+  switch (norm) {
+    case '1': return 'MYP 1 (Gr 6)';
+    case '2': return 'MYP 2 (Gr 7)';
+    case '3': return 'MYP 3 (Gr 8)';
+    case '4': return 'MYP 4 (Gr 9)';
+    case '5': return 'MYP 5 (Gr 10)';
+    default: return `MYP ${year}`;
+  }
+};
 
 export const SetupStep: React.FC<SetupStepProps> = ({
   meta,
@@ -35,6 +87,10 @@ export const SetupStep: React.FC<SetupStepProps> = ({
 }) => {
   const [autoCluster, setAutoCluster] = useState(false);
   const [iduToggle, setIduToggle] = useState(false);
+
+  // Assigned Tasks Teacher & Class Filter State
+  const [selectedTeacherFilter, setSelectedTeacherFilter] = useState<string>('All');
+  const [selectedClassFilter, setSelectedClassFilter] = useState<string>('my_class'); // 'my_class' | 'All' | '1' | '2' | '3' | '4' | '5'
 
   // Delete Authorization Password State (Password: DELETETASK)
   const [showDeleteModal, setShowDeleteModal] = useState<boolean>(false);
@@ -65,6 +121,55 @@ export const SetupStep: React.FC<SetupStepProps> = ({
     setDeletePasswordInput('');
     setDeleteError(null);
   };
+
+  // Distinct list of teachers who have created assigned tasks
+  const distinctTeachers = useMemo(() => {
+    const list = Array.from(
+      new Set(assignedTasks.map((t) => (t.teacherName?.trim() ? t.teacherName.trim() : 'General Teacher')))
+    ).sort();
+    return list;
+  }, [assignedTasks]);
+
+  // Hierarchical Organization: Teacher -> Class -> Tasks
+  const organizedTasks = useMemo(() => {
+    // 1. Filter by Teacher
+    const filteredByTeacher = assignedTasks.filter((t) => {
+      const tTeacher = t.teacherName?.trim() || 'General Teacher';
+      if (selectedTeacherFilter === 'All') return true;
+      return tTeacher === selectedTeacherFilter;
+    });
+
+    // 2. Filter by Class
+    const effectiveClassTarget =
+      selectedClassFilter === 'my_class' ? normalizeMypYear(meta.year) : selectedClassFilter;
+
+    const filtered = filteredByTeacher.filter((t) => {
+      if (effectiveClassTarget === 'All') return true;
+      return normalizeMypYear(t.mypYear) === effectiveClassTarget;
+    });
+
+    // 3. Group by Teacher, then by Class
+    const grouped: Record<string, Record<string, AssignedTask[]>> = {};
+
+    filtered.forEach((task) => {
+      const teacherKey = task.teacherName?.trim() || 'General Teacher';
+      const classKey = normalizeMypYear(task.mypYear);
+
+      if (!grouped[teacherKey]) {
+        grouped[teacherKey] = {};
+      }
+      if (!grouped[teacherKey][classKey]) {
+        grouped[teacherKey][classKey] = [];
+      }
+      grouped[teacherKey][classKey].push(task);
+    });
+
+    return {
+      grouped,
+      totalMatching: filtered.length,
+      effectiveClassTarget,
+    };
+  }, [assignedTasks, selectedTeacherFilter, selectedClassFilter, meta.year]);
 
   // Update clusters when category changes
   const categoryData = ATL_DATA[meta.category];
@@ -107,98 +212,221 @@ export const SetupStep: React.FC<SetupStepProps> = ({
         </div>
       </div>
 
-      {/* Teacher Assigned Common Tasks Callout (If Any Published) */}
+      {/* Teacher Assigned Common Tasks Callout (Organized by Teacher -> Class) */}
       {assignedTasks && assignedTasks.length > 0 && (
-        <div className="mb-8 rounded-2xl border border-indigo-200/80 bg-gradient-to-br from-indigo-50/90 via-white to-purple-50/50 p-5 shadow-xs">
-          <div className="flex items-center justify-between gap-2 mb-3">
-            <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-xs">
-                <ClipboardList className="h-4 w-4" />
+        <div className="mb-8 rounded-2xl border border-indigo-200/90 bg-gradient-to-br from-indigo-50/90 via-white to-purple-50/50 p-5 sm:p-6 shadow-xs">
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2.5 mb-4 pb-3.5 border-b border-indigo-100/80">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-xs">
+                <ClipboardList className="h-5 w-5" />
               </div>
               <div>
-                <h3 className="text-sm font-black text-slate-900 tracking-tight">
-                  Teacher Assigned Common Tasks
+                <h3 className="text-sm font-black text-slate-900 tracking-tight flex items-center gap-1.5">
+                  <span>Teacher Assigned Common Tasks</span>
+                  <span className="rounded-full bg-indigo-100 border border-indigo-200 px-2 py-0.5 text-[10px] font-bold text-indigo-800">
+                    {assignedTasks.length} Published
+                  </span>
                 </h3>
                 <p className="text-[11px] font-medium text-slate-500">
-                  Tasks created by teachers for common class evaluation
+                  Organized by Teacher & Class so students see only their class work
                 </p>
               </div>
             </div>
-            <span className="rounded-full bg-indigo-100 border border-indigo-200 px-2.5 py-0.5 text-[10px] font-bold text-indigo-800">
-              {assignedTasks.length} {assignedTasks.length === 1 ? 'Task' : 'Tasks'} Available
-            </span>
+
+            {/* Quick Filter Controls: Select Teacher & Class */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Teacher Selector */}
+              <div className="flex items-center gap-1.5 bg-white border border-indigo-200 rounded-xl px-2.5 py-1 text-xs shadow-2xs">
+                <UserCheck className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Teacher:</span>
+                <select
+                  value={selectedTeacherFilter}
+                  onChange={(e) => setSelectedTeacherFilter(e.target.value)}
+                  className="font-bold text-indigo-900 bg-transparent focus:outline-none cursor-pointer text-xs"
+                >
+                  <option value="All">All Teachers ({distinctTeachers.length})</option>
+                  {distinctTeachers.map((tName) => (
+                    <option key={tName} value={tName}>
+                      {tName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Class / Grade Filter */}
+              <div className="flex items-center gap-1.5 bg-white border border-indigo-200 rounded-xl px-2.5 py-1 text-xs shadow-2xs">
+                <GraduationCap className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Class:</span>
+                <select
+                  value={selectedClassFilter}
+                  onChange={(e) => setSelectedClassFilter(e.target.value)}
+                  className="font-bold text-indigo-900 bg-transparent focus:outline-none cursor-pointer text-xs"
+                >
+                  <option value="my_class">My Class ({formatShortClassTag(meta.year)})</option>
+                  <option value="All">All Classes (MYP 1 - 5)</option>
+                  <option value="1">MYP 1 (Grade 6)</option>
+                  <option value="2">MYP 2 (Grade 7)</option>
+                  <option value="3">MYP 3 (Grade 8)</option>
+                  <option value="4">MYP 4 (Grade 9)</option>
+                  <option value="5">MYP 5 (Grade 10)</option>
+                </select>
+              </div>
+            </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {assignedTasks.map((at) => (
-              <div
-                key={at.id}
-                className="flex flex-col justify-between rounded-xl border border-slate-200/90 bg-white p-4 shadow-2xs hover:border-indigo-300 hover:shadow-md transition-all"
-              >
-                <div>
-                  <div className="flex flex-wrap items-center gap-1.5 mb-1.5 text-[10px] font-bold">
-                    <span className="rounded-md bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-indigo-700">
-                      {at.subject} • MYP {at.mypYear}
+          {/* Hierarchical Tree of Teacher -> Class -> Tasks */}
+          {organizedTasks.totalMatching === 0 ? (
+            <div className="rounded-xl border border-dashed border-indigo-200 bg-white/80 p-6 text-center">
+              <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 mb-2">
+                <School className="h-5 w-5" />
+              </div>
+              <p className="text-xs font-bold text-slate-800">
+                No assigned tasks found for{' '}
+                <span className="text-indigo-600">
+                  {selectedTeacherFilter !== 'All' ? `Teacher: ${selectedTeacherFilter}` : 'any teacher'}
+                </span>{' '}
+                in{' '}
+                <span className="text-indigo-600">
+                  {selectedClassFilter === 'my_class'
+                    ? formatClassLabel(meta.year)
+                    : selectedClassFilter === 'All'
+                    ? 'all classes'
+                    : formatClassLabel(selectedClassFilter)}
+                </span>
+                .
+              </p>
+              <p className="text-[11px] text-slate-500 mt-1">
+                Choose another teacher/class above, or switch filter to "All Classes" to browse available tasks.
+              </p>
+              <div className="mt-3 flex items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedTeacherFilter('All');
+                    setSelectedClassFilter('All');
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 border border-indigo-200 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition-colors cursor-pointer"
+                >
+                  <Filter className="h-3 w-3" />
+                  <span>Show All Assigned Tasks ({assignedTasks.length})</span>
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-5">
+              {Object.entries(organizedTasks.grouped).map(([teacherName, classGroups]) => (
+                <div
+                  key={teacherName}
+                  className="rounded-xl border border-indigo-100/90 bg-white/90 p-4 shadow-2xs"
+                >
+                  {/* Teacher Header */}
+                  <div className="flex items-center justify-between pb-2.5 mb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700">
+                        <UserCheck className="h-3.5 w-3.5" />
+                      </div>
+                      <span className="text-xs font-black uppercase tracking-wider text-slate-800">
+                        Teacher: {teacherName}
+                      </span>
+                    </div>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">
+                      {Object.values(classGroups).reduce((acc, curr) => acc + curr.length, 0)}{' '}
+                      {Object.values(classGroups).reduce((acc, curr) => acc + curr.length, 0) === 1 ? 'Task' : 'Tasks'} Assigned
                     </span>
-                    <span className="rounded-md bg-slate-100 border border-slate-200 px-2 py-0.5 text-slate-600">
-                      {at.category}
-                    </span>
-                    {at.task?.idu_note && (
-                      <span className="rounded-md bg-purple-50 border border-purple-200 px-2 py-0.5 text-purple-700 flex items-center gap-1">
-                        <Layers className="h-3 w-3 text-purple-600" /> IDU
-                      </span>
-                    )}
-                    {(at.criteria || at.task?.target_criteria) && (at.criteria || at.task?.target_criteria)!.length > 0 && (
-                      <span className="rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-emerald-800 flex items-center gap-1">
-                        <Target className="h-3 w-3 text-emerald-600" />
-                        {(at.criteria || at.task?.target_criteria)!.map((c) => c.replace('Criterion ', '')).join(', ')}
-                      </span>
-                    )}
-                    {at.teacherName && (
-                      <span className="text-slate-400 font-medium ml-auto">
-                        By {at.teacherName}
-                      </span>
-                    )}
                   </div>
 
-                  <h4 className="text-xs font-bold text-slate-800 line-clamp-2">
-                    {at.title || at.task?.title || at.topic}
-                  </h4>
-                  <p className="text-[11px] text-slate-500 line-clamp-2 mt-1">
-                    {at.topic} ({at.cluster})
-                  </p>
+                  {/* Classes Handled by this Teacher */}
+                  <div className="space-y-4">
+                    {Object.entries(classGroups).map(([classYear, tasks]) => (
+                      <div key={classYear} className="space-y-2">
+                        {/* Class Subheader */}
+                        <div className="flex items-center gap-2 px-1">
+                          <span className="rounded-md bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[10px] font-extrabold text-indigo-800 flex items-center gap-1">
+                            <GraduationCap className="h-3 w-3 text-indigo-600" />
+                            {formatClassLabel(classYear)}
+                          </span>
+                          <span className="text-[10px] font-medium text-slate-400">
+                            ({tasks.length} {tasks.length === 1 ? 'task' : 'tasks'} for this class)
+                          </span>
+                        </div>
+
+                        {/* Task Cards inside this Class */}
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          {tasks.map((at) => (
+                            <div
+                              key={at.id}
+                              className="flex flex-col justify-between rounded-xl border border-slate-200/90 bg-white p-3.5 shadow-2xs hover:border-indigo-300 hover:shadow-md transition-all"
+                            >
+                              <div>
+                                <div className="flex flex-wrap items-center gap-1.5 mb-1.5 text-[10px] font-bold">
+                                  <span className="rounded-md bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-indigo-700">
+                                    {at.subject}
+                                  </span>
+                                  <span className="rounded-md bg-slate-100 border border-slate-200 px-2 py-0.5 text-slate-600">
+                                    {at.category}
+                                  </span>
+                                  {at.task?.idu_note && (
+                                    <span className="rounded-md bg-purple-50 border border-purple-200 px-2 py-0.5 text-purple-700 flex items-center gap-1">
+                                      <Layers className="h-3 w-3 text-purple-600" /> IDU
+                                    </span>
+                                  )}
+                                  {(at.criteria || at.task?.target_criteria) &&
+                                    (at.criteria || at.task?.target_criteria)!.length > 0 && (
+                                      <span className="rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-emerald-800 flex items-center gap-1">
+                                        <Target className="h-3 w-3 text-emerald-600" />
+                                        {(at.criteria || at.task?.target_criteria)!
+                                          .map((c) => c.replace('Criterion ', ''))
+                                          .join(', ')}
+                                      </span>
+                                    )}
+                                </div>
+
+                                <h4 className="text-xs font-bold text-slate-800 line-clamp-2">
+                                  {at.title || at.task?.title || at.topic}
+                                </h4>
+                                <p className="text-[11px] text-slate-500 line-clamp-2 mt-1">
+                                  {at.topic} ({at.cluster})
+                                </p>
+                              </div>
+
+                              <div className="mt-3 flex items-center gap-2 pt-2 border-t border-slate-100">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (onSelectAssignedTask) {
+                                      onSelectAssignedTask(at);
+                                    }
+                                  }}
+                                  className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white shadow-2xs hover:bg-indigo-700 transition-all cursor-pointer"
+                                >
+                                  <span>Start Class Task</span>
+                                  <ArrowRight className="h-3.5 w-3.5" />
+                                </button>
+
+                                {onDeleteAssignedTask && (
+                                  <button
+                                    type="button"
+                                    onClick={() => promptDeleteTask(at)}
+                                    className="p-2 rounded-lg border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 hover:border-rose-300 transition-all cursor-pointer"
+                                    title="Delete this assigned common task"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
+              ))}
+            </div>
+          )}
 
-                <div className="mt-3 flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (onSelectAssignedTask) {
-                        onSelectAssignedTask(at);
-                      }
-                    }}
-                    className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white shadow-2xs hover:bg-indigo-700 transition-all cursor-pointer"
-                  >
-                    <span>Start Task</span>
-                    <ArrowRight className="h-3.5 w-3.5" />
-                  </button>
-
-                  {onDeleteAssignedTask && (
-                    <button
-                      type="button"
-                      onClick={() => promptDeleteTask(at)}
-                      className="p-2 rounded-lg border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 hover:border-rose-300 transition-all cursor-pointer"
-                      title="Delete this assigned common task"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-3 text-center">
+          <div className="mt-3.5 text-center">
             <span className="text-[11px] text-slate-500 font-medium">
               Or fill out the form below to generate an independent custom task
             </span>

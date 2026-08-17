@@ -46,6 +46,7 @@ import {
   MessageSquareQuote,
   FileSpreadsheet,
   Target,
+  Filter,
 } from 'lucide-react';
 
 interface DashboardViewProps {
@@ -211,6 +212,39 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [selectedExportMonth, setSelectedExportMonth] = useState<string>('ALL');
   const [selectedExportClass, setSelectedExportClass] = useState<string>('ALL');
   const [selectedExportSubject, setSelectedExportSubject] = useState<string>('ALL');
+
+  // Teacher & Class Filters for Published Common Tasks Panel
+  const [assignedTeacherFilter, setAssignedTeacherFilter] = useState<string>('All');
+  const [assignedClassFilter, setAssignedClassFilter] = useState<string>('All');
+
+  const distinctAssignedTeachers = useMemo(() => {
+    return Array.from(
+      new Set(assignedTasks.map((t) => (t.teacherName?.trim() ? t.teacherName.trim() : 'General Teacher')))
+    ).sort();
+  }, [assignedTasks]);
+
+  const organizedDashboardTasks = useMemo(() => {
+    const filtered = assignedTasks.filter((t) => {
+      const teacher = t.teacherName?.trim() || 'General Teacher';
+      if (assignedTeacherFilter !== 'All' && teacher !== assignedTeacherFilter) return false;
+      if (assignedClassFilter !== 'All' && normalizeMypYear(t.mypYear) !== assignedClassFilter) return false;
+      return true;
+    });
+
+    const grouped: Record<string, Record<string, AssignedTask[]>> = {};
+    filtered.forEach((task) => {
+      const teacherKey = task.teacherName?.trim() || 'General Teacher';
+      const classKey = normalizeMypYear(task.mypYear);
+      if (!grouped[teacherKey]) grouped[teacherKey] = {};
+      if (!grouped[teacherKey][classKey]) grouped[teacherKey][classKey] = [];
+      grouped[teacherKey][classKey].push(task);
+    });
+
+    return {
+      grouped,
+      totalMatching: filtered.length,
+    };
+  }, [assignedTasks, assignedTeacherFilter, assignedClassFilter]);
 
   const availableMonths = useMemo(() => {
     return getAvailableMonthsFromLogs(logs);
@@ -670,22 +704,63 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <ClipboardList className="h-4 w-4" />
               </div>
               <div>
-                <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
-                  Published Common Class Tasks ({assignedTasks.length})
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-800 flex items-center gap-2">
+                  <span>Published Common Class Tasks</span>
+                  <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-800">
+                    {assignedTasks.length} Active
+                  </span>
                 </h3>
                 <p className="text-[11px] text-slate-500 font-medium">
-                  Standardized AI tasks assigned by teachers for common student evaluation
+                  Organized by Teacher and Class. Teachers can manage, delete, or keep tasks per class.
                 </p>
               </div>
             </div>
 
-            <button
-              onClick={() => setShowAssignModal(true)}
-              className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition-all"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              <span>Assign New Task</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Teacher Filter */}
+              <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs">
+                <UserCheck className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Teacher:</span>
+                <select
+                  value={assignedTeacherFilter}
+                  onChange={(e) => setAssignedTeacherFilter(e.target.value)}
+                  className="font-bold text-slate-800 bg-transparent focus:outline-none cursor-pointer text-xs"
+                >
+                  <option value="All">All Teachers ({distinctAssignedTeachers.length})</option>
+                  {distinctAssignedTeachers.map((tName) => (
+                    <option key={tName} value={tName}>
+                      {tName}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Class Filter */}
+              <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs">
+                <GraduationCap className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Class:</span>
+                <select
+                  value={assignedClassFilter}
+                  onChange={(e) => setAssignedClassFilter(e.target.value)}
+                  className="font-bold text-slate-800 bg-transparent focus:outline-none cursor-pointer text-xs"
+                >
+                  <option value="All">All Classes (MYP 1 - 5)</option>
+                  <option value="1">MYP 1 (Grade 6)</option>
+                  <option value="2">MYP 2 (Grade 7)</option>
+                  <option value="3">MYP 3 (Grade 8)</option>
+                  <option value="4">MYP 4 (Grade 9)</option>
+                  <option value="5">MYP 5 (Grade 10)</option>
+                </select>
+              </div>
+
+              <button
+                onClick={() => setShowAssignModal(true)}
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition-all cursor-pointer"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Assign New Task</span>
+              </button>
+            </div>
           </div>
 
           {assignedTasks.length === 0 ? (
@@ -694,57 +769,113 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 No common tasks published yet. Click <strong className="text-indigo-600 font-bold">"Assign New Task"</strong> to create a shared task that appears on every student's workbench.
               </p>
             </div>
+          ) : organizedDashboardTasks.totalMatching === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 p-4 text-center">
+              <p className="text-xs font-semibold text-slate-600">
+                No published tasks matching selected filter ({assignedTeacherFilter !== 'All' ? `Teacher: ${assignedTeacherFilter}` : ''} {assignedClassFilter !== 'All' ? `Class: ${formatClassLabel(assignedClassFilter)}` : ''}).
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setAssignedTeacherFilter('All');
+                  setAssignedClassFilter('All');
+                }}
+                className="mt-2 inline-flex items-center gap-1 rounded-lg bg-indigo-50 border border-indigo-200 px-2.5 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition-colors"
+              >
+                <Filter className="h-3 w-3" />
+                <span>Show All Published Tasks</span>
+              </button>
+            </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {assignedTasks.map((at) => (
-                <div
-                  key={at.id}
-                  className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-3.5 shadow-2xs"
-                >
-                  <div>
-                    <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1.5">
-                      <div className="flex flex-wrap items-center gap-1">
-                        <span className="rounded-md bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-[10px] font-bold text-indigo-700">
-                          {at.subject} • MYP {at.mypYear}
-                        </span>
-                        {at.task?.idu_note && (
-                          <span className="rounded-md bg-purple-50 border border-purple-200 px-1.5 py-0.5 text-[10px] font-bold text-purple-700 flex items-center gap-1">
-                            <Layers className="h-3 w-3 text-purple-600" /> IDU
-                          </span>
-                        )}
-                        {(at.criteria || at.task?.target_criteria) && (at.criteria || at.task?.target_criteria)!.length > 0 && (
-                          <span className="rounded-md bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 flex items-center gap-1">
-                            <Target className="h-3 w-3 text-emerald-600" />
-                            {(at.criteria || at.task?.target_criteria)!.map((c) => c.replace('Criterion ', '')).join(', ')}
-                          </span>
-                        )}
+            <div className="space-y-4">
+              {Object.entries(organizedDashboardTasks.grouped).map(([teacherName, classGroups]) => (
+                <div key={teacherName} className="rounded-xl border border-slate-200 bg-slate-50/40 p-3.5">
+                  {/* Teacher Header */}
+                  <div className="flex items-center justify-between pb-2 mb-2.5 border-b border-slate-200">
+                    <div className="flex items-center gap-2">
+                      <div className="flex h-5 w-5 items-center justify-center rounded-md bg-indigo-100 text-indigo-700">
+                        <UserCheck className="h-3.5 w-3.5" />
                       </div>
-                      <span className="text-[10px] text-slate-400 font-medium">
-                        {at.teacherName ? `By ${at.teacherName}` : 'Teacher Task'}
+                      <span className="text-xs font-black uppercase tracking-wider text-slate-800">
+                        Teacher: {teacherName}
                       </span>
                     </div>
-
-                    <h4 className="text-xs font-bold text-slate-800 line-clamp-1">
-                      {at.title || at.task?.title || at.topic}
-                    </h4>
-                    <p className="text-[11px] text-slate-500 line-clamp-2 mt-0.5">
-                      {at.topic} ({at.cluster})
-                    </p>
+                    <span className="rounded-full bg-white border border-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-600">
+                      {Object.values(classGroups).reduce((acc, curr) => acc + curr.length, 0)}{' '}
+                      {Object.values(classGroups).reduce((acc, curr) => acc + curr.length, 0) === 1 ? 'Task' : 'Tasks'}
+                    </span>
                   </div>
 
-                  <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2 text-[10px]">
-                    <span className="text-emerald-700 font-bold flex items-center gap-1">
-                      <Check className="h-3 w-3 text-emerald-600" /> Active on Workbench
-                    </span>
+                  {/* Class Sub-sections */}
+                  <div className="space-y-3">
+                    {Object.entries(classGroups).map(([classYear, tasks]) => (
+                      <div key={classYear} className="space-y-1.5">
+                        <div className="flex items-center gap-1.5 px-1">
+                          <span className="rounded-md bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-[10px] font-bold text-indigo-800 flex items-center gap-1">
+                            <GraduationCap className="h-3 w-3 text-indigo-600" />
+                            {formatClassLabel(classYear)}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-medium">
+                            ({tasks.length} {tasks.length === 1 ? 'task' : 'tasks'})
+                          </span>
+                        </div>
 
-                    {onDeleteAssignedTask && (
-                      <button
-                        onClick={() => promptDeleteAssignedTask(at.id, at.title || at.topic)}
-                        className="text-rose-600 hover:text-rose-800 font-bold hover:underline cursor-pointer"
-                      >
-                        Delete
-                      </button>
-                    )}
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+                          {tasks.map((at) => (
+                            <div
+                              key={at.id}
+                              className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-3 shadow-2xs"
+                            >
+                              <div>
+                                <div className="flex flex-wrap items-center justify-between gap-1 mb-1">
+                                  <div className="flex flex-wrap items-center gap-1">
+                                    <span className="rounded-md bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">
+                                      {at.subject}
+                                    </span>
+                                    {at.task?.idu_note && (
+                                      <span className="rounded-md bg-purple-50 border border-purple-200 px-1.5 py-0.5 text-[10px] font-bold text-purple-700 flex items-center gap-1">
+                                        <Layers className="h-3 w-3 text-purple-600" /> IDU
+                                      </span>
+                                    )}
+                                    {(at.criteria || at.task?.target_criteria) &&
+                                      (at.criteria || at.task?.target_criteria)!.length > 0 && (
+                                        <span className="rounded-md bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 flex items-center gap-1">
+                                          <Target className="h-3 w-3 text-emerald-600" />
+                                          {(at.criteria || at.task?.target_criteria)!
+                                            .map((c) => c.replace('Criterion ', ''))
+                                            .join(', ')}
+                                        </span>
+                                      )}
+                                  </div>
+                                </div>
+
+                                <h4 className="text-xs font-bold text-slate-800 line-clamp-1">
+                                  {at.title || at.task?.title || at.topic}
+                                </h4>
+                                <p className="text-[11px] text-slate-500 line-clamp-2 mt-0.5">
+                                  {at.topic} ({at.cluster})
+                                </p>
+                              </div>
+
+                              <div className="mt-2.5 flex items-center justify-between border-t border-slate-100 pt-2 text-[10px]">
+                                <span className="text-emerald-700 font-bold flex items-center gap-1">
+                                  <Check className="h-3 w-3 text-emerald-600" /> Active on Workbench
+                                </span>
+
+                                {onDeleteAssignedTask && (
+                                  <button
+                                    onClick={() => promptDeleteAssignedTask(at.id, at.title || at.topic)}
+                                    className="text-rose-600 hover:text-rose-800 font-bold hover:underline cursor-pointer"
+                                  >
+                                    Delete
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               ))}
@@ -1831,13 +1962,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                        Teacher Name (Optional)
+                        Teacher / Subject Instructor Name
                       </label>
                       <input
                         type="text"
                         value={newTeacherName}
                         onChange={(e) => setNewTeacherName(e.target.value)}
-                        placeholder="e.g. Ms. Smith"
+                        placeholder="e.g. Ms. Smith (Science)"
                         className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
                       />
                     </div>
