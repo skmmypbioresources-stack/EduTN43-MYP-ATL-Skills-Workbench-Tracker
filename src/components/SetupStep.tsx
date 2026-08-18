@@ -19,7 +19,13 @@ import {
   UserCheck,
   Check,
   School,
-  BookOpen
+  BookOpen,
+  Calendar,
+  Clock,
+  Archive,
+  FolderArchive,
+  AlertCircle,
+  Timer
 } from 'lucide-react';
 
 interface SetupStepProps {
@@ -71,6 +77,67 @@ const formatShortClassTag = (year: string) => {
   }
 };
 
+const getTodayDateString = (): string => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const isTaskPastDue = (dueDate?: string): boolean => {
+  if (!dueDate) return false;
+  return dueDate < getTodayDateString();
+};
+
+const getDueDateInfo = (dueDate?: string) => {
+  if (!dueDate) {
+    return {
+      label: 'Open Task',
+      fullDate: null,
+      isOverdue: false,
+      isUrgent: false,
+      daysLeft: null,
+      daysPast: null,
+    };
+  }
+  const today = getTodayDateString();
+  if (dueDate < today) {
+    const dueTime = new Date(dueDate).getTime();
+    const todayTime = new Date(today).getTime();
+    const daysPast = Math.max(1, Math.round((todayTime - dueTime) / (1000 * 60 * 60 * 24)));
+    return {
+      label: `Past Due (${daysPast}d ago)`,
+      fullDate: dueDate,
+      isOverdue: true,
+      isUrgent: false,
+      daysLeft: null,
+      daysPast,
+    };
+  }
+  if (dueDate === today) {
+    return {
+      label: 'Due Today (11:59 PM)',
+      fullDate: dueDate,
+      isOverdue: false,
+      isUrgent: true,
+      daysLeft: 0,
+      daysPast: null,
+    };
+  }
+  const dueTime = new Date(dueDate).getTime();
+  const todayTime = new Date(today).getTime();
+  const daysLeft = Math.max(1, Math.round((dueTime - todayTime) / (1000 * 60 * 60 * 24)));
+  return {
+    label: `Due: ${dueDate} (${daysLeft}d left)`,
+    fullDate: dueDate,
+    isOverdue: false,
+    isUrgent: daysLeft <= 2,
+    daysLeft,
+    daysPast: null,
+  };
+};
+
 export const SetupStep: React.FC<SetupStepProps> = ({
   meta,
   setMeta,
@@ -87,6 +154,9 @@ export const SetupStep: React.FC<SetupStepProps> = ({
 }) => {
   const [autoCluster, setAutoCluster] = useState(false);
   const [iduToggle, setIduToggle] = useState(false);
+
+  // Active vs Archive Folder Tab for Assigned Tasks
+  const [taskFolderTab, setTaskFolderTab] = useState<'active' | 'archived'>('active');
 
   // Assigned Tasks Teacher & Class Filter State
   const [selectedTeacherFilter, setSelectedTeacherFilter] = useState<string>('All');
@@ -130,10 +200,28 @@ export const SetupStep: React.FC<SetupStepProps> = ({
     return list;
   }, [assignedTasks]);
 
-  // Hierarchical Organization: Teacher -> Class -> Tasks
+  // Split tasks into Active and Archived lists based on Due Date
+  const { activeTasksList, archivedTasksList } = useMemo(() => {
+    const active: AssignedTask[] = [];
+    const archived: AssignedTask[] = [];
+
+    assignedTasks.forEach((t) => {
+      if (isTaskPastDue(t.dueDate)) {
+        archived.push(t);
+      } else {
+        active.push(t);
+      }
+    });
+
+    return { activeTasksList: active, archivedTasksList: archived };
+  }, [assignedTasks]);
+
+  // Hierarchical Organization: Target List -> Filter by Teacher -> Class -> Tasks
   const organizedTasks = useMemo(() => {
+    const currentFolderList = taskFolderTab === 'active' ? activeTasksList : archivedTasksList;
+
     // 1. Filter by Teacher
-    const filteredByTeacher = assignedTasks.filter((t) => {
+    const filteredByTeacher = currentFolderList.filter((t) => {
       const tTeacher = t.teacherName?.trim() || 'General Teacher';
       if (selectedTeacherFilter === 'All') return true;
       return tTeacher === selectedTeacherFilter;
@@ -168,8 +256,9 @@ export const SetupStep: React.FC<SetupStepProps> = ({
       grouped,
       totalMatching: filtered.length,
       effectiveClassTarget,
+      totalInCurrentFolder: currentFolderList.length,
     };
-  }, [assignedTasks, selectedTeacherFilter, selectedClassFilter, meta.year]);
+  }, [taskFolderTab, activeTasksList, archivedTasksList, selectedTeacherFilter, selectedClassFilter, meta.year]);
 
   // Update clusters when category changes
   const categoryData = ATL_DATA[meta.category];
@@ -212,7 +301,7 @@ export const SetupStep: React.FC<SetupStepProps> = ({
         </div>
       </div>
 
-      {/* Teacher Assigned Common Tasks Callout (Organized by Teacher -> Class) */}
+      {/* Teacher Assigned Common Tasks Callout (Organized by Teacher -> Class with Active & Archive Views) */}
       {assignedTasks && assignedTasks.length > 0 && (
         <div className="mb-8 rounded-2xl border border-indigo-200/90 bg-gradient-to-br from-indigo-50/90 via-white to-purple-50/50 p-5 sm:p-6 shadow-xs">
           {/* Header */}
@@ -225,11 +314,11 @@ export const SetupStep: React.FC<SetupStepProps> = ({
                 <h3 className="text-sm font-black text-slate-900 tracking-tight flex items-center gap-1.5">
                   <span>Teacher Assigned Common Tasks</span>
                   <span className="rounded-full bg-indigo-100 border border-indigo-200 px-2 py-0.5 text-[10px] font-bold text-indigo-800">
-                    {assignedTasks.length} Published
+                    {assignedTasks.length} Total
                   </span>
                 </h3>
                 <p className="text-[11px] font-medium text-slate-500">
-                  Organized by Teacher & Class so students see only their class work
+                  Organized by Teacher & Class with automated due date tracking
                 </p>
               </div>
             </div>
@@ -275,31 +364,97 @@ export const SetupStep: React.FC<SetupStepProps> = ({
             </div>
           </div>
 
+          {/* Active Tasks vs Archive Folder Switcher Tabs */}
+          <div className="mb-4 flex items-center justify-between gap-2 border-b border-indigo-100 pb-2.5">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setTaskFolderTab('active')}
+                className={`inline-flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                  taskFolderTab === 'active'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <ClipboardList className="h-3.5 w-3.5" />
+                <span>Active Class Tasks</span>
+                <span
+                  className={`rounded-full px-1.5 py-0.2 text-[10px] font-black ${
+                    taskFolderTab === 'active' ? 'bg-indigo-700 text-white' : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  {activeTasksList.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setTaskFolderTab('archived')}
+                className={`inline-flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all cursor-pointer ${
+                  taskFolderTab === 'archived'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <FolderArchive className="h-3.5 w-3.5" />
+                <span>Archive Folder (Past Due)</span>
+                <span
+                  className={`rounded-full px-1.5 py-0.2 text-[10px] font-black ${
+                    taskFolderTab === 'archived' ? 'bg-amber-700 text-white' : 'bg-slate-100 text-slate-600'
+                  }`}
+                >
+                  {archivedTasksList.length}
+                </span>
+              </button>
+            </div>
+
+            {taskFolderTab === 'archived' && (
+              <span className="hidden md:inline-flex items-center gap-1 text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg">
+                <Timer className="h-3.5 w-3.5 text-amber-600" />
+                <span>Tasks submitted from archive will be recorded as extended time / overdue</span>
+              </span>
+            )}
+          </div>
+
           {/* Hierarchical Tree of Teacher -> Class -> Tasks */}
           {organizedTasks.totalMatching === 0 ? (
             <div className="rounded-xl border border-dashed border-indigo-200 bg-white/80 p-6 text-center">
               <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 mb-2">
-                <School className="h-5 w-5" />
+                {taskFolderTab === 'active' ? <School className="h-5 w-5" /> : <FolderArchive className="h-5 w-5 text-amber-600" />}
               </div>
               <p className="text-xs font-bold text-slate-800">
-                No assigned tasks found for{' '}
-                <span className="text-indigo-600">
-                  {selectedTeacherFilter !== 'All' ? `Teacher: ${selectedTeacherFilter}` : 'any teacher'}
-                </span>{' '}
-                in{' '}
-                <span className="text-indigo-600">
-                  {selectedClassFilter === 'my_class'
-                    ? formatClassLabel(meta.year)
-                    : selectedClassFilter === 'All'
-                    ? 'all classes'
-                    : formatClassLabel(selectedClassFilter)}
-                </span>
-                .
+                {taskFolderTab === 'active'
+                  ? `No active assigned tasks found for ${selectedTeacherFilter !== 'All' ? `Teacher: ${selectedTeacherFilter}` : 'any teacher'} in ${
+                      selectedClassFilter === 'my_class'
+                        ? formatClassLabel(meta.year)
+                        : selectedClassFilter === 'All'
+                        ? 'all classes'
+                        : formatClassLabel(selectedClassFilter)
+                    }.`
+                  : `No past due tasks in the Archive Folder for ${selectedTeacherFilter !== 'All' ? `Teacher: ${selectedTeacherFilter}` : 'any teacher'} in ${
+                      selectedClassFilter === 'my_class'
+                        ? formatClassLabel(meta.year)
+                        : selectedClassFilter === 'All'
+                        ? 'all classes'
+                        : formatClassLabel(selectedClassFilter)
+                    }.`}
               </p>
               <p className="text-[11px] text-slate-500 mt-1">
-                Choose another teacher/class above, or switch filter to "All Classes" to browse available tasks.
+                {taskFolderTab === 'active' && archivedTasksList.length > 0
+                  ? `There are ${archivedTasksList.length} task(s) in the Archive Folder that passed their due date.`
+                  : 'Choose another teacher/class above or switch filter to "All Classes".'}
               </p>
               <div className="mt-3 flex items-center justify-center gap-2">
+                {taskFolderTab === 'active' && archivedTasksList.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setTaskFolderTab('archived')}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-amber-50 border border-amber-200 px-3 py-1.5 text-xs font-bold text-amber-800 hover:bg-amber-100 transition-colors cursor-pointer"
+                  >
+                    <FolderArchive className="h-3 w-3" />
+                    <span>View Archive Folder ({archivedTasksList.length})</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
@@ -309,7 +464,7 @@ export const SetupStep: React.FC<SetupStepProps> = ({
                   className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 border border-indigo-200 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition-colors cursor-pointer"
                 >
                   <Filter className="h-3 w-3" />
-                  <span>Show All Assigned Tasks ({assignedTasks.length})</span>
+                  <span>Show All Tasks in {taskFolderTab === 'active' ? 'Active' : 'Archive'}</span>
                 </button>
               </div>
             </div>
@@ -318,12 +473,20 @@ export const SetupStep: React.FC<SetupStepProps> = ({
               {Object.entries(organizedTasks.grouped).map(([teacherName, classGroups]) => (
                 <div
                   key={teacherName}
-                  className="rounded-xl border border-indigo-100/90 bg-white/90 p-4 shadow-2xs"
+                  className={`rounded-xl border p-4 shadow-2xs ${
+                    taskFolderTab === 'active'
+                      ? 'border-indigo-100/90 bg-white/90'
+                      : 'border-amber-100/90 bg-amber-50/30'
+                  }`}
                 >
                   {/* Teacher Header */}
                   <div className="flex items-center justify-between pb-2.5 mb-3 border-b border-slate-100">
                     <div className="flex items-center gap-2">
-                      <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-100 text-indigo-700">
+                      <div
+                        className={`flex h-6 w-6 items-center justify-center rounded-lg ${
+                          taskFolderTab === 'active' ? 'bg-indigo-100 text-indigo-700' : 'bg-amber-100 text-amber-700'
+                        }`}
+                      >
                         <UserCheck className="h-3.5 w-3.5" />
                       </div>
                       <span className="text-xs font-black uppercase tracking-wider text-slate-800">
@@ -332,7 +495,8 @@ export const SetupStep: React.FC<SetupStepProps> = ({
                     </div>
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">
                       {Object.values(classGroups).reduce((acc, curr) => acc + curr.length, 0)}{' '}
-                      {Object.values(classGroups).reduce((acc, curr) => acc + curr.length, 0) === 1 ? 'Task' : 'Tasks'} Assigned
+                      {Object.values(classGroups).reduce((acc, curr) => acc + curr.length, 0) === 1 ? 'Task' : 'Tasks'}{' '}
+                      {taskFolderTab === 'active' ? 'Active' : 'Archived'}
                     </span>
                   </div>
 
@@ -353,70 +517,116 @@ export const SetupStep: React.FC<SetupStepProps> = ({
 
                         {/* Task Cards inside this Class */}
                         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                          {tasks.map((at) => (
-                            <div
-                              key={at.id}
-                              className="flex flex-col justify-between rounded-xl border border-slate-200/90 bg-white p-3.5 shadow-2xs hover:border-indigo-300 hover:shadow-md transition-all"
-                            >
-                              <div>
-                                <div className="flex flex-wrap items-center gap-1.5 mb-1.5 text-[10px] font-bold">
-                                  <span className="rounded-md bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-indigo-700">
-                                    {at.subject}
-                                  </span>
-                                  <span className="rounded-md bg-slate-100 border border-slate-200 px-2 py-0.5 text-slate-600">
-                                    {at.category}
-                                  </span>
-                                  {at.task?.idu_note && (
-                                    <span className="rounded-md bg-purple-50 border border-purple-200 px-2 py-0.5 text-purple-700 flex items-center gap-1">
-                                      <Layers className="h-3 w-3 text-purple-600" /> IDU
-                                    </span>
-                                  )}
-                                  {(at.criteria || at.task?.target_criteria) &&
-                                    (at.criteria || at.task?.target_criteria)!.length > 0 && (
-                                      <span className="rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-emerald-800 flex items-center gap-1">
-                                        <Target className="h-3 w-3 text-emerald-600" />
-                                        {(at.criteria || at.task?.target_criteria)!
-                                          .map((c) => c.replace('Criterion ', ''))
-                                          .join(', ')}
+                          {tasks.map((at) => {
+                            const dueInfo = getDueDateInfo(at.dueDate);
+
+                            return (
+                              <div
+                                key={at.id}
+                                className={`flex flex-col justify-between rounded-xl border p-3.5 shadow-2xs hover:shadow-md transition-all ${
+                                  taskFolderTab === 'active'
+                                    ? 'border-slate-200/90 bg-white hover:border-indigo-300'
+                                    : 'border-amber-200/80 bg-white hover:border-amber-400'
+                                }`}
+                              >
+                                <div>
+                                  {/* Badges & Due Date Status */}
+                                  <div className="flex flex-wrap items-center justify-between gap-1.5 mb-2 text-[10px] font-bold">
+                                    <div className="flex flex-wrap items-center gap-1">
+                                      <span className="rounded-md bg-indigo-50 border border-indigo-100 px-2 py-0.5 text-indigo-700">
+                                        {at.subject}
+                                      </span>
+                                      <span className="rounded-md bg-slate-100 border border-slate-200 px-2 py-0.5 text-slate-600">
+                                        {at.category}
+                                      </span>
+                                      {at.task?.idu_note && (
+                                        <span className="rounded-md bg-purple-50 border border-purple-200 px-2 py-0.5 text-purple-700 flex items-center gap-1">
+                                          <Layers className="h-3 w-3 text-purple-600" /> IDU
+                                        </span>
+                                      )}
+                                      {(at.criteria || at.task?.target_criteria) &&
+                                        (at.criteria || at.task?.target_criteria)!.length > 0 && (
+                                          <span className="rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-emerald-800 flex items-center gap-1">
+                                            <Target className="h-3 w-3 text-emerald-600" />
+                                            {(at.criteria || at.task?.target_criteria)!
+                                              .map((c) => c.replace('Criterion ', ''))
+                                              .join(', ')}
+                                          </span>
+                                        )}
+                                    </div>
+
+                                    {/* Due Date Indicator Badge */}
+                                    {dueInfo.fullDate ? (
+                                      <span
+                                        className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-black ${
+                                          dueInfo.isOverdue
+                                            ? 'bg-rose-50 border border-rose-200 text-rose-700'
+                                            : dueInfo.isUrgent
+                                            ? 'bg-amber-50 border border-amber-200 text-amber-800'
+                                            : 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+                                        }`}
+                                      >
+                                        <Clock className="h-3 w-3" />
+                                        <span>{dueInfo.label}</span>
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">
+                                        <Calendar className="h-3 w-3" />
+                                        <span>Open Task</span>
                                       </span>
                                     )}
+                                  </div>
+
+                                  <h4 className="text-xs font-bold text-slate-800 line-clamp-2">
+                                    {at.title || at.task?.title || at.topic}
+                                  </h4>
+                                  <p className="text-[11px] text-slate-500 line-clamp-2 mt-1">
+                                    {at.topic} ({at.cluster})
+                                  </p>
+
+                                  {/* Archive notice if in archive folder */}
+                                  {dueInfo.isOverdue && (
+                                    <div className="mt-2 rounded-lg bg-amber-50 border border-amber-200/80 p-2 text-[10px] text-amber-900 font-medium flex items-center gap-1.5">
+                                      <AlertCircle className="h-3.5 w-3.5 text-amber-600 shrink-0" />
+                                      <span>Archived after due date ({dueInfo.fullDate}). You can still complete and submit this task.</span>
+                                    </div>
+                                  )}
                                 </div>
 
-                                <h4 className="text-xs font-bold text-slate-800 line-clamp-2">
-                                  {at.title || at.task?.title || at.topic}
-                                </h4>
-                                <p className="text-[11px] text-slate-500 line-clamp-2 mt-1">
-                                  {at.topic} ({at.cluster})
-                                </p>
-                              </div>
-
-                              <div className="mt-3 flex items-center gap-2 pt-2 border-t border-slate-100">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (onSelectAssignedTask) {
-                                      onSelectAssignedTask(at);
-                                    }
-                                  }}
-                                  className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-bold text-white shadow-2xs hover:bg-indigo-700 transition-all cursor-pointer"
-                                >
-                                  <span>Start Class Task</span>
-                                  <ArrowRight className="h-3.5 w-3.5" />
-                                </button>
-
-                                {onDeleteAssignedTask && (
+                                <div className="mt-3 flex items-center gap-2 pt-2 border-t border-slate-100">
                                   <button
                                     type="button"
-                                    onClick={() => promptDeleteTask(at)}
-                                    className="p-2 rounded-lg border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 hover:border-rose-300 transition-all cursor-pointer"
-                                    title="Delete this assigned common task"
+                                    onClick={() => {
+                                      if (onSelectAssignedTask) {
+                                        onSelectAssignedTask(at);
+                                      }
+                                    }}
+                                    className={`flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold text-white shadow-2xs transition-all cursor-pointer ${
+                                      dueInfo.isOverdue
+                                        ? 'bg-amber-600 hover:bg-amber-700'
+                                        : 'bg-indigo-600 hover:bg-indigo-700'
+                                    }`}
                                   >
-                                    <Trash2 className="h-3.5 w-3.5" />
+                                    <span>
+                                      {dueInfo.isOverdue ? 'Complete Task (Extended Time)' : 'Start Class Task'}
+                                    </span>
+                                    <ArrowRight className="h-3.5 w-3.5" />
                                   </button>
-                                )}
+
+                                  {onDeleteAssignedTask && (
+                                    <button
+                                      type="button"
+                                      onClick={() => promptDeleteTask(at)}
+                                      className="p-2 rounded-lg border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 hover:border-rose-300 transition-all cursor-pointer"
+                                      title="Delete this assigned common task"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     ))}

@@ -47,6 +47,15 @@ import {
   FileSpreadsheet,
   Target,
   Filter,
+  Calendar,
+  Clock,
+  Archive,
+  FolderArchive,
+  AlertCircle,
+  Timer,
+  CheckCircle,
+  ArrowLeft,
+  ChevronDown,
 } from 'lucide-react';
 
 interface DashboardViewProps {
@@ -66,6 +75,10 @@ interface DashboardViewProps {
     category: ATLCategoryKey;
     cluster: string;
     iduSubject?: string | null;
+    criteria?: string[];
+    strands?: string[];
+    dueDate?: string;
+    dueDaysPeriod?: number;
   }) => Promise<void>;
   onDeleteAssignedTask?: (taskId: string) => Promise<void>;
 }
@@ -100,6 +113,76 @@ const formatShortClassTag = (yearKey: string): string => {
   return `MYP ${clean}`;
 };
 
+const getTodayDateString = (): string => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const calculateDueDateFromPeriod = (days: number): string => {
+  const target = new Date();
+  target.setDate(target.getDate() + days);
+  const year = target.getFullYear();
+  const month = String(target.getMonth() + 1).padStart(2, '0');
+  const day = String(target.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const isTaskPastDue = (dueDate?: string): boolean => {
+  if (!dueDate) return false;
+  return dueDate < getTodayDateString();
+};
+
+const getDueDateInfo = (dueDate?: string) => {
+  if (!dueDate) {
+    return {
+      label: 'Open Task',
+      fullDate: null,
+      isOverdue: false,
+      isUrgent: false,
+      daysLeft: null,
+      daysPast: null,
+    };
+  }
+  const today = getTodayDateString();
+  if (dueDate < today) {
+    const dueTime = new Date(dueDate).getTime();
+    const todayTime = new Date(today).getTime();
+    const daysPast = Math.max(1, Math.round((todayTime - dueTime) / (1000 * 60 * 60 * 24)));
+    return {
+      label: `Past Due (${daysPast}d ago)`,
+      fullDate: dueDate,
+      isOverdue: true,
+      isUrgent: false,
+      daysLeft: null,
+      daysPast,
+    };
+  }
+  if (dueDate === today) {
+    return {
+      label: 'Due Today (11:59 PM)',
+      fullDate: dueDate,
+      isOverdue: false,
+      isUrgent: true,
+      daysLeft: 0,
+      daysPast: null,
+    };
+  }
+  const dueTime = new Date(dueDate).getTime();
+  const todayTime = new Date(today).getTime();
+  const daysLeft = Math.max(1, Math.round((dueTime - todayTime) / (1000 * 60 * 60 * 24)));
+  return {
+    label: `${daysLeft}d left (${dueDate})`,
+    fullDate: dueDate,
+    isOverdue: false,
+    isUrgent: daysLeft <= 2,
+    daysLeft,
+    daysPast: null,
+  };
+};
+
 const MYP_CLASS_KEYS = ['1', '2', '3', '4', '5'];
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -129,6 +212,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [publishError, setPublishError] = useState<string | null>(null);
   const [publishSuccess, setPublishSuccess] = useState<string | null>(null);
 
+  // Due Date settings for newly assigned tasks
+  const [newDueDateType, setNewDueDateType] = useState<'period' | 'custom' | 'none'>('period');
+  const [newDuePeriodDays, setNewDuePeriodDays] = useState<number>(7);
+  const [newCustomDueDate, setNewCustomDueDate] = useState<string>(() => calculateDueDateFromPeriod(7));
+
   // Update cluster when newCategory changes
   React.useEffect(() => {
     const availableClusters = Object.keys(ATL_DATA[newCategory]?.clusters || {});
@@ -150,6 +238,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setPublishError(null);
     setPublishSuccess(null);
 
+    // Compute effective due date
+    let effectiveDueDate: string | undefined = undefined;
+    if (newDueDateType === 'period') {
+      effectiveDueDate = calculateDueDateFromPeriod(newDuePeriodDays);
+    } else if (newDueDateType === 'custom') {
+      effectiveDueDate = newCustomDueDate;
+    }
+
     try {
       await onCreateAssignedTask({
         teacherName: newTeacherName.trim(),
@@ -161,9 +257,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         iduSubject: newIduToggle ? newIduSubject : null,
         criteria: newSelectedCriteria,
         strands: newSelectedStrands,
+        dueDate: effectiveDueDate,
+        dueDaysPeriod: newDueDateType === 'period' ? newDuePeriodDays : undefined,
       });
 
-      setPublishSuccess('Task generated and assigned to all students successfully!');
+      setPublishSuccess('Task generated and assigned to students successfully with due date tracking!');
       setNewTopic('');
       setNewIduToggle(false);
       setNewSelectedCriteria([]);
@@ -821,58 +919,92 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                          {tasks.map((at) => (
-                            <div
-                              key={at.id}
-                              className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-3 shadow-2xs"
-                            >
-                              <div>
-                                <div className="flex flex-wrap items-center justify-between gap-1 mb-1">
-                                  <div className="flex flex-wrap items-center gap-1">
-                                    <span className="rounded-md bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">
-                                      {at.subject}
-                                    </span>
-                                    {at.task?.idu_note && (
-                                      <span className="rounded-md bg-purple-50 border border-purple-200 px-1.5 py-0.5 text-[10px] font-bold text-purple-700 flex items-center gap-1">
-                                        <Layers className="h-3 w-3 text-purple-600" /> IDU
+                          {tasks.map((at) => {
+                            const dueInfo = getDueDateInfo(at.dueDate);
+
+                            return (
+                              <div
+                                key={at.id}
+                                className="flex flex-col justify-between rounded-xl border border-slate-200 bg-white p-3 shadow-2xs"
+                              >
+                                <div>
+                                  <div className="flex flex-wrap items-center justify-between gap-1 mb-1">
+                                    <div className="flex flex-wrap items-center gap-1">
+                                      <span className="rounded-md bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">
+                                        {at.subject}
                                       </span>
-                                    )}
-                                    {(at.criteria || at.task?.target_criteria) &&
-                                      (at.criteria || at.task?.target_criteria)!.length > 0 && (
-                                        <span className="rounded-md bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 flex items-center gap-1">
-                                          <Target className="h-3 w-3 text-emerald-600" />
-                                          {(at.criteria || at.task?.target_criteria)!
-                                            .map((c) => c.replace('Criterion ', ''))
-                                            .join(', ')}
+                                      {at.task?.idu_note && (
+                                        <span className="rounded-md bg-purple-50 border border-purple-200 px-1.5 py-0.5 text-[10px] font-bold text-purple-700 flex items-center gap-1">
+                                          <Layers className="h-3 w-3 text-purple-600" /> IDU
                                         </span>
                                       )}
+                                      {(at.criteria || at.task?.target_criteria) &&
+                                        (at.criteria || at.task?.target_criteria)!.length > 0 && (
+                                          <span className="rounded-md bg-emerald-50 border border-emerald-200 px-1.5 py-0.5 text-[10px] font-bold text-emerald-800 flex items-center gap-1">
+                                            <Target className="h-3 w-3 text-emerald-600" />
+                                            {(at.criteria || at.task?.target_criteria)!
+                                              .map((c) => c.replace('Criterion ', ''))
+                                              .join(', ')}
+                                          </span>
+                                        )}
+                                    </div>
+
+                                    {/* Due Date Indicator */}
+                                    {dueInfo.fullDate ? (
+                                      <span
+                                        className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[9px] font-black ${
+                                          dueInfo.isOverdue
+                                            ? 'bg-amber-100 border border-amber-200 text-amber-800'
+                                            : dueInfo.isUrgent
+                                            ? 'bg-rose-50 border border-rose-200 text-rose-700'
+                                            : 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+                                        }`}
+                                      >
+                                        <Clock className="h-2.5 w-2.5" />
+                                        <span>{dueInfo.label}</span>
+                                      </span>
+                                    ) : (
+                                      <span className="text-[9px] text-slate-400 font-bold">Open Task</span>
+                                    )}
                                   </div>
+
+                                  <h4 className="text-xs font-bold text-slate-800 line-clamp-1">
+                                    {at.title || at.task?.title || at.topic}
+                                  </h4>
+                                  <p className="text-[11px] text-slate-500 line-clamp-2 mt-0.5">
+                                    {at.topic} ({at.cluster})
+                                  </p>
                                 </div>
 
-                                <h4 className="text-xs font-bold text-slate-800 line-clamp-1">
-                                  {at.title || at.task?.title || at.topic}
-                                </h4>
-                                <p className="text-[11px] text-slate-500 line-clamp-2 mt-0.5">
-                                  {at.topic} ({at.cluster})
-                                </p>
-                              </div>
+                                <div className="mt-2.5 flex items-center justify-between border-t border-slate-100 pt-2 text-[10px]">
+                                  <span className={`font-bold flex items-center gap-1 ${
+                                    dueInfo.isOverdue ? 'text-amber-700' : 'text-emerald-700'
+                                  }`}>
+                                    {dueInfo.isOverdue ? (
+                                      <>
+                                        <FolderArchive className="h-3 w-3 text-amber-600" />
+                                        <span>Archived (Past Due)</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Check className="h-3 w-3 text-emerald-600" />
+                                        <span>Active on Workbench</span>
+                                      </>
+                                    )}
+                                  </span>
 
-                              <div className="mt-2.5 flex items-center justify-between border-t border-slate-100 pt-2 text-[10px]">
-                                <span className="text-emerald-700 font-bold flex items-center gap-1">
-                                  <Check className="h-3 w-3 text-emerald-600" /> Active on Workbench
-                                </span>
-
-                                {onDeleteAssignedTask && (
-                                  <button
-                                    onClick={() => promptDeleteAssignedTask(at.id, at.title || at.topic)}
-                                    className="text-rose-600 hover:text-rose-800 font-bold hover:underline cursor-pointer"
-                                  >
-                                    Delete
-                                  </button>
-                                )}
+                                  {onDeleteAssignedTask && (
+                                    <button
+                                      onClick={() => promptDeleteAssignedTask(at.id, at.title || at.topic)}
+                                      className="text-rose-600 hover:text-rose-800 font-bold hover:underline cursor-pointer"
+                                    >
+                                      Delete
+                                    </button>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     ))}
@@ -1594,6 +1726,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <thead>
               <tr className="border-b border-slate-200 font-bold uppercase text-slate-400 text-[11px]">
                 <th className="py-3 px-3">Date</th>
+                <th className="py-3 px-3">Timing / Due Date</th>
                 <th className="py-3 px-3">Class / Grade</th>
                 <th className="py-3 px-3">Student Name</th>
                 <th className="py-3 px-3">Subject & Topic</th>
@@ -1605,18 +1738,48 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <tbody className="divide-y divide-slate-100">
               {filteredLogs.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-slate-500 font-medium">
+                  <td colSpan={8} className="py-8 text-center text-slate-500 font-medium">
                     No tasks found matching current class or filter criteria.
                   </td>
                 </tr>
               ) : (
                 filteredLogs.map((log) => (
                   <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="py-3 px-3 text-slate-500 font-medium">
+                    <td className="py-3 px-3 text-slate-500 font-medium whitespace-nowrap">
                       {log.date}
                       <div className="text-[10px] text-slate-400">{log.term}</div>
                     </td>
-                    <td className="py-3 px-3">
+                    <td className="py-3 px-3 whitespace-nowrap">
+                      {log.submissionStatus === 'overdue' ? (
+                        <div>
+                          <span className="inline-flex items-center gap-1 rounded-md bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-black text-amber-800">
+                            <Timer className="h-3 w-3 text-amber-600" />
+                            <span>Extended (+{log.daysOverdue || 1}d)</span>
+                          </span>
+                          {log.dueDate && (
+                            <div className="text-[9px] text-slate-400 font-medium mt-0.5">Due: {log.dueDate}</div>
+                          )}
+                        </div>
+                      ) : log.submissionStatus === 'on_time' ? (
+                        <div>
+                          <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-black text-emerald-800">
+                            <CheckCircle className="h-3 w-3 text-emerald-600" />
+                            <span>On-Time</span>
+                          </span>
+                          {log.dueDate && (
+                            <div className="text-[9px] text-slate-400 font-medium mt-0.5">Due: {log.dueDate}</div>
+                          )}
+                        </div>
+                      ) : log.dueDate ? (
+                        <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 border border-slate-200 px-2 py-0.5 text-[10px] font-bold text-slate-600">
+                          <Calendar className="h-3 w-3 text-slate-500" />
+                          <span>Due: {log.dueDate}</span>
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-slate-400 font-medium italic">Standard</span>
+                      )}
+                    </td>
+                    <td className="py-3 px-3 whitespace-nowrap">
                       <span className="rounded-lg bg-indigo-50 border border-indigo-100 px-2 py-1 text-[11px] font-extrabold text-indigo-700">
                         {formatShortClassTag(log.mypYear)}
                       </span>
@@ -1658,7 +1821,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       <div className="flex items-center justify-end gap-1.5">
                         <button
                           onClick={() => setSelectedLogForModal(log)}
-                          className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                          className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
                           title="View Details"
                         >
                           <Eye className="h-4 w-4" />
@@ -1682,33 +1845,61 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Details Modal */}
       {selectedLogForModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-2xl max-h-[85vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-2xl max-h-[88vh] flex flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden animate-fadeIn">
+            {/* Sticky Header with Back button */}
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 bg-slate-50/90 shrink-0">
               <div>
                 <span className="text-xs font-bold uppercase tracking-wider text-indigo-600">
                   Log Entry Details
                 </span>
-                <h3 className="text-xl font-bold text-slate-900 mt-0.5">
+                <h3 className="text-lg sm:text-xl font-bold text-slate-900 mt-0.5">
                   {selectedLogForModal.taskTitle}
                 </h3>
               </div>
-              <button
-                onClick={() => setSelectedLogForModal(null)}
-                className="rounded-xl border border-slate-200 px-3.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors"
-              >
-                Close
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedLogForModal(null)}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                  title="Go Back"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  <span>Back</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedLogForModal(null)}
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors cursor-pointer"
+                  title="Close"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
-            <div className="mt-4 space-y-4 text-xs">
-              <div className="grid grid-cols-2 gap-2 bg-slate-50 p-4 rounded-xl font-medium text-slate-800">
+            {/* Scrollable Content */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-slate-50 p-4 rounded-xl font-medium text-slate-800 border border-slate-200/60">
                 <div><strong className="text-slate-500">Student:</strong> {selectedLogForModal.studentName}</div>
                 <div><strong className="text-slate-500">Class:</strong> {formatClassLabel(selectedLogForModal.mypYear)}</div>
                 <div><strong className="text-slate-500">Date:</strong> {selectedLogForModal.date} ({selectedLogForModal.term})</div>
                 <div><strong className="text-slate-500">Subject:</strong> {selectedLogForModal.subject}</div>
                 <div><strong className="text-slate-500">ATL Cluster:</strong> {selectedLogForModal.cluster} ({selectedLogForModal.category})</div>
                 <div><strong className="text-slate-500">Level:</strong> {selectedLogForModal.level}</div>
+                {selectedLogForModal.dueDate && (
+                  <div><strong className="text-slate-500">Task Due Date:</strong> {selectedLogForModal.dueDate}</div>
+                )}
+                {selectedLogForModal.submissionStatus && (
+                  <div>
+                    <strong className="text-slate-500">Submission Timing:</strong>{' '}
+                    <span className={selectedLogForModal.submissionStatus === 'overdue' ? 'font-bold text-amber-700' : 'font-bold text-emerald-700'}>
+                      {selectedLogForModal.submissionStatus === 'overdue'
+                        ? `Extended Submission (+${selectedLogForModal.daysOverdue || 1}d overdue)`
+                        : 'Submitted On-Time'}
+                    </span>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -1751,71 +1942,82 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   </div>
                 </div>
               )}
+            </div>
 
-              {/* Action Buttons inside Modal */}
-              <div className="pt-4 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() =>
-                      exportToWordDoc({
-                        studentName: selectedLogForModal.studentName,
-                        subject: selectedLogForModal.subject,
-                        topic: selectedLogForModal.topic,
-                        mypYear: selectedLogForModal.mypYear,
-                        academicYear: selectedLogForModal.academicYear,
-                        term: selectedLogForModal.term,
-                        category: selectedLogForModal.category,
-                        cluster: selectedLogForModal.cluster,
-                        level: selectedLogForModal.level,
-                        taskTitle: selectedLogForModal.taskTitle,
-                        responses: selectedLogForModal.responses,
-                        feedback: selectedLogForModal.feedback,
-                        studentReflection: selectedLogForModal.studentReflection,
-                        criteria: selectedLogForModal.criteria,
-                        strands: selectedLogForModal.strands,
-                      })
-                    }
-                    className="flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100 transition-colors cursor-pointer"
-                  >
-                    <FileText className="h-4 w-4" />
-                    <span>Download Word Doc (.doc)</span>
-                  </button>
-
-                  <button
-                    onClick={() =>
-                      exportToPdf({
-                        studentName: selectedLogForModal.studentName,
-                        subject: selectedLogForModal.subject,
-                        topic: selectedLogForModal.topic,
-                        mypYear: selectedLogForModal.mypYear,
-                        academicYear: selectedLogForModal.academicYear,
-                        term: selectedLogForModal.term,
-                        category: selectedLogForModal.category,
-                        cluster: selectedLogForModal.cluster,
-                        level: selectedLogForModal.level,
-                        taskTitle: selectedLogForModal.taskTitle,
-                        responses: selectedLogForModal.responses,
-                        feedback: selectedLogForModal.feedback,
-                        studentReflection: selectedLogForModal.studentReflection,
-                        criteria: selectedLogForModal.criteria,
-                        strands: selectedLogForModal.strands,
-                      })
-                    }
-                    className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-                  >
-                    <Download className="h-4 w-4" />
-                    <span>Print / Save PDF</span>
-                  </button>
-                </div>
+            {/* Sticky Action Footer */}
+            <div className="shrink-0 p-4 border-t border-slate-200 bg-slate-50/95 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedLogForModal(null)}
+                  className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  <span>Back</span>
+                </button>
 
                 <button
-                  onClick={() => promptDeleteLog(selectedLogForModal.id, `${selectedLogForModal.studentName} (${selectedLogForModal.subject} - ${selectedLogForModal.topic})`)}
-                  className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3.5 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100 transition-colors cursor-pointer"
+                  onClick={() =>
+                    exportToWordDoc({
+                      studentName: selectedLogForModal.studentName,
+                      subject: selectedLogForModal.subject,
+                      topic: selectedLogForModal.topic,
+                      mypYear: selectedLogForModal.mypYear,
+                      academicYear: selectedLogForModal.academicYear,
+                      term: selectedLogForModal.term,
+                      category: selectedLogForModal.category,
+                      cluster: selectedLogForModal.cluster,
+                      level: selectedLogForModal.level,
+                      taskTitle: selectedLogForModal.taskTitle,
+                      responses: selectedLogForModal.responses,
+                      feedback: selectedLogForModal.feedback,
+                      studentReflection: selectedLogForModal.studentReflection,
+                      criteria: selectedLogForModal.criteria,
+                      strands: selectedLogForModal.strands,
+                    })
+                  }
+                  className="flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100 transition-colors cursor-pointer"
                 >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  <span>Delete Record</span>
+                  <FileText className="h-4 w-4" />
+                  <span className="hidden sm:inline">Download Word</span>
+                  <span className="sm:hidden">Word (.doc)</span>
+                </button>
+
+                <button
+                  onClick={() =>
+                    exportToPdf({
+                      studentName: selectedLogForModal.studentName,
+                      subject: selectedLogForModal.subject,
+                      topic: selectedLogForModal.topic,
+                      mypYear: selectedLogForModal.mypYear,
+                      academicYear: selectedLogForModal.academicYear,
+                      term: selectedLogForModal.term,
+                      category: selectedLogForModal.category,
+                      cluster: selectedLogForModal.cluster,
+                      level: selectedLogForModal.level,
+                      taskTitle: selectedLogForModal.taskTitle,
+                      responses: selectedLogForModal.responses,
+                      feedback: selectedLogForModal.feedback,
+                      studentReflection: selectedLogForModal.studentReflection,
+                      criteria: selectedLogForModal.criteria,
+                      strands: selectedLogForModal.strands,
+                    })
+                  }
+                  className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  <Download className="h-4 w-4" />
+                  <span className="hidden sm:inline">Print PDF</span>
+                  <span className="sm:hidden">PDF</span>
                 </button>
               </div>
+
+              <button
+                onClick={() => promptDeleteLog(selectedLogForModal.id, `${selectedLogForModal.studentName} (${selectedLogForModal.subject} - ${selectedLogForModal.topic})`)}
+                className="flex items-center gap-1.5 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-700 hover:bg-rose-100 transition-colors cursor-pointer"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Delete Record</span>
+              </button>
             </div>
           </div>
         </div>
@@ -1925,170 +2127,117 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Assign Common Task Modal */}
       {showAssignModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-3 sm:p-4 backdrop-blur-xs">
+          <div className="w-full max-w-xl max-h-[88vh] flex flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden animate-fadeIn">
+            {/* Sticky Header with prominent Back and Close buttons */}
+            <div className="flex items-center justify-between border-b border-slate-200 px-5 sm:px-6 py-3.5 bg-slate-50/90 shrink-0">
               <div className="flex items-center gap-2.5">
-                <div className="rounded-xl bg-indigo-600 p-2.5 text-white shadow-xs">
+                <div className="rounded-xl bg-indigo-600 p-2 text-white shadow-xs">
                   <ClipboardList className="h-5 w-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-bold text-slate-900">Create & Assign Common Task</h3>
-                  <p className="text-xs text-slate-500">Generates a shared task that appears on every student's workbench</p>
+                  <h3 className="text-sm sm:text-base font-bold text-slate-900 leading-tight">Create & Assign Common Task</h3>
+                  <p className="text-[11px] text-slate-500 hidden sm:block">Generates a shared task that appears on every student's workbench</p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowAssignModal(false);
-                  setPublishError(null);
-                  setPublishSuccess(null);
-                }}
-                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors cursor-pointer"
-              >
-                ✕
-              </button>
+              
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAssignModal(false);
+                    setPublishError(null);
+                    setPublishSuccess(null);
+                  }}
+                  className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                  title="Cancel and Go Back"
+                >
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  <span>Back</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAssignModal(false);
+                    setPublishError(null);
+                    setPublishSuccess(null);
+                  }}
+                  className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-200 hover:text-slate-700 transition-colors cursor-pointer"
+                  title="Close"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
-            <form onSubmit={handlePublishAssignedTask} className="mt-4 space-y-4 text-xs">
+            <form onSubmit={handlePublishAssignedTask} className="flex flex-col flex-1 overflow-hidden text-xs">
               {publishSuccess ? (
-                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-6 text-center font-bold text-emerald-800 flex flex-col items-center gap-2">
-                  <Check className="h-8 w-8 text-emerald-600" />
-                  <span className="text-sm font-bold">{publishSuccess}</span>
-                  <p className="text-xs font-normal text-emerald-700 mt-1">Students will now see this task on Step 1 of their workbench.</p>
+                <div className="p-6 flex-1 flex flex-col items-center justify-center">
+                  <div className="w-full rounded-2xl border border-emerald-200 bg-emerald-50 p-6 text-center font-bold text-emerald-800 flex flex-col items-center gap-2 shadow-2xs">
+                    <Check className="h-10 w-10 text-emerald-600" />
+                    <span className="text-sm sm:text-base font-black">{publishSuccess}</span>
+                    <p className="text-xs font-normal text-emerald-700 mt-1 max-w-md">
+                      Students will now see this task organized under your teacher name and class on their workbench.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowAssignModal(false);
+                        setPublishSuccess(null);
+                      }}
+                      className="mt-3 rounded-xl bg-emerald-600 px-5 py-2 text-xs font-bold text-white shadow-xs hover:bg-emerald-700 transition-colors cursor-pointer"
+                    >
+                      Done & Return to Dashboard
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                        Teacher / Subject Instructor Name
-                      </label>
-                      <input
-                        type="text"
-                        value={newTeacherName}
-                        onChange={(e) => setNewTeacherName(e.target.value)}
-                        placeholder="e.g. Ms. Smith (Science)"
-                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                        Grade / MYP Level <span className="text-rose-600">*</span>
-                      </label>
-                      <select
-                        value={newMypYear}
-                        onChange={(e) => setNewMypYear(e.target.value)}
-                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
-                      >
-                        <option value="1">MYP 1 (Grade 6)</option>
-                        <option value="2">MYP 2 (Grade 7)</option>
-                        <option value="3">MYP 3 (Grade 8)</option>
-                        <option value="4">MYP 4 (Grade 9)</option>
-                        <option value="5">MYP 5 (Grade 10)</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                        Subject Group <span className="text-rose-600">*</span>
-                      </label>
-                      <select
-                        value={newSubject}
-                        onChange={(e) => setNewSubject(e.target.value)}
-                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
-                      >
-                        <option value="Sciences">Sciences</option>
-                        <option value="Mathematics">Mathematics</option>
-                        <option value="Language and Literature">Language and Literature</option>
-                        <option value="Language Acquisition">Language Acquisition</option>
-                        <option value="Individuals and Societies">Individuals and Societies</option>
-                        <option value="Arts">Arts</option>
-                        <option value="Physical and Health Education">Physical and Health Education</option>
-                        <option value="Design">Design</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                        Curriculum Topic <span className="text-rose-600">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={newTopic}
-                        onChange={(e) => setNewTopic(e.target.value)}
-                        placeholder="e.g. Mitosis & Cell Division"
-                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                        ATL Skill Category
-                      </label>
-                      <select
-                        value={newCategory}
-                        onChange={(e) => setNewCategory(e.target.value as ATLCategoryKey)}
-                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
-                      >
-                        <option value="Communication">Communication</option>
-                        <option value="Social">Social</option>
-                        <option value="Self-management">Self-management</option>
-                        <option value="Research">Research</option>
-                        <option value="Thinking">Thinking</option>
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                        Skill Cluster
-                      </label>
-                      <select
-                        value={newCluster}
-                        onChange={(e) => setNewCluster(e.target.value)}
-                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
-                      >
-                        {Object.keys(ATL_DATA[newCategory]?.clusters || {}).map((c) => (
-                          <option key={c} value={c}>
-                            {c}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* IDU Connection Toggle & Secondary Subject Option */}
-                  <div className="border-t border-slate-100 pt-3 space-y-2">
-                    <div className="flex items-center justify-between">
+                  {/* Scrollable Form Body */}
+                  <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4">
+                    {/* Teacher & Grade */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
-                        <div className="text-xs font-bold text-slate-800">Interdisciplinary connection (IDU)</div>
-                        <div className="text-[11px] text-slate-500 font-medium">Require students to synthesize concepts with a secondary MYP subject group.</div>
-                      </div>
-                      <label className="relative inline-flex cursor-pointer items-center">
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                          Teacher / Instructor Name
+                        </label>
                         <input
-                          type="checkbox"
-                          checked={newIduToggle}
-                          onChange={(e) => setNewIduToggle(e.target.checked)}
-                          className="peer sr-only"
+                          type="text"
+                          value={newTeacherName}
+                          onChange={(e) => setNewTeacherName(e.target.value)}
+                          placeholder="e.g. Ms. Smith (Science)"
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors"
                         />
-                        <div className="peer h-5 w-9 rounded-full bg-slate-200 after:absolute after:top-0.5 after:left-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-xs after:transition-all peer-checked:bg-indigo-600 peer-checked:after:translate-x-full"></div>
-                      </label>
-                    </div>
+                      </div>
 
-                    {newIduToggle && (
-                      <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3">
-                        <label className="block text-[11px] font-bold text-indigo-900 uppercase tracking-wider mb-1">
-                          Secondary Subject Group (IDU Partner)
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                          Grade / MYP Level <span className="text-rose-600">*</span>
                         </label>
                         <select
-                          value={newIduSubject}
-                          onChange={(e) => setNewIduSubject(e.target.value)}
-                          className="w-full rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:outline-none"
+                          value={newMypYear}
+                          onChange={(e) => setNewMypYear(e.target.value)}
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors cursor-pointer"
+                        >
+                          <option value="1">MYP 1 (Grade 6)</option>
+                          <option value="2">MYP 2 (Grade 7)</option>
+                          <option value="3">MYP 3 (Grade 8)</option>
+                          <option value="4">MYP 4 (Grade 9)</option>
+                          <option value="5">MYP 5 (Grade 10)</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Subject & Topic */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                          Subject Group <span className="text-rose-600">*</span>
+                        </label>
+                        <select
+                          value={newSubject}
+                          onChange={(e) => setNewSubject(e.target.value)}
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors cursor-pointer"
                         >
                           <option value="Sciences">Sciences</option>
                           <option value="Mathematics">Mathematics</option>
@@ -2100,10 +2249,101 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           <option value="Design">Design</option>
                         </select>
                       </div>
-                    )}
+
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                          Curriculum Topic <span className="text-rose-600">*</span>
+                        </label>
+                        <input
+                          type="text"
+                          value={newTopic}
+                          onChange={(e) => setNewTopic(e.target.value)}
+                          placeholder="e.g. Mitosis & Cell Division"
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors"
+                        />
+                      </div>
+                    </div>
+
+                    {/* ATL Category & Cluster */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                          ATL Skill Category
+                        </label>
+                        <select
+                          value={newCategory}
+                          onChange={(e) => setNewCategory(e.target.value as ATLCategoryKey)}
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors cursor-pointer"
+                        >
+                          <option value="Communication">Communication</option>
+                          <option value="Social">Social</option>
+                          <option value="Self-management">Self-management</option>
+                          <option value="Research">Research</option>
+                          <option value="Thinking">Thinking</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                          Skill Cluster
+                        </label>
+                        <select
+                          value={newCluster}
+                          onChange={(e) => setNewCluster(e.target.value)}
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors cursor-pointer"
+                        >
+                          {Object.keys(ATL_DATA[newCategory]?.clusters || {}).map((c) => (
+                            <option key={c} value={c}>
+                              {c}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* IDU Connection Toggle & Secondary Subject Option */}
+                    <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3.5 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="text-xs font-bold text-slate-800">Interdisciplinary connection (IDU)</div>
+                          <div className="text-[11px] text-slate-500 font-medium">Require students to synthesize concepts with a secondary MYP subject group.</div>
+                        </div>
+                        <label className="relative inline-flex cursor-pointer items-center">
+                          <input
+                            type="checkbox"
+                            checked={newIduToggle}
+                            onChange={(e) => setNewIduToggle(e.target.checked)}
+                            className="peer sr-only"
+                          />
+                          <div className="peer h-5 w-9 rounded-full bg-slate-200 after:absolute after:top-0.5 after:left-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-xs after:transition-all peer-checked:bg-indigo-600 peer-checked:after:translate-x-full"></div>
+                        </label>
+                      </div>
+
+                      {newIduToggle && (
+                        <div className="rounded-xl border border-indigo-100 bg-white p-3 space-y-1.5 animate-fadeIn">
+                          <label className="block text-[11px] font-bold text-indigo-900 uppercase tracking-wider">
+                            Secondary Subject Group (IDU Partner)
+                          </label>
+                          <select
+                            value={newIduSubject}
+                            onChange={(e) => setNewIduSubject(e.target.value)}
+                            className="w-full rounded-xl border border-indigo-200 bg-indigo-50/30 px-3 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:outline-none cursor-pointer"
+                          >
+                            <option value="Sciences">Sciences</option>
+                            <option value="Mathematics">Mathematics</option>
+                            <option value="Language and Literature">Language and Literature</option>
+                            <option value="Language Acquisition">Language Acquisition</option>
+                            <option value="Individuals and Societies">Individuals and Societies</option>
+                            <option value="Arts">Arts</option>
+                            <option value="Physical and Health Education">Physical and Health Education</option>
+                            <option value="Design">Design</option>
+                          </select>
+                        </div>
+                      )}
+                    </div>
 
                     {/* MYP Assessment Criteria & Strands Selector */}
-                    <div className="pt-2">
+                    <div>
                       <MYPCriteriaSelector
                         selectedCriteria={newSelectedCriteria}
                         selectedStrands={newSelectedStrands}
@@ -2113,24 +2353,137 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         }}
                       />
                     </div>
+
+                    {/* Submission Due Date & Period Settings with Clean Dropdown Access */}
+                    <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3.5 space-y-3">
+                      <div>
+                        <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                          <Calendar className="h-4 w-4 text-indigo-600" />
+                          <span>Submission Due Date & Automatic Archival</span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 font-medium">
+                          Choose whether this task has a deadline or stays open indefinitely.
+                        </div>
+                      </div>
+
+                      {/* Dropdown Selector for Deadline Mode */}
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                          Select Due Date / Deadline Mode
+                        </label>
+                        <select
+                          value={newDueDateType}
+                          onChange={(e) => setNewDueDateType(e.target.value as 'period' | 'custom' | 'none')}
+                          className="w-full rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-xs font-bold text-indigo-950 focus:border-indigo-600 focus:outline-none cursor-pointer shadow-2xs"
+                        >
+                          <option value="none">✨ No Due Date (Open Task - Active Indefinitely)</option>
+                          <option value="period">⏱️ Submission Period (Active window e.g. 7 days, 14 days, 30 days)</option>
+                          <option value="custom">📅 Specific Calendar Due Date (Pick exact deadline date)</option>
+                        </select>
+                      </div>
+
+                      {/* Submission Period configuration */}
+                      {newDueDateType === 'period' && (
+                        <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3.5 space-y-2.5 animate-fadeIn">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <label className="block text-[11px] font-bold text-indigo-950 uppercase tracking-wider">
+                              Submission Window Duration:
+                            </label>
+                            <select
+                              value={newDuePeriodDays}
+                              onChange={(e) => setNewDuePeriodDays(Number(e.target.value))}
+                              className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-bold text-indigo-900 focus:border-indigo-600 focus:outline-none cursor-pointer"
+                            >
+                              <option value={3}>3 Days</option>
+                              <option value={5}>5 Days</option>
+                              <option value={7}>7 Days (1 Week) - Standard</option>
+                              <option value={10}>10 Days</option>
+                              <option value={14}>14 Days (2 Weeks)</option>
+                              <option value={21}>21 Days (3 Weeks)</option>
+                              <option value={30}>30 Days (1 Month)</option>
+                            </select>
+                          </div>
+
+                          {/* Quick Select Duration Buttons */}
+                          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                            {[
+                              { days: 3, label: '3d' },
+                              { days: 5, label: '5d' },
+                              { days: 7, label: '7d (1w)' },
+                              { days: 10, label: '10d' },
+                              { days: 14, label: '14d (2w)' },
+                              { days: 21, label: '21d (3w)' },
+                              { days: 30, label: '30d (1m)' },
+                            ].map((opt) => (
+                              <button
+                                key={opt.days}
+                                type="button"
+                                onClick={() => setNewDuePeriodDays(opt.days)}
+                                className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition-all cursor-pointer ${
+                                  newDuePeriodDays === opt.days
+                                    ? 'bg-indigo-600 text-white shadow-2xs'
+                                    : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                                }`}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+
+                          <div className="text-[11px] font-semibold text-indigo-900 pt-1.5 flex items-center gap-1.5 border-t border-indigo-200/60">
+                            <Check className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                            <span>
+                              Final Deadline will be:{' '}
+                              <strong className="text-indigo-950 font-black">{calculateDueDateFromPeriod(newDuePeriodDays)} (11:59 PM)</strong>
+                            </span>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Custom Date Picker */}
+                      {newDueDateType === 'custom' && (
+                        <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3.5 space-y-2.5 animate-fadeIn">
+                          <label className="block text-[11px] font-bold text-indigo-950 uppercase tracking-wider">
+                            Pick Exact Calendar Deadline Date:
+                          </label>
+                          <input
+                            type="date"
+                            min={getTodayDateString()}
+                            value={newCustomDueDate}
+                            onChange={(e) => setNewCustomDueDate(e.target.value)}
+                            className="w-full sm:w-auto rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-xs font-bold text-indigo-950 focus:border-indigo-600 focus:outline-none cursor-pointer"
+                          />
+                          <div className="text-[11px] font-semibold text-indigo-900 pt-1.5 flex items-center gap-1.5 border-t border-indigo-200/60">
+                            <Check className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                            <span>
+                              Deadline set to:{' '}
+                              <strong className="text-indigo-950 font-black">{newCustomDueDate || 'Please select date'} (11:59 PM)</strong>
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {publishError && (
+                      <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 font-bold text-rose-700 flex items-center gap-2 text-xs">
+                        <ShieldAlert className="h-4 w-4 shrink-0 text-rose-600" />
+                        <span>{publishError}</span>
+                      </div>
+                    )}
                   </div>
 
-                  {publishError && (
-                    <div className="rounded-xl border border-rose-200 bg-rose-50 p-2.5 font-bold text-rose-700 flex items-center gap-1.5 text-xs">
-                      <ShieldAlert className="h-4 w-4 shrink-0 text-rose-600" />
-                      <span>{publishError}</span>
-                    </div>
-                  )}
-
-                  <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                  {/* Sticky Footer: Always in sight with Cancel/Back & Submit buttons */}
+                  <div className="shrink-0 border-t border-slate-200 bg-slate-50/95 px-5 sm:px-6 py-3.5 flex items-center justify-between gap-3">
                     <button
                       type="button"
                       onClick={() => setShowAssignModal(false)}
                       disabled={isPublishingTask}
-                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 font-bold text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
+                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 font-bold text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
                     >
-                      Cancel
+                      <ArrowLeft className="h-3.5 w-3.5 text-slate-500" />
+                      <span>Cancel / Go Back</span>
                     </button>
+                    
                     <button
                       type="submit"
                       disabled={isPublishingTask}
@@ -2139,7 +2492,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       {isPublishingTask ? (
                         <>
                           <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
-                          <span>Generating & Publishing Task…</span>
+                          <span>Generating & Publishing…</span>
                         </>
                       ) : (
                         <>

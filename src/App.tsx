@@ -131,6 +131,9 @@ export default function App() {
       iduSubject: null,
       criteria: assignedTask.criteria || assignedTask.task?.target_criteria,
       strands: assignedTask.strands || assignedTask.task?.target_strands,
+      assignedTaskId: assignedTask.id,
+      dueDate: assignedTask.dueDate,
+      assignedTeacherName: assignedTask.teacherName,
     });
     setTask(assignedTask.task);
     setResponses({});
@@ -148,6 +151,8 @@ export default function App() {
     iduSubject?: string | null;
     criteria?: string[];
     strands?: string[];
+    dueDate?: string;
+    dueDaysPeriod?: number;
   }) => {
     const taskMeta: TaskMeta = {
       subject: taskData.subject,
@@ -158,6 +163,7 @@ export default function App() {
       iduSubject: taskData.iduSubject || null,
       criteria: taskData.criteria,
       strands: taskData.strands,
+      dueDate: taskData.dueDate,
     };
 
     const generatedTask = await generateTaskClient(taskMeta, false, customApiKey);
@@ -178,6 +184,8 @@ export default function App() {
       active: true,
       criteria: taskData.criteria || generatedTask.target_criteria,
       strands: taskData.strands || generatedTask.target_strands,
+      dueDate: taskData.dueDate,
+      dueDaysPeriod: taskData.dueDaysPeriod,
     };
 
     await saveAssignedTaskToFirestore(newAssignedTask);
@@ -204,6 +212,14 @@ export default function App() {
       setErrorMessage('Please type a curriculum topic.');
       return;
     }
+
+    // Reset any assigned task properties for a fresh custom task
+    setMeta((prev) => ({
+      ...prev,
+      assignedTaskId: undefined,
+      dueDate: undefined,
+      assignedTeacherName: undefined,
+    }));
 
     setIsGenerating(true);
 
@@ -238,6 +254,24 @@ export default function App() {
       const fbData = await evaluateTaskClient(task, meta, formattedResponses, customApiKey);
       setFeedback(fbData);
 
+      // Calculate Submission Timing Status
+      let submissionStatus: 'on_time' | 'overdue' | 'not_applicable' = 'not_applicable';
+      let daysOverdue = 0;
+
+      if (meta.dueDate) {
+        const todayStr = new Date().toISOString().split('T')[0];
+        if (todayStr <= meta.dueDate) {
+          submissionStatus = 'on_time';
+        } else {
+          submissionStatus = 'overdue';
+          const submissionDate = new Date();
+          const dueDateTime = new Date(meta.dueDate);
+          dueDateTime.setHours(23, 59, 59, 999);
+          const diffMs = Math.max(0, submissionDate.getTime() - dueDateTime.getTime());
+          daysOverdue = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+        }
+      }
+
       // Auto Log to Academic Year Tracker & Firestore Cloud Database
       const newLogId = 'log-' + Date.now();
       setCurrentLogId(newLogId);
@@ -259,6 +293,10 @@ export default function App() {
         feedback: fbData,
         criteria: meta.criteria || task.target_criteria,
         strands: meta.strands || task.target_strands,
+        assignedTaskId: meta.assignedTaskId,
+        dueDate: meta.dueDate,
+        submissionStatus,
+        daysOverdue: daysOverdue > 0 ? daysOverdue : undefined,
       };
 
       setLogs((prev) => [newLog, ...prev]);

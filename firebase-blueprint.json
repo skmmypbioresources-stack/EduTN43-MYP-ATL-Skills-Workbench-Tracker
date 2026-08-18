@@ -19,6 +19,14 @@
         "taskTitle": { "type": "string" },
         "responses": { "type": "array" },
         "feedback": { "type": "object" },
+        "studentReflection": { "type": "string" },
+        "attemptNumber": { "type": "number" },
+        "criteria": { "type": "array" },
+        "strands": { "type": "array" },
+        "assignedTaskId": { "type": "string" },
+        "dueDate": { "type": "string" },
+        "submissionStatus": { "type": "string" },
+        "daysOverdue": { "type": "number" },
         "createdAt": { "type": "string" }
       },
       "required": ["id", "date", "studentName", "subject", "cluster", "level"]
@@ -40,9 +48,23 @@
         "createdAt": { "type": "string" },
         "academicYear": { "type": "string" },
         "term": { "type": "string" },
-        "active": { "type": "boolean" }
+        "active": { "type": "boolean" },
+        "criteria": { "type": "array" },
+        "strands": { "type": "array" },
+        "dueDate": { "type": "string" },
+        "dueDaysPeriod": { "type": "number" }
       },
       "required": ["id", "title", "subject", "topic", "task", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/task_logs/{logId}": {
+      "schema": { "$ref": "#/entities/task_logs" },
+      "description": "Student ATL task completion and evaluation logs"
+    },
+    "/assigned_tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/assigned_tasks" },
+      "description": "Common ATL tasks created and assigned by teachers"
     }
   }
 }

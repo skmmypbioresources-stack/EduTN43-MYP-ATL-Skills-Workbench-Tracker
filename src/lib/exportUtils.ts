@@ -20,6 +20,9 @@ export interface ReportData {
   previousLevels?: string[];
   criteria?: string[];
   strands?: string[];
+  dueDate?: string;
+  submissionStatus?: 'on_time' | 'overdue' | 'not_applicable';
+  daysOverdue?: number;
 }
 
 function generateReportHtml(data: ReportData): string {
@@ -83,6 +86,26 @@ function generateReportHtml(data: ReportData): string {
             <span>Progression: ${sanitize(progressionText)}</span>
           </td>
         </tr>
+        ${
+          data.dueDate || data.submissionStatus
+            ? `
+        <tr>
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt;">
+            <strong>Task Due Date:</strong> ${data.dueDate ? sanitize(data.dueDate) : 'Open Task (No due date)'}
+          </td>
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt;">
+            <strong>Submission Timing:</strong> ${
+              data.submissionStatus === 'overdue'
+                ? `<span style="color: #b45309; font-weight: bold;">Extended Submission (+${data.daysOverdue || 1}d overdue)</span>`
+                : data.submissionStatus === 'on_time'
+                ? `<span style="color: #15803d; font-weight: bold;">Submitted On-Time</span>`
+                : 'Standard'
+            }
+          </td>
+        </tr>
+        `
+            : ''
+        }
       </table>
 
       ${
@@ -329,6 +352,26 @@ export function exportToWordDoc(data: ReportData) {
             <span>Progression: ${sanitize(progressionText)}</span>
           </td>
         </tr>
+        ${
+          data.dueDate || data.submissionStatus
+            ? `
+        <tr>
+          <td>
+            <strong>Task Due Date:</strong> ${data.dueDate ? sanitize(data.dueDate) : 'Open Task (No due date)'}
+          </td>
+          <td>
+            <strong>Submission Timing:</strong> ${
+              data.submissionStatus === 'overdue'
+                ? `<span style="color: #b45309; font-weight: bold;">Extended Submission (+${data.daysOverdue || 1}d overdue)</span>`
+                : data.submissionStatus === 'on_time'
+                ? `<span style="color: #15803d; font-weight: bold;">Submitted On-Time</span>`
+                : 'Standard'
+            }
+          </td>
+        </tr>
+        `
+            : ''
+        }
       </table>
 
       ${
@@ -458,6 +501,8 @@ export function exportToCsvSpreadsheet(logs: ATLTaskLog[], filenamePrefix = 'ATL
     'Subject Group',
     'Curriculum Topic',
     'Task Title',
+    'Task Due Date',
+    'Submission Timing / Status',
     'Target MYP Criteria',
     'Target Strands',
     'ATL Category',
@@ -476,8 +521,15 @@ export function exportToCsvSpreadsheet(logs: ATLTaskLog[], filenamePrefix = 'ATL
     return `"${str}"`;
   };
 
-  const rows = logs.map((log) =>
-    [
+  const rows = logs.map((log) => {
+    let timingLabel = 'Open Task (No Due Date)';
+    if (log.submissionStatus === 'on_time') {
+      timingLabel = 'On-Time Submission';
+    } else if (log.submissionStatus === 'overdue') {
+      timingLabel = `Overdue / Extended Time (+${log.daysOverdue || 1} days)`;
+    }
+
+    return [
       escapeCsv(log.date),
       escapeCsv(log.academicYear),
       escapeCsv(log.term),
@@ -486,6 +538,8 @@ export function exportToCsvSpreadsheet(logs: ATLTaskLog[], filenamePrefix = 'ATL
       escapeCsv(log.subject),
       escapeCsv(log.topic),
       escapeCsv(log.taskTitle || 'ATL Skill Assessment'),
+      escapeCsv(log.dueDate || 'N/A'),
+      escapeCsv(timingLabel),
       escapeCsv(log.criteria && log.criteria.length > 0 ? log.criteria.join('; ') : 'N/A'),
       escapeCsv(log.strands && log.strands.length > 0 ? log.strands.join('; ') : 'N/A'),
       escapeCsv(log.category),
@@ -496,8 +550,8 @@ export function exportToCsvSpreadsheet(logs: ATLTaskLog[], filenamePrefix = 'ATL
       escapeCsv(log.feedback?.strengths?.join(' | ') || ''),
       escapeCsv(log.feedback?.next_steps?.join(' | ') || ''),
       escapeCsv(log.studentReflection || '')
-    ].join(',')
-  );
+    ].join(',');
+  });
 
   const csvContent = '\ufeff' + [headers.map(escapeCsv).join(','), ...rows].join('\n');
 

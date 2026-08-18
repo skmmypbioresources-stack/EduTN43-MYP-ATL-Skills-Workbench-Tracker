@@ -1,5 +1,8 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps, getApp } from 'firebase/app';
 import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   getFirestore,
   collection,
   doc,
@@ -8,32 +11,32 @@ import {
   deleteDoc,
   onSnapshot,
   query,
-  orderBy,
-  enableIndexedDbPersistence
+  orderBy
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { ATLTaskLog, AssignedTask } from '../types';
 
-// Initialize Firebase App
-const app = initializeApp(firebaseConfig);
+// Initialize Firebase App safely (singleton)
+const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
-// Initialize Firestore with specific database ID if configured
-export const db = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
-  ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
-  : getFirestore(app);
+// Initialize Firestore instance with multi-tab persistent cache or default
+const dbId = firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)'
+  ? firebaseConfig.firestoreDatabaseId
+  : undefined;
 
-// Enable offline IndexedDB persistence
+let firestoreInstance;
 try {
-  enableIndexedDbPersistence(db).catch((err) => {
-    if (err.code === 'failed-precondition') {
-      console.warn('Firestore offline persistence: multiple tabs open');
-    } else if (err.code === 'unimplemented') {
-      console.warn('Firestore offline persistence not supported in this browser environment');
-    }
-  });
+  firestoreInstance = initializeFirestore(app, {
+    localCache: persistentLocalCache({
+      tabManager: persistentMultipleTabManager()
+    })
+  }, dbId);
 } catch (e) {
-  console.warn('Could not initialize offline persistence:', e);
+  // If Firestore is already initialized, get existing instance
+  firestoreInstance = dbId ? getFirestore(app, dbId) : getFirestore(app);
 }
+
+export const db = firestoreInstance;
 
 const COLLECTION_NAME = 'task_logs';
 
@@ -56,6 +59,7 @@ export function subscribeToTaskLogs(
           const data = docSnap.data();
           logs.push({
             id: docSnap.id,
+            ...data,
             date: data.date || new Date().toISOString().split('T')[0],
             academicYear: data.academicYear || '2025-2026',
             term: data.term || 'Term 1',
@@ -74,7 +78,7 @@ export function subscribeToTaskLogs(
               strengths: [],
               next_steps: []
             }
-          });
+          } as ATLTaskLog);
         });
         onUpdate(logs);
       },
@@ -178,6 +182,7 @@ export function subscribeToAssignedTasks(
           const data = docSnap.data();
           tasks.push({
             id: docSnap.id,
+            ...data,
             title: data.title || 'Assigned Common Task',
             subject: data.subject || 'Sciences',
             topic: data.topic || 'General Topic',
@@ -190,7 +195,7 @@ export function subscribeToAssignedTasks(
             academicYear: data.academicYear || '2025-2026',
             term: data.term || 'Term 1',
             active: data.active !== false
-          });
+          } as AssignedTask);
         });
         onUpdate(tasks);
       },

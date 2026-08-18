@@ -40,6 +40,9 @@ export interface TaskMeta {
   iduSubject?: string | null;
   criteria?: string[];
   strands?: string[];
+  assignedTaskId?: string;
+  dueDate?: string; // YYYY-MM-DD
+  assignedTeacherName?: string;
 }
 
 export type SkillLevel = 'Developing' | 'Applying' | 'Extending';
@@ -76,6 +79,10 @@ export interface ATLTaskLog {
   attemptNumber?: number;
   criteria?: string[];
   strands?: string[];
+  assignedTaskId?: string;
+  dueDate?: string; // YYYY-MM-DD
+  submissionStatus?: 'on_time' | 'overdue' | 'not_applicable';
+  daysOverdue?: number;
 }
 
 export interface AssignedTask {
@@ -94,5 +101,7 @@ export interface AssignedTask {
   active: boolean;
   criteria?: string[];
   strands?: string[];
+  dueDate?: string; // YYYY-MM-DD
+  dueDaysPeriod?: number; // Days window if configured via preset
 }
 
