@@ -725,18 +725,18 @@ export const SetupStep: React.FC<SetupStepProps> = ({
 
         <div>
           <label htmlFor="topic-input" className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-            Curriculum Topic <span className="text-amber-600">*</span>
+            Task Title / Curriculum Topic <span className="text-amber-600">*</span>
           </label>
           <input
             id="topic-input"
             type="text"
-            value={meta.topic}
-            onChange={(e) => setMeta({ ...meta, topic: e.target.value })}
-            placeholder="e.g. cell organelles, plate tectonics, ratio & proportion..."
+            value={meta.taskTitle || meta.title || meta.topic}
+            onChange={(e) => setMeta({ ...meta, topic: e.target.value, title: e.target.value, taskTitle: e.target.value })}
+            placeholder="e.g. Cell Organelles: Build Your Own Analogy"
             className="mt-1.5 w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-sm font-medium text-slate-800 placeholder:text-slate-400 focus:border-indigo-600 focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:outline-none transition-all"
           />
           <p className="mt-1 text-[11px] text-slate-500 font-medium">
-            Type any specific unit or topic — the task content will be anchored directly inside this topic.
+            Enter the exact task title or unit topic — this will be used as the exact heading across all student views and reports.
           </p>
         </div>
 

@@ -1969,6 +1969,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       cluster: selectedLogForModal.cluster,
                       level: selectedLogForModal.level,
                       taskTitle: selectedLogForModal.taskTitle,
+                      skillIndicators: selectedLogForModal.skillIndicators,
                       responses: selectedLogForModal.responses,
                       feedback: selectedLogForModal.feedback,
                       studentReflection: selectedLogForModal.studentReflection,
@@ -1996,6 +1997,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       cluster: selectedLogForModal.cluster,
                       level: selectedLogForModal.level,
                       taskTitle: selectedLogForModal.taskTitle,
+                      skillIndicators: selectedLogForModal.skillIndicators,
                       responses: selectedLogForModal.responses,
                       feedback: selectedLogForModal.feedback,
                       studentReflection: selectedLogForModal.studentReflection,
@@ -2252,13 +2254,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
                       <div>
                         <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                          Curriculum Topic <span className="text-rose-600">*</span>
+                          Task Title / Curriculum Topic <span className="text-rose-600">*</span>
                         </label>
                         <input
                           type="text"
                           value={newTopic}
                           onChange={(e) => setNewTopic(e.target.value)}
-                          placeholder="e.g. Mitosis & Cell Division"
+                          placeholder="e.g. Cell Organelles: Build Your Own Analogy"
                           className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors"
                         />
                       </div>

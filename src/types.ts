@@ -13,6 +13,25 @@ export interface ATLCategoryData {
   clusters: Record<string, ATLClusterData>;
 }
 
+export type ScientificGraphType = 'line' | 'bar' | 'scatter' | 'histogram' | 'pie';
+
+export interface ScientificDataset {
+  graph_type: ScientificGraphType;
+  title: string;
+  global_context?: string;
+  description?: string;
+  x_axis_label: string;
+  y_axis_label: string;
+  source_label?: string; // e.g. "Simulated Scientific Dataset"
+  data: Array<Record<string, any>>;
+  x_key: string;
+  y_key?: string;
+  y_keys?: string[];
+  series_labels?: Record<string, string>;
+  unit_x?: string;
+  unit_y?: string;
+}
+
 export interface TaskPart {
   label: string;
   prompt: string;
@@ -22,8 +41,11 @@ export interface TaskPart {
 export interface GeneratedTask {
   title: string;
   chosen_cluster: string;
+  global_context?: string;
   context: string;
   atl_focus_explainer: string;
+  skill_indicators?: string[];
+  scientific_dataset?: ScientificDataset;
   idu_note?: string;
   target_criteria?: string[];
   target_strands?: string[];
@@ -32,6 +54,8 @@ export interface GeneratedTask {
 }
 
 export interface TaskMeta {
+  title?: string;
+  taskTitle?: string;
   subject: string;
   topic: string;
   year: string;
@@ -73,6 +97,7 @@ export interface ATLTaskLog {
   cluster: string;
   level: SkillLevel;
   taskTitle: string;
+  skillIndicators?: string[];
   responses: StudentResponseItem[];
   feedback: TaskFeedback;
   studentReflection?: string;

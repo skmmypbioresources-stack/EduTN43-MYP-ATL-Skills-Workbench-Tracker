@@ -122,7 +122,11 @@ export default function App() {
       return;
     }
 
+    const exactTitle = assignedTask.title || assignedTask.task?.title || assignedTask.topic;
+
     setMeta({
+      title: exactTitle,
+      taskTitle: exactTitle,
       subject: assignedTask.subject,
       topic: assignedTask.topic,
       year: assignedTask.mypYear,
@@ -135,7 +139,10 @@ export default function App() {
       dueDate: assignedTask.dueDate,
       assignedTeacherName: assignedTask.teacherName,
     });
-    setTask(assignedTask.task);
+    setTask({
+      ...assignedTask.task,
+      title: exactTitle,
+    });
     setResponses({});
     setStep(2);
   };
@@ -145,6 +152,7 @@ export default function App() {
     teacherName: string;
     subject: string;
     topic: string;
+    title?: string;
     mypYear: string;
     category: ATLCategoryKey;
     cluster: string;
@@ -154,7 +162,11 @@ export default function App() {
     dueDate?: string;
     dueDaysPeriod?: number;
   }) => {
+    const exactTitle = taskData.title?.trim() || taskData.topic.trim();
+
     const taskMeta: TaskMeta = {
+      title: exactTitle,
+      taskTitle: exactTitle,
       subject: taskData.subject,
       topic: taskData.topic,
       year: taskData.mypYear,
@@ -167,16 +179,20 @@ export default function App() {
     };
 
     const generatedTask = await generateTaskClient(taskMeta, false, customApiKey);
+    generatedTask.title = exactTitle;
 
     const newAssignedTask: AssignedTask = {
       id: 'assigned-' + Date.now(),
-      title: generatedTask.title || `${taskData.subject} - ${taskData.topic}`,
+      title: exactTitle,
       subject: taskData.subject,
       topic: taskData.topic,
       mypYear: taskData.mypYear,
       category: taskData.category,
       cluster: taskData.cluster,
-      task: generatedTask,
+      task: {
+        ...generatedTask,
+        title: exactTitle,
+      },
       teacherName: taskData.teacherName || 'Teacher',
       createdAt: new Date().toISOString(),
       academicYear,
@@ -213,18 +229,24 @@ export default function App() {
       return;
     }
 
-    // Reset any assigned task properties for a fresh custom task
-    setMeta((prev) => ({
-      ...prev,
+    const exactTitle = meta.taskTitle?.trim() || meta.title?.trim() || meta.topic.trim();
+    const updatedMeta: TaskMeta = {
+      ...meta,
+      title: exactTitle,
+      taskTitle: exactTitle,
       assignedTaskId: undefined,
       dueDate: undefined,
       assignedTeacherName: undefined,
-    }));
+    };
+
+    // Reset any assigned task properties for a fresh custom task
+    setMeta(updatedMeta);
 
     setIsGenerating(true);
 
     try {
-      const generatedTask = await generateTaskClient(meta, autoCluster, customApiKey);
+      const generatedTask = await generateTaskClient(updatedMeta, autoCluster, customApiKey);
+      generatedTask.title = exactTitle;
       setTask(generatedTask);
       setResponses({});
       setStep(2);
@@ -276,6 +298,8 @@ export default function App() {
       const newLogId = 'log-' + Date.now();
       setCurrentLogId(newLogId);
 
+      const exactTitle = meta.taskTitle || meta.title || task.title || meta.topic;
+
       const newLog: ATLTaskLog = {
         id: newLogId,
         date: new Date().toISOString().split('T')[0],
@@ -288,7 +312,8 @@ export default function App() {
         category: meta.category,
         cluster: task.chosen_cluster || meta.cluster,
         level: fbData.level,
-        taskTitle: task.title,
+        taskTitle: exactTitle,
+        skillIndicators: task.skill_indicators,
         responses: formattedResponses,
         feedback: fbData,
         criteria: meta.criteria || task.target_criteria,

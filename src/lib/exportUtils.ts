@@ -13,6 +13,7 @@ export interface ReportData {
   level: string;
   taskTitle: string;
   context?: string;
+  skillIndicators?: string[];
   responses: StudentResponseItem[];
   feedback: TaskFeedback;
   studentReflection?: string;
@@ -25,8 +26,111 @@ export interface ReportData {
   daysOverdue?: number;
 }
 
+/**
+ * Resolves 3-5 measurable action-verb skill indicators for the report.
+ * Uses provided AI skill indicators if available, or derives dynamic, topic-calibrated indicators.
+ */
+export function resolveSkillIndicators(data: ReportData): string[] {
+  if (data.skillIndicators && Array.isArray(data.skillIndicators) && data.skillIndicators.length > 0) {
+    const valid = data.skillIndicators
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((s) => s.replace(/^[•\-\*]\s*/, ''));
+    if (valid.length > 0) {
+      return valid.slice(0, 5);
+    }
+  }
+
+  const topic = (data.topic || 'the curriculum topic').trim();
+  const cluster = (data.cluster || 'Critical thinking').toLowerCase();
+  const category = (data.category || 'Thinking').toLowerCase();
+
+  // Dynamic topic-calibrated ATL skill indicators starting with action verbs
+  if (cluster.includes('critical') || (category.includes('thinking') && !cluster.includes('creative') && !cluster.includes('transfer'))) {
+    return [
+      `Analyse relationships between biological structures, mechanisms, and functions in ${topic}.`,
+      `Justify scientific conclusions and claims using valid biological evidence.`,
+      `Evaluate the strengths and limitations of biological models used for ${topic}.`,
+      `Construct logical analogies and scientific explanations using accurate scientific vocabulary.`
+    ];
+  }
+
+  if (cluster.includes('creative')) {
+    return [
+      `Construct innovative biological models or analogies to explain mechanisms in ${topic}.`,
+      `Synthesise concepts across multiple cellular or ecological systems to propose novel hypotheses.`,
+      `Generate alternative scientific explanations when analysing anomalies in ${topic}.`,
+      `Design refined experimental investigations to test variable interactions.`
+    ];
+  }
+
+  if (cluster.includes('transfer')) {
+    return [
+      `Transfer scientific principles learned in ${topic} to solve unfamiliar real-world scenarios.`,
+      `Analyse cross-disciplinary connections between biological dynamics and wider scientific contexts.`,
+      `Synthesise multiple concepts to model complex multi-organelle or ecosystem interactions.`,
+      `Predict systemic outcomes when biological concepts are applied to novel environments.`
+    ];
+  }
+
+  if (cluster.includes('communication') || cluster.includes('literacy')) {
+    return [
+      `Construct coherent scientific explanations of ${topic} using precise terminology.`,
+      `Interpret and evaluate data tables, diagrams, and graphical representations accurately.`,
+      `Justify biological arguments using structured reasoning and validated evidence.`,
+      `Critique scientific communication for clarity, accuracy, and depth of explanation.`
+    ];
+  }
+
+  if (cluster.includes('research') || cluster.includes('information') || cluster.includes('media')) {
+    return [
+      `Analyse and synthesise data from credible scientific investigations concerning ${topic}.`,
+      `Evaluate the reliability, validity, and methodological limitations of experimental data.`,
+      `Identify patterns, correlations, and anomalies in complex biological datasets.`,
+      `Justify scientific recommendations using empirical evidence from scientific literature.`
+    ];
+  }
+
+  if (cluster.includes('collaboration') || category.includes('social')) {
+    return [
+      `Synthesise diverse viewpoints when constructing collaborative solutions in ${topic}.`,
+      `Critique peer scientific arguments constructively using objective evidence.`,
+      `Defend team conclusions using reasoned analysis of biological principles.`,
+      `Coordinate and evaluate group problem-solving strategies effectively.`
+    ];
+  }
+
+  if (category.includes('self-management') || cluster.includes('organization') || cluster.includes('reflection') || cluster.includes('affective')) {
+    return [
+      `Evaluate personal understanding of ${topic} and pinpoint specific conceptual growth areas.`,
+      `Plan and execute structured problem-solving pathways for multi-part inquiry tasks.`,
+      `Analyse misconceptions and refine scientific justifications based on diagnostic feedback.`,
+      `Monitor task pacing and demonstrate sustained analytical persistence.`
+    ];
+  }
+
+  return [
+    `Analyse relationships between structures, mechanisms, and functions in ${topic}.`,
+    `Justify scientific conclusions and explanations using empirical evidence.`,
+    `Evaluate the strengths, limitations, and validity of scientific models.`,
+    `Construct logical scientific explanations using accurate subject vocabulary.`
+  ];
+}
+
 function generateReportHtml(data: ReportData): string {
   const sanitize = (text: string) => text ? text.replace(/</g, '&lt;').replace(/>/g, '&gt;') : '';
+
+  const indicators = resolveSkillIndicators(data);
+  const skillIndicatorsHtml = indicators.length > 0
+    ? `
+      <div style="margin-top: 6px; font-size: 9.5pt; color: #1e293b;">
+        <strong style="color: #0f172a;">Skill Indicators:</strong>
+        <ul style="margin: 3px 0 0 0; padding-left: 16px; color: #334155; line-height: 1.45;">
+          ${indicators.map((ind) => `<li style="margin-bottom: 2px;">${sanitize(ind.replace(/^[•\-\*]\s*/, ''))}</li>`).join('')}
+        </ul>
+      </div>
+    `
+    : '';
 
   const strengthsHtml = data.feedback.strengths
     .map((s) => `<li style="margin-bottom: 6px; color: #166534;"><strong>✓</strong> ${sanitize(s)}</li>`)
@@ -66,12 +170,15 @@ function generateReportHtml(data: ReportData): string {
 
       <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px; background-color: #f1f5f9;">
         <tr>
-          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt;"><strong>Student Name:</strong> ${sanitize(data.studentName || 'Anonymous')}</td>
-          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt;"><strong>Academic Year:</strong> ${sanitize(data.academicYear)} (${sanitize(data.term)})</td>
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt; vertical-align: top;"><strong>Student Name:</strong> ${sanitize(data.studentName || 'Anonymous')}</td>
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt; vertical-align: top;"><strong>Academic Year:</strong> ${sanitize(data.academicYear)} (${sanitize(data.term)})</td>
         </tr>
         <tr>
-          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt;"><strong>Subject & Topic:</strong> ${sanitize(data.subject)} (MYP ${sanitize(data.mypYear)}) — ${sanitize(data.topic)}</td>
-          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt;"><strong>ATL Cluster:</strong> ${sanitize(data.cluster)} (${sanitize(data.category)})</td>
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt; vertical-align: top;"><strong>Subject & Topic:</strong> ${sanitize(data.subject)} (MYP ${sanitize(data.mypYear)}) — ${sanitize(data.topic)}</td>
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt; vertical-align: top;">
+            <div><strong>ATL Cluster:</strong> ${sanitize(data.cluster)} (${sanitize(data.category)})</div>
+            ${skillIndicatorsHtml}
+          </td>
         </tr>
         <tr>
           <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt;">
@@ -216,6 +323,18 @@ export async function exportToPdf(data: ReportData): Promise<void> {
 export function exportToWordDoc(data: ReportData) {
   const sanitize = (text: string) => text ? text.replace(/</g, '&lt;').replace(/>/g, '&gt;') : '';
 
+  const indicators = resolveSkillIndicators(data);
+  const skillIndicatorsHtml = indicators.length > 0
+    ? `
+      <div style="margin-top: 6px; font-size: 9.5pt; color: #1e293b;">
+        <strong style="color: #0f172a;">Skill Indicators:</strong>
+        <ul style="margin: 3px 0 0 0; padding-left: 16px; color: #334155; line-height: 1.45;">
+          ${indicators.map((ind) => `<li style="margin-bottom: 2px;">${sanitize(ind.replace(/^[•\-\*]\s*/, ''))}</li>`).join('')}
+        </ul>
+      </div>
+    `
+    : '';
+
   const strengthsHtml = data.feedback.strengths
     .map((s) => `<li style="margin-bottom: 6px; color: #166534;"><strong>✓</strong> ${sanitize(s)}</li>`)
     .join('');
@@ -338,8 +457,11 @@ export function exportToWordDoc(data: ReportData) {
           <td><strong>Academic Year:</strong> ${sanitize(data.academicYear)} (${sanitize(data.term)})</td>
         </tr>
         <tr>
-          <td><strong>Subject & Topic:</strong> ${sanitize(data.subject)} (MYP ${sanitize(data.mypYear)}) — ${sanitize(data.topic)}</td>
-          <td><strong>ATL Cluster:</strong> ${sanitize(data.cluster)} (${sanitize(data.category)})</td>
+          <td style="vertical-align: top;"><strong>Subject & Topic:</strong> ${sanitize(data.subject)} (MYP ${sanitize(data.mypYear)}) — ${sanitize(data.topic)}</td>
+          <td style="vertical-align: top;">
+            <div><strong>ATL Cluster:</strong> ${sanitize(data.cluster)} (${sanitize(data.category)})</div>
+            ${skillIndicatorsHtml}
+          </td>
         </tr>
         <tr>
           <td>

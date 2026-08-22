@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { GeneratedTask, TaskMeta, StudentResponseItem } from '../types';
-import { ArrowLeft, Send, Clock, BookOpen, Layers, ShieldAlert, Target } from 'lucide-react';
+import { ArrowLeft, Send, Clock, BookOpen, Layers, ShieldAlert, Target, Globe } from 'lucide-react';
+import { ScientificGraphStimulus } from './ScientificGraphStimulus';
 
 interface TaskStepProps {
   task: GeneratedTask;
@@ -70,8 +71,23 @@ export const TaskStep: React.FC<TaskStepProps> = ({
 
       {/* Framing & Context Box */}
       <div className="mt-5 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-5 text-sm leading-relaxed text-indigo-950 font-medium shadow-2xs">
-        {task.context}
+        {task.global_context && (
+          <div className="mb-2.5 inline-flex items-center gap-1.5 rounded-full bg-emerald-100/90 text-emerald-900 px-3 py-1 text-xs font-bold tracking-wide">
+            <Globe className="h-3.5 w-3.5 text-emerald-700" />
+            <span>Global Context: {task.global_context}</span>
+          </div>
+        )}
+        <p>{task.context}</p>
       </div>
+
+      {/* Embedded Scientific Graph Stimulus (when task includes dataset) */}
+      {task.scientific_dataset && (
+        <ScientificGraphStimulus
+          dataset={task.scientific_dataset}
+          globalContext={task.global_context}
+          className="mt-4"
+        />
+      )}
 
       {/* Target MYP Criteria & Strands Box */}
       {((task.target_criteria && task.target_criteria.length > 0) || (meta.criteria && meta.criteria.length > 0)) && (
