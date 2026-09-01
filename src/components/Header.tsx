@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, BarChart3, Download, Laptop, Monitor, Apple, CheckCircle2, X, Key, Eye, EyeOff, ExternalLink, ShieldCheck, GraduationCap, Lock } from 'lucide-react';
+import { Sparkles, BarChart3, Download, Laptop, Monitor, Apple, CheckCircle2, X, Key, Eye, EyeOff, ExternalLink, ShieldCheck, GraduationCap, Lock, Share2 } from 'lucide-react';
 
 interface HeaderProps {
-  activeTab: 'workbench' | 'dashboard';
-  setActiveTab: (tab: 'workbench' | 'dashboard') => void;
+  activeTab: 'student' | 'workbench' | 'dashboard';
+  setActiveTab: (tab: 'student' | 'workbench' | 'dashboard') => void;
   academicYear: string;
   setAcademicYear: (year: string) => void;
   totalLogsCount: number;
   customApiKey: string;
   onSaveApiKey: (key: string) => void;
   isAnalyticsUnlocked?: boolean;
+  onOpenToddleManager?: () => void;
+  activeTasksCount?: number;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -21,6 +23,8 @@ export const Header: React.FC<HeaderProps> = ({
   customApiKey,
   onSaveApiKey,
   isAnalyticsUnlocked = false,
+  onOpenToddleManager,
+  activeTasksCount = 0,
 }) => {
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [showInstallModal, setShowInstallModal] = useState(false);
@@ -119,6 +123,19 @@ export const Header: React.FC<HeaderProps> = ({
                 )}
               </button>
 
+              {/* Toddle & LMS Evidence Links Manager Button */}
+              {onOpenToddleManager && (
+                <button
+                  id="toddle-links-btn"
+                  onClick={onOpenToddleManager}
+                  className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/80 px-3 py-1 text-xs font-bold text-indigo-700 hover:bg-indigo-100 hover:border-indigo-300 transition-all shadow-2xs cursor-pointer"
+                  title="Manage and copy student Toddle / LMS standalone evidence portal links"
+                >
+                  <Share2 className="h-3.5 w-3.5 text-indigo-600" />
+                  <span>Toddle Links</span>
+                </button>
+              )}
+
               {/* Install Desktop/Chromebook App Button */}
               <button
                 id="install-app-btn"
@@ -167,7 +184,27 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
 
             {/* Navigation Tabs */}
-            <div className="flex items-center rounded-xl border border-slate-200 bg-slate-100 p-1.5 shadow-xs">
+            <div className="flex flex-wrap items-center rounded-xl border border-slate-200 bg-slate-100 p-1.5 shadow-xs gap-1">
+              <button
+                id="tab-student"
+                onClick={() => setActiveTab('student')}
+                className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold tracking-wide transition-all ${
+                  activeTab === 'student'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-slate-700 hover:text-slate-900 hover:bg-slate-200/60'
+                }`}
+              >
+                <GraduationCap className="h-4 w-4 text-blue-300" />
+                <span>Student Tasks Portal</span>
+                {typeof activeTasksCount === 'number' && activeTasksCount > 0 && (
+                  <span className={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                    activeTab === 'student' ? 'bg-white/20 text-white' : 'bg-blue-100 text-blue-800'
+                  }`}>
+                    {activeTasksCount}
+                  </span>
+                )}
+              </button>
+
               <button
                 id="tab-workbench"
                 onClick={() => setActiveTab('workbench')}
@@ -177,8 +214,8 @@ export const Header: React.FC<HeaderProps> = ({
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
                 }`}
               >
-                <Sparkles className="h-4 w-4" />
-                <span>Task Workbench</span>
+                <Sparkles className="h-4 w-4 text-indigo-300" />
+                <span>Teacher Studio</span>
               </button>
 
               <button
@@ -190,7 +227,7 @@ export const Header: React.FC<HeaderProps> = ({
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
                 }`}
               >
-                <BarChart3 className="h-4 w-4" />
+                <BarChart3 className="h-4 w-4 text-indigo-300" />
                 <span>Year Analytics</span>
                 {!isAnalyticsUnlocked && (
                   <Lock className={`h-3 w-3 shrink-0 ${activeTab === 'dashboard' ? 'text-amber-300' : 'text-amber-500'}`} title="Protected by Teacher Password" />

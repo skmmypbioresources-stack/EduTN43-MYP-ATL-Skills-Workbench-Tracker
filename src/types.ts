@@ -73,6 +73,7 @@ export type SkillLevel = 'Developing' | 'Applying' | 'Extending';
 
 export interface TaskFeedback {
   level: SkillLevel;
+  formativeScore?: number; // Numerical formative score out of 8 (1-8)
   summary: string;
   strengths: string[];
   next_steps: string[];
@@ -96,6 +97,7 @@ export interface ATLTaskLog {
   category: ATLCategoryKey;
   cluster: string;
   level: SkillLevel;
+  formativeScore?: number; // Numerical formative score out of 8 (1-8)
   taskTitle: string;
   skillIndicators?: string[];
   responses: StudentResponseItem[];
@@ -108,6 +110,25 @@ export interface ATLTaskLog {
   dueDate?: string; // YYYY-MM-DD
   submissionStatus?: 'on_time' | 'overdue' | 'not_applicable';
   daysOverdue?: number;
+  evidenceToken?: string; // Unique persistent evidence portal token
+}
+
+export interface StudentEvidenceRosterItem {
+  studentId?: string;
+  studentName: string;
+  mypYear: string;
+  subject?: string;
+  logsCount: number;
+  evidenceToken: string;
+  evidenceUrl: string;
+  averageScore: number;
+  latestActivityDate: string;
+  topCluster: string;
+  masteryDistribution: {
+    extending: number;
+    applying: number;
+    developing: number;
+  };
 }
 
 export interface AssignedTask {
@@ -128,5 +149,6 @@ export interface AssignedTask {
   strands?: string[];
   dueDate?: string; // YYYY-MM-DD
   dueDaysPeriod?: number; // Days window if configured via preset
+  targetStudentNames?: string[]; // Specific students if not assigned to entire class
 }
 

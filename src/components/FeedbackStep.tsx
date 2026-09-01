@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { TaskFeedback, TaskMeta, GeneratedTask, StudentResponseItem, SkillLevel, ATLTaskLog } from '../types';
 import { CheckCircle2, Download, Printer, FileText, RefreshCw, BarChart3, Award, MessageSquareQuote, Send, TrendingUp, Sparkles, Loader2 } from 'lucide-react';
 import { exportToWordDoc, exportToPdf, ReportData } from '../lib/exportUtils';
+import { resolveFormativeScore } from '../lib/scoreUtils';
 
 interface FeedbackStepProps {
   feedback: TaskFeedback;
@@ -64,6 +65,9 @@ export const FeedbackStep: React.FC<FeedbackStepProps> = ({
   // SVG Semi-Circle Dial Gauge
   const levelOrder: SkillLevel[] = ['Developing', 'Applying', 'Extending'];
   const activeIndex = levelOrder.indexOf(feedback.level);
+  const currentScore = typeof feedback.formativeScore === 'number'
+    ? feedback.formativeScore
+    : resolveFormativeScore({ ...feedback, responses });
 
   const renderGaugeSVG = () => {
     const cx = 110, cy = 110, r = 85;
@@ -120,11 +124,12 @@ export const FeedbackStep: React.FC<FeedbackStepProps> = ({
         category: meta.category,
         cluster: clusterName,
         level: feedback.level,
+        formativeScore: currentScore,
         taskTitle: task.title,
         context: task.context,
         skillIndicators: task.skill_indicators,
         responses,
-        feedback,
+        feedback: { ...feedback, formativeScore: currentScore },
         studentReflection: reflectionText.trim() || undefined,
         attemptNumber: attemptCount,
         previousLevels: pastLevels,
@@ -152,11 +157,12 @@ export const FeedbackStep: React.FC<FeedbackStepProps> = ({
       category: meta.category,
       cluster: clusterName,
       level: feedback.level,
+      formativeScore: currentScore,
       taskTitle: task.title,
       context: task.context,
       skillIndicators: task.skill_indicators,
       responses,
-      feedback,
+      feedback: { ...feedback, formativeScore: currentScore },
       studentReflection: reflectionText.trim() || undefined,
       attemptNumber: attemptCount,
       previousLevels: pastLevels,
@@ -195,9 +201,16 @@ export const FeedbackStep: React.FC<FeedbackStepProps> = ({
         {/* Dial Gauge & Skill Attempt Progression Badge */}
         <div className="my-6 flex flex-col items-center justify-center text-center">
           {renderGaugeSVG()}
-          <div className="mt-2 text-3xl font-black tracking-tight text-slate-900">{feedback.level}</div>
-          <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mt-1">
-            Demonstrated Level for {clusterName}
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-2.5">
+            <span className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-3 py-1 text-base font-black text-white shadow-xs">
+              <span className="text-slate-400 text-xs uppercase font-bold tracking-wider">Score:</span>
+              <span className="text-emerald-400 font-extrabold">{currentScore}/8</span>
+            </span>
+            <span className="text-xl font-light text-slate-300">•</span>
+            <div className="text-3xl font-black tracking-tight text-slate-900">{feedback.level}</div>
+          </div>
+          <div className="text-xs font-bold uppercase tracking-wider text-slate-500 mt-1.5">
+            Formative Score: <span className="text-indigo-700 font-extrabold">{currentScore}/8</span> • Demonstrated Level for {clusterName}
           </div>
 
           {/* Attempt Counter & Trajectory Pill */}
@@ -206,7 +219,7 @@ export const FeedbackStep: React.FC<FeedbackStepProps> = ({
             <span>Attempt #{attemptCount} for {clusterName}</span>
             <span className="text-indigo-300">•</span>
             <span className="text-indigo-700 font-semibold">
-              Skill Trajectory: {[...pastLevels, feedback.level].join(' ➔ ')}
+              Skill Trajectory: {[...pastLevels, `${currentScore}/8 ${feedback.level}`].join(' ➔ ')}
             </span>
           </div>
         </div>

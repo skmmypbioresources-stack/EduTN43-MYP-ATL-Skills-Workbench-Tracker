@@ -330,33 +330,42 @@ export async function evaluateTaskClient(
         criterionMarkingFocus = 'Focus: Assess evaluation of scientific applications, multi-perspective implications (moral, ethical, social, economic, environmental), use of scientific language, and justified decision-making within the global context.';
       }
 
-      const systemInstruction = `You are a strict, experienced IB MYP & DP Biology Chief Examiner.
-Evaluate student submissions with uncompromising academic rigor, precision, and objectivity.
+      const systemInstruction = `You are an exceptionally strict, uncompromising IB MYP & DP Biology Chief Examiner.
+Evaluate student submissions with rigorous academic standards, meticulous precision, and strict objectivity.
 
 TARGET ASSESSMENT CRITERION: ${primaryCriterion}
 ${criterionMarkingFocus}
 
-EXAMINER MARKING BEHAVIOR & RULES:
-1. STRICT OBJECTIVE MARKING:
-   - Never award marks for effort, politeness, or enthusiasm.
-   - Never infer missing knowledge or complete the student's thoughts.
-   - Assess strictly what is explicitly written.
-   - Scientific accuracy overrides creativity: an engaging analogy or articulate prose cannot compensate for incorrect or vague biology.
-   - If scientific evidence or mechanistic reasoning is absent, do not award proficiency.
+CRITICAL EXAMINER MARKING PRINCIPLES:
+1. UNCOMPROMISING RIGOR & OBJECTIVITY:
+   - Mark with high skepticism and strict adherence to scientific accuracy.
+   - NEVER award marks for effort, attempt, politeness, length of text, or enthusiasm.
+   - NEVER infer missing knowledge, assume implicit understanding, or give the benefit of the doubt.
+   - Assess strictly what is explicitly stated in the student's text.
+   - Scientific mechanism and precision override literary style or enthusiasm. If mechanistic biological processes (e.g., specific organelles, enzymes, chemical equations, cellular transport mechanisms, ATP yield, molecular structures) are missing or vague, strictly penalize the score.
 
-2. THREE PROFICIENCY TIERS:
-   - "Extending" (IB 7-8 / High Mastery): Scientifically accurate, uses precise grade-level terminology (e.g. ATP, semi-permeable, phospholipid bilayer, oxidative phosphorylation, gene expression), provides complete mechanisms, justifies claims with evidence, addresses Scientist's Challenge insightfully.
-   - "Applying" (IB 4-6 / Sound Competence): Demonstrates sound conceptual understanding and addresses core prompts, but has minor omissions in mechanism, uses occasional informal terms (e.g. "energy" instead of "ATP", "powerhouse" without aerobic respiration), or offers limited depth in justification.
-   - "Developing" (IB 1-3 / Limited/Fragmented): Contains notable misconceptions, missing evidence, vague claims without biological mechanisms, or incomplete responses.
+2. STRICT 8-POINT RESTRICTION & SCORE BOUNDARIES:
+   - 8 / 8 (Exceptional / Flawless Mastery): EXTREMELY RARE. DO NOT award 8 points unless the student's work is virtually flawless, demonstrating exceptional depth, exhaustive molecular/cellular mechanistic explanations, rigorous scientific vocabulary, and zero misconceptions or omissions. If there is ANY minor omission, informal term, or lack of complete mechanistic explanation, the score MUST NOT be 8.
+   - 7 / 8 (Strong Extending): Thorough, rigorous, and accurate demonstration of knowledge and understanding with complete explanations, but with slight opportunities for deeper elaboration or minor refinement.
+   - 6 / 8 (High Applying): Consistent and accurate understanding across all core questions with appropriate terminology, but lacks the exhaustive depth or independent synthesis needed for Extending.
+   - 5 / 8 (Standard Applying): Sound basic grasp of the concepts, but answers contain noticeable simplifications, informal terms (e.g., 'energy' instead of 'ATP', 'powerhouse' without respiration, 'things entering/leaving'), or surface-level justifications.
+   - 3–4 / 8 (Developing): Incomplete understanding, partial explanations, missing major mechanisms, significant gaps, or superficial answers. (4 = partial attempt with some valid points; 3 = basic recall with notable misconceptions or omissions).
+   - 1–2 / 8 (Beginning / Limited): Major biological errors, severe misconceptions, largely blank or one-sentence non-mechanistic answers. (2 = fragmented/minimal; 1 = insufficient evidence/blank).
 
-3. EXAMINER FEEDBACK FORMATTING:
-   - "summary": 2-3 concise, objective examiner sentences summarizing the scientific depth, precision of mechanism, and quality of justification aligned with ${primaryCriterion}.
-   - "strengths": Array of 2-3 genuine, evidence-based strengths directly quoting or citing the student's accurate reasoning.
-   - "next_steps": Array of 2-3 explicit, actionable scientific corrections and error analyses. Specify exact misconceptions, missing evidence, or vocabulary upgrades (e.g. "Replace 'powerhouse gives energy' with 'mitochondria produce ATP via aerobic respiration'", "Provide the specific transport mechanism (osmosis vs active transport)"). Avoid vague advice like "add more detail".
+3. THREE PROFICIENCY TIERS:
+   - "Extending" (Formative Score 7-8): Masterful scientific accuracy, precise academic terminology, comprehensive mechanistic reasoning, insightful evaluation.
+   - "Applying" (Formative Score 5-6): Competent conceptual understanding addressing the main prompts, but with minor omissions in mechanism or occasional informal phrasing.
+   - "Developing" (Formative Score 1-4): Limited understanding, evident misconceptions, missing mechanisms, or vague/fragmented responses.
+
+4. EXAMINER FEEDBACK FORMATTING:
+   - "summary": 2-3 concise, objective, rigorous examiner sentences diagnosing the exact scientific depth, mechanistic precision, and accuracy under ${primaryCriterion}.
+   - "strengths": Array of 2-3 genuine, evidence-based strengths directly quoting or citing the student's accurate reasoning. If work is weak, note strictly what limited valid points were present without inflation.
+   - "next_steps": Array of 2-3 explicit, actionable, uncompromising scientific corrections and error analyses. Specify exact misconceptions, missing biological mechanisms, and required grade-level vocabulary upgrades (e.g., "Replace 'powerhouse creates energy' with 'mitochondria synthesize ATP via aerobic cellular respiration'", "Specify whether passive diffusion, facilitated diffusion, or active transport via ATP hydrolysis occurs"). Avoid generic advice like 'add more detail'.
 
 Return strictly valid JSON with this EXACT structure:
 {
   "level": "Developing" | "Applying" | "Extending",
+  "formativeScore": 5,
   "summary": "2-3 concise, objective examiner sentences...",
   "strengths": ["Explicit strength 1 citing accurate reasoning", "Explicit strength 2"],
   "next_steps": ["Actionable scientific correction 1", "Specific error remediation 2"]
@@ -371,22 +380,51 @@ Return strictly valid JSON with this EXACT structure:
           .replace(/^```\s*/, '')
           .replace(/\s*```$/, '')
           .trim();
-        return JSON.parse(cleanedText);
+        const parsed = JSON.parse(cleanedText);
+
+        // Validate and normalize formativeScore under strict criteria
+        let score = typeof parsed.formativeScore === 'number' ? Math.round(parsed.formativeScore) : 0;
+        if (parsed.level === 'Extending') {
+          // Strictly guard 8 points: only allowed if AI explicitly designated 8; otherwise cap at 7
+          if (score === 8) {
+            score = 8;
+          } else {
+            score = 7;
+          }
+        } else if (parsed.level === 'Applying') {
+          if (score < 5 || score > 6) score = 5;
+        } else {
+          if (score < 1 || score > 4) score = 3;
+        }
+        parsed.formativeScore = score;
+
+        return parsed;
       }
     } catch (err: any) {
       console.warn('Direct Gemini evaluation error, using heuristic fallback:', err?.message || err);
     }
   }
 
-  // 3. Fallback Smart Heuristic Evaluator
+  // 3. Strict Fallback Smart Heuristic Evaluator
   const totalChars = responses.reduce((acc, r) => acc + (r.response ? r.response.length : 0), 0);
-  const filledCount = responses.filter((r) => r.response && r.response.trim().length > 15).length;
+  const filledCount = responses.filter((r) => r.response && r.response.trim().length > 30).length;
   let lvl: 'Developing' | 'Applying' | 'Extending' = 'Developing';
-  if (filledCount >= responses.length && totalChars > 280) lvl = 'Extending';
-  else if (filledCount >= 2 && totalChars > 100) lvl = 'Applying';
+  let formativeScore = 3;
+
+  if (filledCount >= responses.length && totalChars > 500) {
+    lvl = 'Extending';
+    formativeScore = totalChars > 750 ? 8 : 7;
+  } else if (filledCount >= 2 && totalChars > 220) {
+    lvl = 'Applying';
+    formativeScore = totalChars > 350 ? 6 : 5;
+  } else {
+    lvl = 'Developing';
+    formativeScore = totalChars > 120 ? 4 : totalChars > 60 ? 3 : totalChars > 0 ? 2 : 1;
+  }
 
   return {
     level: lvl,
+    formativeScore,
     summary: lvl === 'Extending'
       ? `The submission demonstrates rigorous scientific articulation for ${meta.topic || 'the topic'}, applying explicit mechanisms and consistent evidence-based reasoning in line with MYP Year ${meta.year || '4'} expectations.`
       : lvl === 'Applying'

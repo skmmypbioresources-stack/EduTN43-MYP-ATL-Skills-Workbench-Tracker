@@ -11,6 +11,7 @@ export interface ReportData {
   category: string;
   cluster: string;
   level: string;
+  formativeScore?: number;
   taskTitle: string;
   context?: string;
   skillIndicators?: string[];
@@ -182,10 +183,18 @@ function generateReportHtml(data: ReportData): string {
         </tr>
         <tr>
           <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt;">
-            <strong>Demonstrated Skill Level:</strong> 
-            <span style="display: inline-block; padding: 4px 12px; border-radius: 12px; font-weight: bold; font-size: 11pt; color: #ffffff; background-color: ${
-              data.level === 'Extending' ? '#10b981' : data.level === 'Applying' ? '#4f46e5' : '#f59e0b'
-            };">${sanitize(data.level)}</span>
+            <div style="margin-bottom: 4px;">
+              <strong>Formative Score:</strong> 
+              <span style="display: inline-block; padding: 2px 8px; border-radius: 6px; font-weight: 800; font-size: 11pt; color: #1e1b4b; background-color: #e0e7ff;">
+                ${data.formativeScore ? `${data.formativeScore}/8` : (data.feedback?.formativeScore ? `${data.feedback.formativeScore}/8` : 'N/A')}
+              </span>
+            </div>
+            <div>
+              <strong>Demonstrated Level:</strong> 
+              <span style="display: inline-block; padding: 3px 10px; border-radius: 10px; font-weight: bold; font-size: 10.5pt; color: #ffffff; background-color: ${
+                data.level === 'Extending' ? '#10b981' : data.level === 'Applying' ? '#4f46e5' : '#f59e0b'
+              };">${sanitize(data.level)}</span>
+            </div>
           </td>
           <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt;">
             <strong>Skill Attempt & Growth:</strong><br/>
@@ -465,8 +474,16 @@ export function exportToWordDoc(data: ReportData) {
         </tr>
         <tr>
           <td>
-            <strong>Demonstrated Skill Level:</strong> 
-            <span class="badge">${sanitize(data.level)}</span>
+            <div style="margin-bottom: 4px;">
+              <strong>Formative Score:</strong> 
+              <span style="display: inline-block; padding: 2px 8px; border-radius: 6px; font-weight: bold; font-size: 11pt; color: #1e1b4b; background-color: #e0e7ff;">
+                ${data.formativeScore ? `${data.formativeScore}/8` : (data.feedback?.formativeScore ? `${data.feedback.formativeScore}/8` : 'N/A')}
+              </span>
+            </div>
+            <div>
+              <strong>Demonstrated Level:</strong> 
+              <span class="badge">${sanitize(data.level)}</span>
+            </div>
           </td>
           <td>
             <strong>Skill Attempt & Growth:</strong><br/>
@@ -629,6 +646,7 @@ export function exportToCsvSpreadsheet(logs: ATLTaskLog[], filenamePrefix = 'ATL
     'Target Strands',
     'ATL Category',
     'ATL Skill Cluster',
+    'Formative Score (/8)',
     'Level Achieved',
     'Attempt #',
     'Feedback Summary',
@@ -666,6 +684,7 @@ export function exportToCsvSpreadsheet(logs: ATLTaskLog[], filenamePrefix = 'ATL
       escapeCsv(log.strands && log.strands.length > 0 ? log.strands.join('; ') : 'N/A'),
       escapeCsv(log.category),
       escapeCsv(log.cluster),
+      escapeCsv(log.formativeScore ? `${log.formativeScore}/8` : (log.feedback?.formativeScore ? `${log.feedback.formativeScore}/8` : 'N/A')),
       escapeCsv(log.level),
       escapeCsv(log.attemptNumber || 1),
       escapeCsv(log.feedback?.summary || ''),

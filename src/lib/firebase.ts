@@ -15,6 +15,8 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { ATLTaskLog, AssignedTask } from '../types';
+import { resolveFormativeScore } from './scoreUtils';
+import { getStudentEvidenceToken } from './evidenceUtils';
 
 // Initialize Firebase App safely (singleton)
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
@@ -57,23 +59,40 @@ export function subscribeToTaskLogs(
         const logs: ATLTaskLog[] = [];
         snapshot.forEach((docSnap) => {
           const data = docSnap.data();
+          const computedScore = typeof data.formativeScore === 'number'
+            ? data.formativeScore
+            : (data.feedback && typeof data.feedback.formativeScore === 'number'
+                ? data.feedback.formativeScore
+                : resolveFormativeScore(data));
+
+          const studentName = data.studentName || 'Anonymous';
+          const mypYear = data.mypYear || '1';
+          const evidenceToken = data.evidenceToken || getStudentEvidenceToken(studentName, mypYear);
+
           logs.push({
             id: docSnap.id,
             ...data,
             date: data.date || new Date().toISOString().split('T')[0],
             academicYear: data.academicYear || '2025-2026',
             term: data.term || 'Term 1',
-            studentName: data.studentName || 'Anonymous',
+            studentName,
             subject: data.subject || 'Sciences',
             topic: data.topic || 'General Topic',
-            mypYear: data.mypYear || '1',
+            mypYear,
             category: data.category || 'Thinking',
             cluster: data.cluster || 'Critical thinking',
             level: data.level || 'Applying',
+            formativeScore: computedScore,
             taskTitle: data.taskTitle || 'ATL Task',
+            evidenceToken,
             responses: data.responses || [],
-            feedback: data.feedback || {
+            feedback: data.feedback ? {
+              ...data.feedback,
+              level: data.feedback.level || data.level || 'Applying',
+              formativeScore: typeof data.feedback.formativeScore === 'number' ? data.feedback.formativeScore : computedScore,
+            } : {
               level: data.level || 'Applying',
+              formativeScore: computedScore,
               summary: '',
               strengths: [],
               next_steps: []
@@ -122,8 +141,10 @@ function removeUndefinedFields<T>(obj: T): T {
 export async function saveTaskLogToFirestore(log: ATLTaskLog): Promise<void> {
   try {
     const docRef = doc(db, COLLECTION_NAME, log.id);
+    const token = log.evidenceToken || getStudentEvidenceToken(log.studentName || 'Student', log.mypYear || '1');
     const dataToSave = removeUndefinedFields({
       ...log,
+      evidenceToken: token,
       createdAt: new Date().toISOString()
     });
     await setDoc(docRef, dataToSave);

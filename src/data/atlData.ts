@@ -1,4 +1,4 @@
-import { ATLCategoryKey, ATLCategoryData, ATLTaskLog } from '../types';
+import { ATLCategoryKey, ATLCategoryData, ATLTaskLog, AssignedTask } from '../types';
 
 export const ATL_DATA: Record<ATLCategoryKey, ATLCategoryData> = {
   Communication: {
@@ -210,6 +210,7 @@ export const SAMPLE_LOGS: ATLTaskLog[] = [
     category: 'Thinking',
     cluster: 'Critical thinking',
     level: 'Applying',
+    formativeScore: 6,
     taskTitle: 'Critical thinking Activity: Cell Structure and Function',
     responses: [
       { label: 'A', prompt: 'What are 2 simple things you know about cells?', response: 'Cells have a nucleus that controls activities and a cell membrane.' },
@@ -217,6 +218,7 @@ export const SAMPLE_LOGS: ATLTaskLog[] = [
     ],
     feedback: {
       level: 'Applying',
+      formativeScore: 6,
       summary: 'Maya clearly identified key cell organelles and explained differences accurately.',
       strengths: ['Accurate recall of cell components', 'Clear comparison between plant and animal cells'],
       next_steps: ['Connect organelle functions to real-life biological processes'],
@@ -234,6 +236,7 @@ export const SAMPLE_LOGS: ATLTaskLog[] = [
     category: 'Communication',
     cluster: 'Communication',
     level: 'Extending',
+    formativeScore: 8,
     taskTitle: 'Communication Activity: Linear Equations',
     responses: [
       { label: 'A', prompt: 'Explain what slope represents on a line graph.', response: 'Slope is the rate of change or rise over run.' },
@@ -241,6 +244,7 @@ export const SAMPLE_LOGS: ATLTaskLog[] = [
     ],
     feedback: {
       level: 'Extending',
+      formativeScore: 8,
       summary: 'David communicated mathematical steps with precision and clarity.',
       strengths: ['Structured mathematical communication', 'Correct calculation and graphical interpretation'],
       next_steps: ['Explore negative slopes in real-world contexts'],
@@ -258,6 +262,7 @@ export const SAMPLE_LOGS: ATLTaskLog[] = [
     category: 'Thinking',
     cluster: 'Creative thinking',
     level: 'Applying',
+    formativeScore: 5,
     taskTitle: 'Creative thinking Activity: Character Analysis',
     responses: [
       { label: 'A', prompt: 'Describe the main character’s key conflict.', response: 'The protagonist struggles between individual desires and social expectations.' },
@@ -265,6 +270,7 @@ export const SAMPLE_LOGS: ATLTaskLog[] = [
     ],
     feedback: {
       level: 'Applying',
+      formativeScore: 5,
       summary: 'Alex demonstrated creative perspective-taking and literary insight.',
       strengths: ['Empathetic perspective shifting', 'Solid understanding of plot conflict'],
       next_steps: ['Incorporate direct textual quotes to support claims'],
@@ -282,6 +288,7 @@ export const SAMPLE_LOGS: ATLTaskLog[] = [
     category: 'Research',
     cluster: 'Information literacy',
     level: 'Extending',
+    formativeScore: 8,
     taskTitle: 'Information literacy Activity: Industrial Era Sources',
     responses: [
       { label: 'A', prompt: 'Compare primary vs secondary source perspectives on factory conditions.', response: 'Primary worker letters highlight harsh daily struggles while factory owner reports focus on production output.' },
@@ -289,6 +296,7 @@ export const SAMPLE_LOGS: ATLTaskLog[] = [
     ],
     feedback: {
       level: 'Extending',
+      formativeScore: 8,
       summary: 'Sophia evaluated historical source bias with commendable critical judgment.',
       strengths: ['Sophisticated source evaluation', 'Nuanced recognition of historical perspective'],
       next_steps: ['Synthesize findings into an argumentative essay format'],
@@ -306,6 +314,7 @@ export const SAMPLE_LOGS: ATLTaskLog[] = [
     category: 'Self-management',
     cluster: 'Reflection',
     level: 'Applying',
+    formativeScore: 6,
     taskTitle: 'Reflection Activity: Plant Genetics Inquiries',
     responses: [
       { label: 'A', prompt: 'Reflect on how cross-pollination ensures genetic diversity.', response: 'Combining genetic material from two plants creates variation in traits, helping adaptation.' },
@@ -313,9 +322,196 @@ export const SAMPLE_LOGS: ATLTaskLog[] = [
     ],
     feedback: {
       level: 'Applying',
+      formativeScore: 6,
       summary: 'Marcus reflected thoughtfully on biological concepts and effective study strategies.',
       strengths: ['Clear reflection on learning strategies', 'Accurate biological conceptualization'],
       next_steps: ['Apply genetic probability rules to pedigree charts'],
     },
   },
 ];
+
+export const SAMPLE_ASSIGNED_TASKS: AssignedTask[] = [
+  {
+    id: 'sample-assigned-myp4-1',
+    title: 'Cellular Respiration & Enzyme Kinetics Investigation',
+    subject: 'Sciences',
+    topic: 'Cellular Respiration, ATP Synthesis & Factors Affecting Catalase Activity',
+    mypYear: '4',
+    category: 'Thinking',
+    cluster: 'Critical thinking',
+    teacherName: 'Sciences Department',
+    createdAt: new Date().toISOString(),
+    academicYear: '2025-2026',
+    term: 'Term 2',
+    active: true,
+    criteria: ['Criterion A: Knowing and understanding', 'Criterion C: Processing and evaluating'],
+    dueDate: '2026-04-15',
+    task: {
+      title: 'Cellular Respiration & Enzyme Kinetics Investigation',
+      chosen_cluster: 'Critical thinking',
+      global_context: 'Scientific and technical innovation',
+      context: 'In this formative ATL task, you will analyze enzyme-catalyzed biochemical reactions in cellular respiration and evaluate experimental data regarding enzyme denaturation under temperature stress.',
+      atl_focus_explainer: 'Focus on drawing reasoned conclusions, evaluating scientific variables, and applying conceptual understanding of enzyme active sites.',
+      estimated_minutes: 15,
+      parts: [
+        {
+          label: 'A',
+          prompt: 'Explain the role of ATP in cellular processes and how catalase breaks down harmful metabolic by-products (H2O2) in aerobic organisms.',
+          placeholder: 'Discuss ATP phosphorylation and the enzyme-substrate catalytic mechanism...'
+        },
+        {
+          label: 'B',
+          prompt: 'Predict and justify what happens to enzyme reaction rate when temperature increases past the optimum point (55°C). Use the concept of protein tertiary structure and active site denaturation in your explanation.',
+          placeholder: 'Explain thermal energy, hydrogen bonding disruption, conformational changes, and loss of enzyme-substrate specificity...'
+        },
+        {
+          label: 'C',
+          prompt: 'Suggest two controlled variables that an experimenter must hold constant when testing catalase reaction rates across different pH levels, and justify why each is critical.',
+          placeholder: 'Identify specific controlled variables and explain how failing to control them would introduce confounding factors...'
+        }
+      ]
+    }
+  },
+  {
+    id: 'sample-assigned-myp4-2',
+    title: 'Bioethics & Genetic Modification Case Study',
+    subject: 'Sciences',
+    topic: 'CRISPR-Cas9 Gene Editing, Agricultural Crop Resilience & Ecological Impact',
+    mypYear: '4',
+    category: 'Research',
+    cluster: 'Information literacy',
+    teacherName: 'Sciences Department',
+    createdAt: new Date().toISOString(),
+    academicYear: '2025-2026',
+    term: 'Term 2',
+    active: true,
+    criteria: ['Criterion D: Reflecting on the impacts of science'],
+    dueDate: '2026-04-20',
+    task: {
+      title: 'Bioethics & Genetic Modification Case Study',
+      chosen_cluster: 'Information literacy',
+      global_context: 'Globalisation and sustainability',
+      context: 'Examine the ethical, environmental, and socio-economic implications of deploying CRISPR-edited drought-resistant staple crops in vulnerable agricultural zones.',
+      atl_focus_explainer: 'Evaluate contrasting stakeholder perspectives, detect bias in scientific media reporting, and synthesize evidence-based ethical evaluations.',
+      estimated_minutes: 15,
+      parts: [
+        {
+          label: 'A',
+          prompt: 'Identify one environmental benefit and one potential ecological risk associated with introducing genetically edited crops into open agricultural ecosystems.',
+          placeholder: 'Consider biodiversity, non-target species, pesticide reduction, and horizontal gene transfer...'
+        },
+        {
+          label: 'B',
+          prompt: 'Evaluate how a smallholder farmer in an arid region and an international patent-holding biotechnology firm might have differing perspectives on genetic crop patents.',
+          placeholder: 'Analyze economic equity, food sovereignty, seed licensing costs, and agricultural security...'
+        }
+      ]
+    }
+  },
+  {
+    id: 'sample-assigned-myp3-1',
+    title: 'Cell Organelle Systems & Biological Analogies',
+    subject: 'Sciences',
+    topic: 'Cell Biology, Endomembrane System & Organelle Specialization',
+    mypYear: '3',
+    category: 'Communication',
+    cluster: 'Communication',
+    teacherName: 'Sciences Department',
+    createdAt: new Date().toISOString(),
+    academicYear: '2025-2026',
+    term: 'Term 2',
+    active: true,
+    criteria: ['Criterion A: Knowing and understanding'],
+    dueDate: '2026-04-12',
+    task: {
+      title: 'Cell Organelle Systems & Biological Analogies',
+      chosen_cluster: 'Communication',
+      context: 'Demonstrate your ability to communicate complex biological structures clearly using precise terminology and structured analogical reasoning.',
+      atl_focus_explainer: 'Translate scientific functions into accessible analogies while maintaining scientific accuracy.',
+      estimated_minutes: 15,
+      parts: [
+        {
+          label: 'A',
+          prompt: 'Compare the function of Mitochondria and Ribosomes within an animal cell to key departments in a modern city or factory.',
+          placeholder: 'Detail energy generation vs protein manufacturing...'
+        },
+        {
+          label: 'B',
+          prompt: 'Explain why plant cells require both chloroplasts AND mitochondria to sustain life.',
+          placeholder: 'Distinguish between glucose synthesis (photosynthesis) and ATP release (cellular respiration)...'
+        }
+      ]
+    }
+  },
+  {
+    id: 'sample-assigned-myp2-1',
+    title: 'Photosynthesis Rate & Environmental Factors',
+    subject: 'Sciences',
+    topic: 'Plant Physiology, Chlorophyll Absorption & Light Intensity',
+    mypYear: '2',
+    category: 'Thinking',
+    cluster: 'Critical thinking',
+    teacherName: 'Sciences Department',
+    createdAt: new Date().toISOString(),
+    academicYear: '2025-2026',
+    term: 'Term 2',
+    active: true,
+    criteria: ['Criterion C: Processing and evaluating'],
+    dueDate: '2026-04-18',
+    task: {
+      title: 'Photosynthesis Rate & Environmental Factors',
+      chosen_cluster: 'Critical thinking',
+      context: 'Investigate how environmental variables (light intensity, CO2 concentration, and temperature) act as limiting factors in plant photosynthesis.',
+      atl_focus_explainer: 'Analyze cause-and-effect relationships and interpret scientific limiting factor graphs.',
+      estimated_minutes: 15,
+      parts: [
+        {
+          label: 'A',
+          prompt: 'State the word and chemical equation for photosynthesis and name the primary light-absorbing pigment in plant leaves.',
+          placeholder: 'Write the balanced or word equation and identify chlorophyll...'
+        },
+        {
+          label: 'B',
+          prompt: 'Why does the rate of photosynthesis plateau (level off) even if light intensity continues to increase indefinitely?',
+          placeholder: 'Explain the concept of limiting factors such as CO2 availability or enzyme saturation...'
+        }
+      ]
+    }
+  },
+  {
+    id: 'sample-assigned-myp1-1',
+    title: 'Living vs Non-Living Organisms & Cell Theory',
+    subject: 'Sciences',
+    topic: 'Introduction to Biology, Microscope Techniques & Cell Theory',
+    mypYear: '1',
+    category: 'Communication',
+    cluster: 'Literacy',
+    teacherName: 'Sciences Department',
+    createdAt: new Date().toISOString(),
+    academicYear: '2025-2026',
+    term: 'Term 2',
+    active: true,
+    criteria: ['Criterion A: Knowing and understanding'],
+    dueDate: '2026-04-10',
+    task: {
+      title: 'Living vs Non-Living Organisms & Cell Theory',
+      chosen_cluster: 'Literacy',
+      context: 'Apply the three tenets of Cell Theory and use MRS GREN characteristics to evaluate biological specimens.',
+      atl_focus_explainer: 'Use correct scientific vocabulary and structured explanations.',
+      estimated_minutes: 10,
+      parts: [
+        {
+          label: 'A',
+          prompt: 'State the three core principles of Cell Theory.',
+          placeholder: '1. All living organisms are composed of... 2. The cell is the basic unit... 3. All cells arise from...'
+        },
+        {
+          label: 'B',
+          prompt: 'Using two life processes (e.g. Reproduction, Nutrition, Respiration), explain why a virus is considered non-living outside a host cell.',
+          placeholder: 'Explain host dependency, lack of cellular machinery, and metabolic inactivity...'
+        }
+      ]
+    }
+  }
+];
+
