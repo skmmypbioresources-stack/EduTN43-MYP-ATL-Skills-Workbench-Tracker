@@ -230,7 +230,9 @@ export const Header: React.FC<HeaderProps> = ({
                 <BarChart3 className="h-4 w-4 text-indigo-300" />
                 <span>Year Analytics</span>
                 {!isAnalyticsUnlocked && (
-                  <Lock className={`h-3 w-3 shrink-0 ${activeTab === 'dashboard' ? 'text-amber-300' : 'text-amber-500'}`} title="Protected by Teacher Password" />
+                  <span title="Protected by Teacher Password" className="flex items-center">
+                    <Lock className={`h-3 w-3 shrink-0 ${activeTab === 'dashboard' ? 'text-amber-300' : 'text-amber-500'}`} />
+                  </span>
                 )}
                 <span className={`ml-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
                   activeTab === 'dashboard'

@@ -231,7 +231,7 @@ export default function App() {
             const resolved = resolveStudentByToken(effectiveToken || studentNameCandidate, logs, availableStudentNames);
             if (resolved) {
               setEvidenceStudentName(resolved.studentName);
-              if (resolved.mypYear) {
+              if (!directYear && resolved.mypYear) {
                 setEvidenceMypYear(resolved.mypYear.replace(/\D/g, '') || '3');
               }
             }

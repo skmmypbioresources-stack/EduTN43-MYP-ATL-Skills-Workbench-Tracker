@@ -1300,7 +1300,8 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                   ATL Skill Clusters Mastery Matrix (10 Clusters)
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
-                  {ALL_CLUSTERS.map((clusterName) => {
+                  {ALL_CLUSTERS.map((clusterItem) => {
+                    const clusterName = typeof clusterItem === 'string' ? clusterItem : clusterItem.name;
                     const clusterLogs = studentLogs.filter((l) => l.cluster === clusterName);
                     const count = clusterLogs.length;
                     const hasExtending = clusterLogs.some((l) => l.level === 'Extending');
