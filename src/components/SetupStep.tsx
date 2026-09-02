@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { ATL_DATA } from '../data/atlData';
+import { ATL_DATA, ALL_STUDENTS_ROSTER } from '../data/atlData';
 import { ATLCategoryKey, TaskMeta, AssignedTask } from '../types';
 import { MYPCriteriaSelector } from './MYPCriteriaSelector';
 import {
@@ -654,14 +654,34 @@ export const SetupStep: React.FC<SetupStepProps> = ({
             <div className="relative mt-1.5">
               <input
                 id="student-name-input"
+                list="official-students-list"
                 type="text"
                 value={studentName}
-                onChange={(e) => setStudentName(e.target.value)}
-                placeholder="e.g. Alex Rivera or MYP 3 Science Class"
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setStudentName(val);
+                  const matched = ALL_STUDENTS_ROSTER.find(
+                    (s) => s.name.toLowerCase() === val.trim().toLowerCase()
+                  );
+                  if (matched && matched.mypYear) {
+                    setMeta((prev) => ({ ...prev, year: matched.mypYear }));
+                  }
+                }}
+                placeholder="Type or select student (e.g. MIRAYA SHARVIL SHRIDHAR)"
                 className="w-full rounded-xl border border-slate-200 bg-slate-50/50 px-3.5 py-2.5 text-sm font-medium text-slate-800 placeholder:text-slate-400 focus:border-indigo-600 focus:bg-white focus:ring-2 focus:ring-indigo-100 focus:outline-none transition-all"
               />
+              <datalist id="official-students-list">
+                {ALL_STUDENTS_ROSTER.map((s) => (
+                  <option
+                    key={`${s.id}-${s.name}`}
+                    value={s.name}
+                  >
+                    {s.id} • {s.classSection || `MYP ${s.mypYear}`} • {s.gender ? (s.gender === 'B' ? 'Male' : 'Female') : ''}
+                  </option>
+                ))}
+              </datalist>
             </div>
-            <p className="mt-1 text-[11px] text-slate-500 font-medium">Used to log growth records in the Academic Year Tracker.</p>
+            <p className="mt-1 text-[11px] text-slate-500 font-medium">Auto-populates from school roster ({ALL_STUDENTS_ROSTER.length} students across MYP 1–5).</p>
           </div>
 
           <div>

@@ -93,6 +93,7 @@ export const ToddleLinkManagerModal: React.FC<ToddleLinkManagerModalProps> = ({
   // New Student Addition Form State
   const [isAddingStudent, setIsAddingStudent] = useState<boolean>(false);
   const [newStudentName, setNewStudentName] = useState<string>('');
+  const [newStudentId, setNewStudentId] = useState<string>('');
   const [newStudentYear, setNewStudentYear] = useState<string>('2');
   const [newStudentSubject, setNewStudentSubject] = useState<string>('Science • Biology');
   const [rosterRefreshKey, setRosterRefreshKey] = useState<number>(0);
@@ -100,6 +101,7 @@ export const ToddleLinkManagerModal: React.FC<ToddleLinkManagerModalProps> = ({
   // Editing Student Modal State
   const [editingStudent, setEditingStudent] = useState<StudentEvidenceRosterItem | null>(null);
   const [editName, setEditName] = useState<string>('');
+  const [editStudentId, setEditStudentId] = useState<string>('');
   const [editYear, setEditYear] = useState<string>('2');
   const [editSubject, setEditSubject] = useState<string>('Science • Biology');
 
@@ -129,7 +131,7 @@ export const ToddleLinkManagerModal: React.FC<ToddleLinkManagerModalProps> = ({
   const classSummary = useMemo(() => {
     const counts: Record<string, number> = { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 };
     fullRoster.forEach((item) => {
-      const yr = (item.mypYear || '3').replace(/\D/g, '');
+      const yr = (item.mypYear || '2').replace(/\D/g, '');
       if (counts[yr] !== undefined) {
         counts[yr] += 1;
       }
@@ -150,8 +152,15 @@ export const ToddleLinkManagerModal: React.FC<ToddleLinkManagerModalProps> = ({
   const handleAddStudentSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newStudentName.trim()) return;
-    saveCustomStudent(newStudentName.trim(), newStudentYear, newStudentSubject);
+    saveCustomStudent(
+      newStudentName.trim(),
+      newStudentYear,
+      newStudentSubject,
+      newStudentId.trim() || undefined,
+      newStudentYear === '2' ? 'MYP 2C' : `MYP ${newStudentYear}`
+    );
     setNewStudentName('');
+    setNewStudentId('');
     setIsAddingStudent(false);
     setRosterRefreshKey((k) => k + 1);
   };
@@ -159,6 +168,7 @@ export const ToddleLinkManagerModal: React.FC<ToddleLinkManagerModalProps> = ({
   const startEditingStudent = (student: StudentEvidenceRosterItem) => {
     setEditingStudent(student);
     setEditName(student.studentName);
+    setEditStudentId(student.studentId || '');
     setEditYear(student.mypYear || '2');
     setEditSubject(student.subject || 'Science • Biology');
   };
@@ -168,7 +178,9 @@ export const ToddleLinkManagerModal: React.FC<ToddleLinkManagerModalProps> = ({
     if (!editingStudent || !editName.trim()) return;
     updateCustomStudent(editingStudent.studentName, {
       name: editName.trim(),
+      studentId: editStudentId.trim() || undefined,
       mypYear: editYear,
+      classSection: editYear === '2' ? 'MYP 2C' : `MYP ${editYear}`,
       subject: editSubject
     });
     setEditingStudent(null);
@@ -410,9 +422,17 @@ export const ToddleLinkManagerModal: React.FC<ToddleLinkManagerModalProps> = ({
                 type="text"
                 value={newStudentName}
                 onChange={(e) => setNewStudentName(e.target.value)}
-                placeholder="Student Full Name (e.g. Aarya)"
+                placeholder="Student Full Name (e.g. MIRAYA SHARVIL SHRIDHAR)"
                 className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-900 focus:outline-none"
                 autoFocus
+              />
+              <input
+                type="text"
+                value={newStudentId}
+                onChange={(e) => setNewStudentId(e.target.value)}
+                placeholder="4-digit ID (e.g. 8654)"
+                maxLength={6}
+                className="w-32 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-mono font-bold text-slate-900 focus:outline-none"
               />
               <select
                 value={newStudentYear}
@@ -420,7 +440,7 @@ export const ToddleLinkManagerModal: React.FC<ToddleLinkManagerModalProps> = ({
                 className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-800 focus:outline-none"
               >
                 <option value="1">MYP 1 (Grade 6)</option>
-                <option value="2">MYP 2 (Grade 7)</option>
+                <option value="2">MYP 2 (Grade 7 - 2C)</option>
                 <option value="3">MYP 3 (Grade 8)</option>
                 <option value="4">MYP 4 (Grade 9)</option>
                 <option value="5">MYP 5 (Grade 10)</option>
@@ -482,7 +502,7 @@ export const ToddleLinkManagerModal: React.FC<ToddleLinkManagerModalProps> = ({
 
                 return (
                   <div
-                    key={student.evidenceToken}
+                    key={`${student.evidenceToken}-${student.studentId || student.mypYear}`}
                     className="p-3.5 sm:p-4 rounded-2xl border border-slate-200/90 bg-white hover:border-blue-300 hover:shadow-xs transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 sm:gap-4"
                   >
                     {/* Left: Avatar + Name + Student ID */}
@@ -494,15 +514,19 @@ export const ToddleLinkManagerModal: React.FC<ToddleLinkManagerModalProps> = ({
                         <div className="text-sm font-bold text-slate-900 truncate">
                           {student.studentName}
                         </div>
-                        <div className="text-[11px] font-mono text-slate-400 font-medium truncate">
-                          ID: {student.studentId || `student-${student.evidenceToken}`}
+                        <div className="text-[11px] font-mono text-blue-700 font-bold truncate flex items-center gap-1.5">
+                          <span className="bg-blue-50 border border-blue-200/80 px-1.5 py-0.2 rounded text-[10px]">
+                            ID: {student.studentId || student.evidenceToken}
+                          </span>
                         </div>
                       </div>
                     </div>
 
                     {/* Middle Left: Class & Subject Badge (Matching Screenshot) */}
                     <div className="rounded-xl bg-sky-50/80 border border-sky-100/90 px-3 py-1.5 text-center shrink-0 min-w-[100px] leading-tight">
-                      <div className="text-xs font-bold text-slate-800">MYP {student.mypYear}</div>
+                      <div className="text-xs font-black text-slate-900">
+                        {student.classSection || (student.mypYear === '2' ? 'MYP 2C' : `MYP ${student.mypYear}`)}
+                      </div>
                       <div className="text-[11px] font-semibold text-slate-600">{subjectParts[0] || 'Science'}</div>
                       <div className="text-[10px] font-medium text-slate-500">• {subjectParts[1] || 'Biology'}</div>
                     </div>
@@ -661,7 +685,7 @@ export const ToddleLinkManagerModal: React.FC<ToddleLinkManagerModalProps> = ({
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-bold text-slate-800 focus:border-blue-600 focus:outline-none"
                   >
                     <option value="1">MYP 1 (Grade 6)</option>
-                    <option value="2">MYP 2 (Grade 7)</option>
+                    <option value="2">MYP 2 (Grade 7 - 2C)</option>
                     <option value="3">MYP 3 (Grade 8)</option>
                     <option value="4">MYP 4 (Grade 9)</option>
                     <option value="5">MYP 5 (Grade 10)</option>
@@ -670,13 +694,15 @@ export const ToddleLinkManagerModal: React.FC<ToddleLinkManagerModalProps> = ({
 
                 <div>
                   <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1">
-                    Student ID
+                    4-Digit Student ID
                   </label>
                   <input
                     type="text"
-                    disabled
-                    value={editingStudent.studentId || `student-${editingStudent.evidenceToken}`}
-                    className="w-full rounded-xl border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-mono text-slate-500 select-all"
+                    value={editStudentId}
+                    onChange={(e) => setEditStudentId(e.target.value)}
+                    placeholder="e.g. 8654"
+                    maxLength={6}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-mono font-bold text-slate-900 focus:border-blue-600 focus:bg-white focus:outline-none"
                   />
                 </div>
               </div>

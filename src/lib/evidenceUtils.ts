@@ -1,5 +1,6 @@
-import { ATLTaskLog, StudentEvidenceRosterItem } from '../types';
+import { ATLTaskLog, StudentEvidenceRosterItem, StudentRecord } from '../types';
 import { resolveFormativeScore } from './scoreUtils';
+import { ALL_STUDENTS_ROSTER, DEFAULT_STUDENTS_BY_CLASS } from '../data/atlData';
 
 const TOKEN_CACHE_KEY = 'atl_student_evidence_tokens_v1';
 const CUSTOM_ROSTER_KEY = 'atl_custom_student_roster_v1';
@@ -41,6 +42,7 @@ export interface CustomStudentEntry {
   studentId?: string;
   name: string;
   mypYear: string;
+  classSection?: string;
   subject?: string;
   createdAt?: string;
 }
@@ -52,7 +54,45 @@ export function getCustomStudents(): CustomStudentEntry[] {
   try {
     const stored = localStorage.getItem(CUSTOM_ROSTER_KEY);
     if (stored) {
-      return JSON.parse(stored);
+      const parsed = JSON.parse(stored);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const officialMap = new Map<string, StudentRecord>();
+        ALL_STUDENTS_ROSTER.forEach((s) => {
+          officialMap.set(s.name.trim().toLowerCase(), s);
+          officialMap.set(s.id.trim(), s);
+        });
+
+        const seenNames = new Set<string>();
+        const seenIds = new Set<string>();
+        const result: CustomStudentEntry[] = [];
+
+        parsed.forEach((s: CustomStudentEntry) => {
+          if (!s || !s.name || !s.name.trim()) return;
+          const cleanName = s.name.trim();
+          const normName = cleanName.toLowerCase();
+          const cleanYear = (s.mypYear || '2').replace(/\D/g, '') || '2';
+          const studentId = cleanTo4DigitId(s.id || s.studentId || '', cleanName, cleanYear);
+
+          // If student already exists in official roster, ignore custom copy or sync with official
+          if (officialMap.has(normName) || officialMap.has(studentId)) {
+            return;
+          }
+
+          if (!seenNames.has(normName) && !seenIds.has(studentId)) {
+            seenNames.add(normName);
+            seenIds.add(studentId);
+            result.push({
+              ...s,
+              id: studentId,
+              studentId: studentId,
+              name: cleanName,
+              mypYear: cleanYear,
+            });
+          }
+        });
+
+        return result;
+      }
     }
   } catch (e) {
     console.error('Failed to read custom student roster from localStorage:', e);
@@ -61,13 +101,34 @@ export function getCustomStudents(): CustomStudentEntry[] {
 }
 
 /**
- * Generates a unique numeric/alphanumeric student ID like student-1787813177803
+ * Helper to ensure student ID is a clean 4-digit string
  */
-export function generateStudentUniqueId(name: string, mypYear: string = '3'): string {
-  const cleanName = name.trim();
+export function cleanTo4DigitId(rawId: string, name: string = '', mypYear: string = '2'): string {
+  const digits = (rawId || '').replace(/\D/g, '');
+  if (digits.length === 4) {
+    return digits;
+  }
+  if (digits.length > 4) {
+    return digits.substring(0, 4);
+  }
+  return generateStudentUniqueId(name, mypYear);
+}
+
+/**
+ * Generates a clean 4-digit student ID matching original student roster
+ */
+export function generateStudentUniqueId(name: string, mypYear: string = '2'): string {
+  const cleanName = name.trim().toLowerCase();
+  // Check if student exists in the official roster
+  const known = ALL_STUDENTS_ROSTER.find(
+    (s) => s.name.toLowerCase() === cleanName || s.name.toLowerCase().includes(cleanName) || cleanName.includes(s.name.toLowerCase())
+  );
+  if (known) return known.id;
+
   const seed = `${cleanName}-${mypYear}-student-id`;
   const numHash = Math.abs(simpleNumericHash(seed));
-  return `student-${numHash}`;
+  // Return pure 4-digit ID between 7000 and 8999
+  return String(7000 + (numHash % 2000));
 }
 
 function simpleNumericHash(str: string): number {
@@ -76,9 +137,8 @@ function simpleNumericHash(str: string): number {
     hash = ((hash << 5) + hash) + str.charCodeAt(i);
     hash = hash & hash;
   }
-  // Produce a 13-digit-like number
   const positive = Math.abs(hash);
-  return 1700000000000 + (positive % 90000000000);
+  return 1000 + (positive % 9000);
 }
 
 /**
@@ -86,21 +146,24 @@ function simpleNumericHash(str: string): number {
  */
 export function saveCustomStudent(
   name: string,
-  mypYear: string = '3',
+  mypYear: string = '2',
   subject: string = 'Science • Biology',
-  id?: string
+  id?: string,
+  classSection?: string
 ): CustomStudentEntry {
   const cleanName = name.trim();
-  const cleanYear = mypYear.replace(/\D/g, '') || '3';
+  const cleanYear = mypYear.replace(/\D/g, '') || '2';
   const custom = getCustomStudents();
   const existingIdx = custom.findIndex((s) => s.name.toLowerCase() === cleanName.toLowerCase());
 
-  const studentId = id || custom[existingIdx]?.id || generateStudentUniqueId(cleanName, cleanYear);
+  const studentId = cleanTo4DigitId(id || custom[existingIdx]?.studentId || custom[existingIdx]?.id || '', cleanName, cleanYear);
 
   const newEntry: CustomStudentEntry = {
     id: studentId,
+    studentId: studentId,
     name: cleanName,
     mypYear: cleanYear,
+    classSection: classSection || (cleanYear === '2' ? 'MYP 2C' : `MYP ${cleanYear}`),
     subject: subject.trim() || 'Science • Biology',
     createdAt: custom[existingIdx]?.createdAt || new Date().toISOString()
   };
@@ -127,18 +190,24 @@ export function saveCustomStudent(
  */
 export function updateCustomStudent(
   originalName: string,
-  updated: { name: string; mypYear: string; subject?: string }
+  updated: { name: string; mypYear: string; subject?: string; studentId?: string; classSection?: string }
 ): CustomStudentEntry {
   const custom = getCustomStudents();
   const idx = custom.findIndex((s) => s.name.toLowerCase() === originalName.trim().toLowerCase());
-  const existingId = idx >= 0 ? custom[idx].id : undefined;
+  const existingId = updated.studentId || (idx >= 0 ? (custom[idx].studentId || custom[idx].id) : undefined);
 
   // Remove old entry if name changed
   if (idx >= 0 && originalName.trim().toLowerCase() !== updated.name.trim().toLowerCase()) {
     deleteCustomStudent(originalName);
   }
 
-  return saveCustomStudent(updated.name, updated.mypYear, updated.subject || 'Science • Biology', existingId);
+  return saveCustomStudent(
+    updated.name,
+    updated.mypYear,
+    updated.subject || 'Science • Biology',
+    existingId,
+    updated.classSection
+  );
 }
 
 /**
@@ -268,7 +337,7 @@ export function getStudentEvidenceUrl(token: string, studentName?: string, mypYe
 }
 
 /**
- * Resolves a student from a token or student name string against logs and custom roster
+ * Resolves a student from a token, student ID, or student name string against logs and rosters
  */
 export function resolveStudentByToken(
   tokenOrName: string,
@@ -278,48 +347,43 @@ export function resolveStudentByToken(
   if (!tokenOrName) return null;
   const clean = tokenOrName.trim().toLowerCase();
 
-  // 1. Direct match on logs evidenceToken
+  // 1. Direct match on 4-digit Student ID in official roster
+  const idMatch = ALL_STUDENTS_ROSTER.find(
+    (s) => s.id === clean || s.name.toLowerCase() === clean
+  );
+  if (idMatch) {
+    return { studentName: idMatch.name, mypYear: idMatch.mypYear };
+  }
+
+  // 2. Direct match on logs evidenceToken or studentName
   const directLogTokenMatch = logs.find(
-    (l) => l.evidenceToken && l.evidenceToken.toLowerCase() === clean
+    (l) => (l.evidenceToken && l.evidenceToken.toLowerCase() === clean) ||
+           (l.studentName && l.studentName.toLowerCase().trim() === clean)
   );
   if (directLogTokenMatch && directLogTokenMatch.studentName) {
     return { studentName: directLogTokenMatch.studentName, mypYear: directLogTokenMatch.mypYear };
-  }
-
-  // 2. Direct match on studentName in logs
-  const directLogNameMatch = logs.find(
-    (l) => l.studentName && l.studentName.toLowerCase().trim() === clean
-  );
-  if (directLogNameMatch && directLogNameMatch.studentName) {
-    return { studentName: directLogNameMatch.studentName, mypYear: directLogNameMatch.mypYear };
   }
 
   // 3. Check custom student roster in localStorage
   const customStudents = getCustomStudents();
   for (const cs of customStudents) {
     const csToken = getStudentEvidenceToken(cs.name, cs.mypYear).toLowerCase();
-    if (cs.name.toLowerCase() === clean || csToken === clean) {
+    if (cs.name.toLowerCase() === clean || csToken === clean || cs.studentId === clean || cs.id === clean) {
       return { studentName: cs.name, mypYear: cs.mypYear };
     }
   }
 
-  // 4. Check all distinct student names from logs
+  // 4. Check all distinct student names from logs & official roster
   const distinctStudentsMap = new Map<string, string>(); // name -> mypYear
+  ALL_STUDENTS_ROSTER.forEach((s) => {
+    distinctStudentsMap.set(s.name, s.mypYear);
+  });
   logs.forEach((l) => {
     if (l.studentName && l.studentName.trim()) {
       const name = l.studentName.trim();
       if (!distinctStudentsMap.has(name)) {
-        distinctStudentsMap.set(name, l.mypYear || '1');
+        distinctStudentsMap.set(name, l.mypYear || '2');
       }
-    }
-  });
-
-  // Also add sample students if not present
-  sampleStudents.forEach((st) => {
-    const cleanSample = st.replace(/\(.*?\)/g, '').trim();
-    if (!distinctStudentsMap.has(cleanSample)) {
-      const yearMatch = st.match(/MYP\s*(\d)/i);
-      distinctStudentsMap.set(cleanSample, yearMatch ? yearMatch[1] : '1');
     }
   });
 
@@ -344,69 +408,152 @@ export function resolveStudentByToken(
       .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
       .join(' ');
     if (reconstructed.trim()) {
-      return { studentName: reconstructed, mypYear: '3' };
+      return { studentName: reconstructed, mypYear: '2' };
     }
   }
 
   // 6. Direct fallback if a clean name was passed
   if (tokenOrName.trim().length > 1 && !tokenOrName.includes('=')) {
-    return { studentName: tokenOrName.trim(), mypYear: '3' };
+    return { studentName: tokenOrName.trim(), mypYear: '2' };
   }
 
   return null;
 }
 
 /**
- * Builds the complete Toddle / LMS Student Roster with analytics & portal links
+ * Builds the complete Toddle / LMS Student Roster with analytics & portal links.
+ * Guarantees zero duplicate entries by ID, name, or evidenceToken.
  */
 export function buildStudentEvidenceRoster(
   logs: ATLTaskLog[],
   academicYear: string,
   sampleStudents: string[] = []
 ): StudentEvidenceRosterItem[] {
+  // Canonical map: normNameKey -> student data object
   const studentMap = new Map<string, {
-    logs: ATLTaskLog[];
+    canonicalName: string;
+    studentId: string;
     mypYear: string;
+    classSection: string;
+    subject: string;
+    logs: ATLTaskLog[];
   }>();
 
-  // Gather logs for current academic year
-  logs.forEach((log) => {
-    if (log.academicYear === academicYear && log.studentName && log.studentName.trim()) {
-      const name = log.studentName.trim();
-      if (!studentMap.has(name)) {
-        studentMap.set(name, { logs: [], mypYear: log.mypYear || '3' });
-      }
-      studentMap.get(name)!.logs.push(log);
-      if (log.mypYear) {
-        studentMap.get(name)!.mypYear = log.mypYear;
-      }
-    }
+  // Helper to normalize strings for comparison
+  const normalizeKey = (str: string) => str.trim().toLowerCase().replace(/\s+/g, ' ');
+
+  // Lookup maps for fast alias resolution
+  const nameToKeyMap = new Map<string, string>();
+  const idToKeyMap = new Map<string, string>();
+
+  // 1. Populate all predefined official students
+  ALL_STUDENTS_ROSTER.forEach((st) => {
+    const key = normalizeKey(st.name);
+    const cleanId = st.id.trim();
+    const cleanYear = (st.mypYear || '2').replace(/\D/g, '') || '2';
+    const classSection = st.classSection || (cleanYear === '2' ? 'MYP 2C' : `MYP ${cleanYear}`);
+    const subject = st.subject || 'Sciences';
+
+    studentMap.set(key, {
+      canonicalName: st.name.trim(),
+      studentId: cleanId,
+      mypYear: cleanYear,
+      classSection,
+      subject,
+      logs: []
+    });
+
+    nameToKeyMap.set(key, key);
+    idToKeyMap.set(cleanId, key);
   });
 
-  // Include custom students from teacher roster
+  // 2. Merge custom students from teacher roster
   const customStudents = getCustomStudents();
   customStudents.forEach((cs) => {
-    if (!studentMap.has(cs.name)) {
-      studentMap.set(cs.name, { logs: [], mypYear: cs.mypYear || '3' });
+    if (!cs || !cs.name || !cs.name.trim()) return;
+    const cleanName = cs.name.trim();
+    const key = normalizeKey(cleanName);
+    const cleanYear = (cs.mypYear || '2').replace(/\D/g, '') || '2';
+    const customId = cleanTo4DigitId(cs.id || cs.studentId || '', cleanName, cleanYear);
+
+    // Resolve existing key by ID or name
+    let resolvedKey = idToKeyMap.get(customId) || nameToKeyMap.get(key);
+
+    if (resolvedKey && studentMap.has(resolvedKey)) {
+      const existing = studentMap.get(resolvedKey)!;
+      if (cs.subject) existing.subject = cs.subject;
+      if (cs.classSection) existing.classSection = cs.classSection;
+    } else {
+      resolvedKey = key;
+      studentMap.set(key, {
+        canonicalName: cleanName,
+        studentId: customId,
+        mypYear: cleanYear,
+        classSection: cs.classSection || (cleanYear === '2' ? 'MYP 2C' : `MYP ${cleanYear}`),
+        subject: cs.subject || 'Science • Biology',
+        logs: []
+      });
+      nameToKeyMap.set(key, key);
+      idToKeyMap.set(customId, key);
     }
   });
 
-  // Include sample students if no logs exist yet
-  sampleStudents.forEach((st) => {
-    const clean = st.replace(/\(.*?\)/g, '').trim();
-    if (!studentMap.has(clean)) {
-      const yearMatch = st.match(/MYP\s*(\d)/i);
-      const year = yearMatch ? yearMatch[1] : '1';
-      studentMap.set(clean, { logs: [], mypYear: year });
+  // 3. Process logs and attach to the single canonical student
+  logs.forEach((log) => {
+    if (log.academicYear === academicYear && log.studentName && log.studentName.trim()) {
+      const logName = log.studentName.trim();
+      const key = normalizeKey(logName);
+      const cleanYear = (log.mypYear || '2').replace(/\D/g, '') || '2';
+
+      // Check if matches known student
+      let resolvedKey = nameToKeyMap.get(key);
+
+      // Check if student name contains an ID or matches an official student partially
+      if (!resolvedKey) {
+        for (const [knownKey, targetKey] of nameToKeyMap.entries()) {
+          if (key === knownKey || key.includes(knownKey) || knownKey.includes(key)) {
+            resolvedKey = targetKey;
+            break;
+          }
+        }
+      }
+
+      if (resolvedKey && studentMap.has(resolvedKey)) {
+        studentMap.get(resolvedKey)!.logs.push(log);
+      } else {
+        // Create new unique record for unmapped student
+        const generatedId = generateStudentUniqueId(logName, cleanYear);
+        studentMap.set(key, {
+          canonicalName: logName,
+          studentId: generatedId,
+          mypYear: cleanYear,
+          classSection: cleanYear === '2' ? 'MYP 2C' : `MYP ${cleanYear}`,
+          subject: log.subject ? log.subject.replace(/ - /g, ' • ') : 'Science • Biology',
+          logs: [log]
+        });
+        nameToKeyMap.set(key, key);
+        idToKeyMap.set(generatedId, key);
+      }
     }
   });
 
+  // 4. Build output roster ensuring 100% unique tokens and IDs
   const roster: StudentEvidenceRosterItem[] = [];
+  const seenTokens = new Set<string>();
+  const seenIds = new Set<string>();
 
-  studentMap.forEach((data, studentName) => {
+  studentMap.forEach((data) => {
+    const studentName = data.canonicalName;
     const studentLogs = data.logs;
     const token = getStudentEvidenceToken(studentName, data.mypYear);
     const url = getStudentEvidenceUrl(token, studentName, data.mypYear);
+
+    // If duplicate token encountered, do not duplicate in UI
+    if (seenTokens.has(token) || seenIds.has(data.studentId)) {
+      return;
+    }
+    seenTokens.add(token);
+    seenIds.add(data.studentId);
 
     // Calculate score average
     let totalScore = 0;
@@ -450,26 +597,12 @@ export function buildStudentEvidenceRoster(
       latestActivityDate = sortedDates[0].date || 'Recent';
     }
 
-    // Determine subject from custom student entry or latest log
-    const customEntry = customStudents.find((cs) => cs.name.toLowerCase() === studentName.toLowerCase());
-    let subject = customEntry?.subject;
-    if (!subject && studentLogs.length > 0) {
-      const firstSubject = studentLogs[0].subject;
-      if (firstSubject) {
-        subject = firstSubject.replace(/ - /g, ' • ');
-      }
-    }
-    if (!subject) {
-      subject = 'Science • Biology';
-    }
-
-    const studentId = customEntry?.id || generateStudentUniqueId(studentName, data.mypYear);
-
     roster.push({
-      studentId,
-      studentName,
+      studentId: data.studentId,
+      studentName: data.canonicalName,
       mypYear: data.mypYear,
-      subject,
+      classSection: data.classSection,
+      subject: data.subject,
       logsCount: studentLogs.length,
       evidenceToken: token,
       evidenceUrl: url,
@@ -480,8 +613,13 @@ export function buildStudentEvidenceRoster(
     });
   });
 
-  // Sort roster alphabetically by student name
-  return roster.sort((a, b) => a.studentName.localeCompare(b.studentName));
+  // Sort roster by class then student name
+  return roster.sort((a, b) => {
+    if (a.mypYear !== b.mypYear) {
+      return a.mypYear.localeCompare(b.mypYear);
+    }
+    return a.studentName.localeCompare(b.studentName);
+  });
 }
 
 /**

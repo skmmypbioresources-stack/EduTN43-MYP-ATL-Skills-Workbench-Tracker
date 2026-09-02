@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { ATLTaskLog, ATLCategoryKey, AssignedTask } from '../types';
 import { exportToWordDoc, exportToPdf, exportToCsvSpreadsheet, getAvailableMonthsFromLogs } from '../lib/exportUtils';
-import { ATL_DATA, ALL_CLUSTERS } from '../data/atlData';
+import { ATL_DATA, ALL_CLUSTERS, ALL_STUDENTS_ROSTER } from '../data/atlData';
 import { MYPCriteriaSelector } from './MYPCriteriaSelector';
 import { ToddleLinkManagerModal } from './ToddleLinkManagerModal';
 import { getStudentEvidenceToken, getStudentEvidenceUrl, copyToClipboard } from '../lib/evidenceUtils';
@@ -496,32 +496,43 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       '5': [],
     };
 
-    const studentInfo: Record<string, { logsCount: number; mypYear: string }> = {};
+    const studentInfo: Record<string, { logsCount: number; mypYear: string; canonicalName: string }> = {};
 
     logs.forEach((log) => {
       if (log.academicYear === academicYear && log.studentName && log.studentName.trim()) {
-        const name = log.studentName.trim();
-        const yearKey = normalizeMypYear(log.mypYear);
+        const rawName = log.studentName.trim();
+        const normKey = rawName.toLowerCase();
+        const official = ALL_STUDENTS_ROSTER.find((s) => s.name.toLowerCase() === normKey);
+        const canonicalName = official ? official.name : rawName;
+        const yearKey = normalizeMypYear(official?.mypYear || log.mypYear);
 
-        if (!studentInfo[name]) {
-          studentInfo[name] = { logsCount: 0, mypYear: yearKey };
+        if (!studentInfo[normKey]) {
+          studentInfo[normKey] = { logsCount: 0, mypYear: yearKey, canonicalName };
         }
-        studentInfo[name].logsCount += 1;
-        studentInfo[name].mypYear = yearKey;
+        studentInfo[normKey].logsCount += 1;
+        studentInfo[normKey].mypYear = yearKey;
       }
     });
 
-    Object.entries(studentInfo).forEach(([name, info]) => {
+    Object.values(studentInfo).forEach((info) => {
       const yearKey = info.mypYear;
       if (!map[yearKey]) {
         map[yearKey] = [];
       }
-      map[yearKey].push({ name, logsCount: info.logsCount, mypYear: yearKey });
+      map[yearKey].push({ name: info.canonicalName, logsCount: info.logsCount, mypYear: yearKey });
     });
 
-    // Sort student lists alphabetically
+    // Sort student lists alphabetically and remove any duplicate names
     Object.keys(map).forEach((k) => {
-      map[k].sort((a, b) => a.name.localeCompare(b.name));
+      const seen = new Set<string>();
+      const deduped: { name: string; logsCount: number; mypYear: string }[] = [];
+      map[k].sort((a, b) => a.name.localeCompare(b.name)).forEach((st) => {
+        if (!seen.has(st.name.toLowerCase())) {
+          seen.add(st.name.toLowerCase());
+          deduped.push(st);
+        }
+      });
+      map[k] = deduped;
     });
 
     return map;
@@ -1116,9 +1127,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   const list = studentsByClassMap[ckey] || [];
                   if (list.length === 0) return null;
                   return (
-                    <optgroup key={ckey} label={formatClassLabel(ckey)}>
+                    <optgroup key={`filter-class-${ckey}`} label={formatClassLabel(ckey)}>
                       {list.map((st) => (
-                        <option key={st.name} value={st.name}>
+                        <option key={`filter-opt-${ckey}-${st.name}`} value={st.name}>
                           {st.name} ({st.logsCount} tasks)
                         </option>
                       ))}
@@ -1127,7 +1138,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 })
               ) : (
                 (studentsByClassMap[selectedClass] || []).map((st) => (
-                  <option key={st.name} value={st.name}>
+                  <option key={`filter-single-${selectedClass}-${st.name}`} value={st.name}>
                     {st.name} ({st.logsCount} tasks)
                   </option>
                 ))
@@ -1545,9 +1556,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   const list = studentsByClassMap[ckey] || [];
                   if (list.length === 0) return null;
                   return (
-                    <optgroup key={ckey} label={formatClassLabel(ckey)}>
+                    <optgroup key={`report-class-${ckey}`} label={formatClassLabel(ckey)}>
                       {list.map((s) => (
-                        <option key={s.name} value={s.name}>
+                        <option key={`report-opt-${ckey}-${s.name}`} value={s.name}>
                           {s.name} ({s.logsCount} tasks)
                         </option>
                       ))}
@@ -1556,7 +1567,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 })
               ) : (
                 (studentsByClassMap[selectedClass] || []).map((s) => (
-                  <option key={s.name} value={s.name}>
+                  <option key={`report-single-${selectedClass}-${s.name}`} value={s.name}>
                     {s.name} ({s.logsCount} tasks)
                   </option>
                 ))

@@ -113,11 +113,22 @@ export interface ATLTaskLog {
   evidenceToken?: string; // Unique persistent evidence portal token
 }
 
+export interface StudentRecord {
+  id: string; // 4-digit student ID e.g. "8654"
+  name: string;
+  mypYear: string;
+  classSection?: string; // e.g. "MYP 1A", "MYP 2C", "MYP 3"
+  subject?: string;
+  gender?: 'Male' | 'Female' | string;
+}
+
 export interface StudentEvidenceRosterItem {
   studentId?: string;
   studentName: string;
   mypYear: string;
+  classSection?: string;
   subject?: string;
+  gender?: string;
   logsCount: number;
   evidenceToken: string;
   evidenceUrl: string;

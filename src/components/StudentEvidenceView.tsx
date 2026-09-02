@@ -175,23 +175,19 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
   const [savedSuccessMsg, setSavedSuccessMsg] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Teacher Exit Verification Modal State
-  const [showExitModal, setShowExitModal] = useState<boolean>(false);
-  const [exitPasswordInput, setExitPasswordInput] = useState<string>('');
-  const [exitError, setExitError] = useState<string | null>(null);
-
   const effectiveStudentName = (currentStudentName.trim() || studentName.trim() || 'Student');
   const effectiveMypYear = currentMypYear || mypYear || '3';
   const effectiveToken = evidenceToken || getStudentEvidenceToken(effectiveStudentName, effectiveMypYear);
   const evidenceUrl = getStudentEvidenceUrl(effectiveToken, effectiveStudentName, effectiveMypYear);
 
-  // Derive unique student ID and registered subject
-  const { studentId, studentSubject } = useMemo(() => {
+  // Derive unique student ID, registered subject, and class section
+  const { studentId, studentSubject, studentClassSection } = useMemo(() => {
     const customList = getCustomStudents();
     const match = customList.find((c) => c.name.trim().toLowerCase() === effectiveStudentName.trim().toLowerCase());
     const id = match?.studentId || generateStudentUniqueId(effectiveStudentName, effectiveMypYear);
     const sub = match?.subject || 'Science • Biology';
-    return { studentId: id, studentSubject: sub };
+    const section = match?.classSection || (normalizeMypYear(effectiveMypYear) === '2' ? 'MYP 2C' : `MYP ${normalizeMypYear(effectiveMypYear)}`);
+    return { studentId: id, studentSubject: sub, studentClassSection: section };
   }, [effectiveStudentName, effectiveMypYear]);
 
   // Filter logs for this specific student and academic year
@@ -544,18 +540,6 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
     }
   };
 
-  // Handle Teacher Exit Verification
-  const handleTeacherExitSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const storedPass = localStorage.getItem('atl_teacher_custom_password') || 'mypteacher';
-    if (exitPasswordInput.trim() === storedPass.trim() || exitPasswordInput.trim() === 'mypteacher') {
-      setShowExitModal(false);
-      onBackToWorkbench();
-    } else {
-      setExitError('Incorrect teacher password. (Default is "mypteacher")');
-    }
-  };
-
   return (
     <div className="space-y-6 max-w-6xl mx-auto pb-16">
       {/* Top Banner & Personal Link Showcase */}
@@ -584,11 +568,16 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                   title="Switch MYP Class to only see tasks assigned to your grade"
                 >
                   <option value="1">MYP 1 (Grade 6)</option>
-                  <option value="2">MYP 2 (Grade 7)</option>
+                  <option value="2">MYP 2 (Grade 7 - 2C)</option>
                   <option value="3">MYP 3 (Grade 8)</option>
                   <option value="4">MYP 4 (Grade 9)</option>
                   <option value="5">MYP 5 (Grade 10)</option>
                 </select>
+                {studentClassSection && studentClassSection !== `MYP ${normalizeMypYear(effectiveMypYear)}` && (
+                  <span className="text-[10px] font-black bg-blue-600 text-white px-1.5 py-0.2 rounded-full">
+                    {studentClassSection}
+                  </span>
+                )}
               </div>
               {studentSubject && (
                 <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 border border-sky-100 px-3 py-1 text-xs font-bold text-sky-800">
@@ -596,7 +585,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                   <span>{studentSubject}</span>
                 </span>
               )}
-              <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600 font-mono">
+              <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 border border-blue-200/80 px-3 py-1 text-xs font-bold text-blue-900 font-mono shadow-2xs">
                 ID: {studentId}
               </span>
               <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
@@ -691,19 +680,8 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
             </div>
           </div>
 
-          {/* Teacher Exit Button */}
-          <div className="flex flex-col items-end gap-3 shrink-0">
-            <button
-              type="button"
-              onClick={() => setShowExitModal(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors shadow-2xs cursor-pointer"
-              title="Return to Teacher Dashboard (Teacher Password Required)"
-            >
-              <Lock className="h-3.5 w-3.5 text-slate-400" />
-              <span>Teacher Mode / Exit</span>
-            </button>
-
-            {/* Quick KPI summary */}
+          {/* Quick KPI summary */}
+          <div className="flex flex-col items-end justify-center gap-2 shrink-0">
             <div className="grid grid-cols-2 gap-2 text-right">
               <div className="bg-slate-50 border border-slate-200/80 rounded-xl px-3 py-1.5">
                 <div className="text-[10px] uppercase font-bold text-slate-400">Average Score</div>
@@ -1686,62 +1664,6 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                   className="rounded-xl bg-indigo-600 px-5 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 transition-colors cursor-pointer shadow-xs"
                 >
                   {taskPendingName ? 'Start Doing Task Now' : 'Save Name'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* TEACHER EXIT PASSWORD VERIFICATION MODAL */}
-      {/* ========================================================================= */}
-      {showExitModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md rounded-3xl bg-white p-6 shadow-2xl border border-slate-200 space-y-4 animate-in fade-in zoom-in duration-150">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-xs">
-                <Lock className="h-5 w-5" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-900">Teacher Mode Access</h3>
-                <p className="text-xs text-slate-500 font-medium">Enter teacher password to exit student folder</p>
-              </div>
-            </div>
-
-            <form onSubmit={handleTeacherExitSubmit} className="space-y-3">
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Teacher Password</label>
-                <input
-                  type="password"
-                  value={exitPasswordInput}
-                  onChange={(e) => {
-                    setExitPasswordInput(e.target.value);
-                    setExitError(null);
-                  }}
-                  placeholder="Enter teacher password..."
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2.5 text-xs font-bold text-slate-900 focus:bg-white focus:outline-none"
-                  autoFocus
-                />
-                {exitError && (
-                  <p className="text-[11px] font-bold text-rose-600 mt-1">{exitError}</p>
-                )}
-                <p className="text-[10px] text-slate-400 mt-1">Default password: <code>mypteacher</code></p>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowExitModal(false)}
-                  className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700 transition-colors cursor-pointer shadow-xs"
-                >
-                  Unlock & Return to Teacher Hub
                 </button>
               </div>
             </form>
