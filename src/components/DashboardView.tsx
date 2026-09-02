@@ -4,7 +4,7 @@ import { exportToWordDoc, exportToPdf, exportToCsvSpreadsheet, getAvailableMonth
 import { ATL_DATA, ALL_CLUSTERS, ALL_STUDENTS_ROSTER } from '../data/atlData';
 import { MYPCriteriaSelector } from './MYPCriteriaSelector';
 import { ToddleLinkManagerModal } from './ToddleLinkManagerModal';
-import { getStudentEvidenceToken, getStudentEvidenceUrl, copyToClipboard } from '../lib/evidenceUtils';
+import { getStudentEvidenceToken, getStudentEvidenceUrl, copyToClipboard, findCanonicalStudent, isSameStudent } from '../lib/evidenceUtils';
 import {
   BarChart,
   Bar,
@@ -667,7 +667,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Individual Student Progress Report Data
   const studentLogs = useMemo(() => {
-    return logs.filter((l) => l.academicYear === academicYear && l.studentName === reportStudent);
+    if (!reportStudent) return [];
+    return logs.filter((l) => {
+      const matchYear = !academicYear || !l.academicYear || l.academicYear === academicYear;
+      const matchStudent = isSameStudent(l.studentName || '', reportStudent, l.mypYear);
+      return matchYear && matchStudent;
+    });
   }, [logs, academicYear, reportStudent]);
 
   const studentClusterCoverage = useMemo(() => {
@@ -1591,7 +1596,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="flex flex-wrap gap-2">
               {availableStudentsForClass.map((stName) => {
                 const isSelected = reportStudent === stName;
-                const stLogs = logs.filter((l) => l.academicYear === academicYear && l.studentName === stName);
+                const stLogs = logs.filter((l) => (!academicYear || !l.academicYear || l.academicYear === academicYear) && isSameStudent(l.studentName || '', stName, l.mypYear));
                 const stClassTag = stLogs.length > 0 ? formatShortClassTag(stLogs[0].mypYear) : '';
 
                 return (
@@ -1656,8 +1661,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <div className="flex items-center gap-1.5 ml-1">
                   <button
                     onClick={() => {
-                      const token = getStudentEvidenceToken(reportStudent, studentClassTag);
-                      const url = getStudentEvidenceUrl(token);
+                      const canonical = findCanonicalStudent(reportStudent, studentClassTag);
+                      const url = getStudentEvidenceUrl(canonical.canonicalToken, canonical.canonicalName, canonical.mypYear);
                       copyToClipboard(url);
                       setCopiedProfileToken(true);
                       setTimeout(() => setCopiedProfileToken(false), 2000);
@@ -1685,8 +1690,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   {onOpenStudentPortal && (
                     <button
                       onClick={() => {
-                        const token = getStudentEvidenceToken(reportStudent, studentClassTag);
-                        onOpenStudentPortal(reportStudent, token, studentClassTag);
+                        const canonical = findCanonicalStudent(reportStudent, studentClassTag);
+                        onOpenStudentPortal(canonical.canonicalName, canonical.canonicalToken, canonical.mypYear);
                       }}
                       className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1 text-xs font-bold text-slate-700 hover:bg-slate-50 hover:border-slate-300 transition-all cursor-pointer shadow-2xs"
                       title="Preview this student's standalone evidence portal"
@@ -1904,8 +1909,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         <button
                           onClick={() => {
                             if (onOpenStudentPortal) {
-                              const token = getStudentEvidenceToken(log.studentName, log.mypYear);
-                              onOpenStudentPortal(log.studentName, token, log.mypYear);
+                              const canonical = findCanonicalStudent(log.studentName, log.mypYear);
+                              onOpenStudentPortal(canonical.canonicalName, canonical.canonicalToken, canonical.mypYear);
                             }
                           }}
                           className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"

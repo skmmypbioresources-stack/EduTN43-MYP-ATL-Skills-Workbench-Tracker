@@ -18,7 +18,7 @@ import {
 } from './lib/firebase';
 import { generateTaskClient, evaluateTaskClient } from './lib/geminiClient';
 import { resolveFormativeScore } from './lib/scoreUtils';
-import { resolveStudentByToken, getStudentEvidenceToken } from './lib/evidenceUtils';
+import { resolveStudentByToken, getStudentEvidenceToken, findCanonicalStudent, buildStudentEvidenceRoster } from './lib/evidenceUtils';
 import { SAMPLE_LOGS, SAMPLE_ASSIGNED_TASKS } from './data/atlData';
 
 function extractStudentPortalInfoFromUrl() {
@@ -49,11 +49,12 @@ function extractStudentPortalInfoFromUrl() {
       const effectiveToken = token || (studentNameCandidate ? getStudentEvidenceToken(studentNameCandidate, yearCandidate) : '');
 
       if (studentNameCandidate || effectiveToken) {
+        const canonical = findCanonicalStudent(studentNameCandidate || effectiveToken, yearCandidate);
         return {
           isStudentMode: true,
-          name: studentNameCandidate,
-          year: yearCandidate,
-          token: effectiveToken
+          name: canonical.canonicalName,
+          year: canonical.mypYear,
+          token: canonical.canonicalToken
         };
       }
     }
@@ -183,11 +184,11 @@ export default function App() {
     };
   }, []);
 
-  // Compute distinct student names for portal switching
+  // Compute distinct canonical student names for portal switching
   const availableStudentNames = useMemo(() => {
-    const names = logs.map((l) => l.studentName).filter(Boolean);
-    return Array.from(new Set(names)).sort();
-  }, [logs]);
+    const roster = buildStudentEvidenceRoster(logs, academicYear);
+    return roster.map((r) => r.studentName).sort();
+  }, [logs, academicYear]);
 
   // Detect standalone student evidence portal from URL query parameter or hash
   useEffect(() => {
@@ -219,22 +220,11 @@ export default function App() {
           const effectiveToken = token || (studentNameCandidate ? getStudentEvidenceToken(studentNameCandidate, yearCandidate) : '');
 
           if (studentNameCandidate || effectiveToken) {
-            setEvidenceToken(effectiveToken);
+            const canonical = findCanonicalStudent(studentNameCandidate || effectiveToken, yearCandidate);
+            setEvidenceToken(canonical.canonicalToken);
+            setEvidenceStudentName(canonical.canonicalName);
+            setEvidenceMypYear(canonical.mypYear);
             setIsEvidenceMode(true);
-
-            if (studentNameCandidate) {
-              setEvidenceStudentName(studentNameCandidate);
-              setEvidenceMypYear(yearCandidate);
-            }
-
-            // Attempt to resolve against existing logs or student roster
-            const resolved = resolveStudentByToken(effectiveToken || studentNameCandidate, logs, availableStudentNames);
-            if (resolved) {
-              setEvidenceStudentName(resolved.studentName);
-              if (!directYear && resolved.mypYear) {
-                setEvidenceMypYear(resolved.mypYear.replace(/\D/g, '') || '3');
-              }
-            }
           }
         }
       } catch (e) {
@@ -250,21 +240,21 @@ export default function App() {
       window.removeEventListener('popstate', parseUrlToken);
       window.removeEventListener('hashchange', parseUrlToken);
     };
-  }, [logs, availableStudentNames]);
+  }, [logs]);
 
   // Open standalone student evidence portal
   const handleOpenStudentEvidencePortal = (name: string, token: string, mypYear?: string) => {
-    const cleanYear = (mypYear || '3').replace(/\D/g, '') || '3';
-    setEvidenceToken(token);
-    setEvidenceStudentName(name);
-    setEvidenceMypYear(cleanYear);
+    const canonical = findCanonicalStudent(name || token, mypYear);
+    setEvidenceToken(canonical.canonicalToken);
+    setEvidenceStudentName(canonical.canonicalName);
+    setEvidenceMypYear(canonical.mypYear);
     setIsEvidenceMode(true);
 
     try {
       const url = new URL(window.location.href);
-      url.searchParams.set('student', name);
-      url.searchParams.set('year', cleanYear);
-      url.searchParams.set('token', token);
+      url.searchParams.set('student', canonical.canonicalName);
+      url.searchParams.set('year', canonical.mypYear);
+      url.searchParams.set('token', canonical.canonicalToken);
       url.searchParams.delete('evidenceToken');
       window.history.pushState({}, '', url.toString());
     } catch (e) {
@@ -274,10 +264,8 @@ export default function App() {
 
   // Switch student in evidence portal
   const handleSelectStudentInEvidencePortal = (name: string) => {
-    const studentLogs = logs.filter((l) => l.studentName.toLowerCase() === name.toLowerCase());
-    const studentClass = studentLogs.length > 0 ? studentLogs[0].mypYear : '3';
-    const token = getStudentEvidenceToken(name, studentClass);
-    handleOpenStudentEvidencePortal(name, token, studentClass);
+    const canonical = findCanonicalStudent(name);
+    handleOpenStudentEvidencePortal(canonical.canonicalName, canonical.canonicalToken, canonical.mypYear);
   };
 
   // Return from standalone portal back to main app
@@ -492,16 +480,20 @@ export default function App() {
       setCurrentLogId(newLogId);
 
       const exactTitle = meta.taskTitle || meta.title || task.title || meta.topic;
+      const canonical = findCanonicalStudent(studentName.trim() || 'Anonymous', meta.year);
 
       const newLog: ATLTaskLog = {
         id: newLogId,
         date: new Date().toISOString().split('T')[0],
         academicYear,
         term,
-        studentName: studentName.trim() || 'Anonymous',
+        studentName: canonical.canonicalName,
+        studentId: canonical.studentId,
+        evidenceToken: canonical.canonicalToken,
+        classSection: canonical.classSection,
         subject: meta.subject,
         topic: meta.topic,
-        mypYear: meta.year,
+        mypYear: canonical.mypYear,
         category: meta.category,
         cluster: task.chosen_cluster || meta.cluster,
         level: fbData.level,
@@ -581,9 +573,18 @@ export default function App() {
 
   // Save direct task log from student evidence portal
   const handleSaveDirectTaskLog = async (newLog: ATLTaskLog) => {
-    setLogs((prev) => [newLog, ...prev]);
+    const canonical = findCanonicalStudent(newLog.studentName, newLog.mypYear);
+    const normalizedLog: ATLTaskLog = {
+      ...newLog,
+      studentName: canonical.canonicalName,
+      studentId: newLog.studentId || canonical.studentId,
+      evidenceToken: canonical.canonicalToken,
+      mypYear: canonical.mypYear,
+      classSection: newLog.classSection || canonical.classSection
+    };
+    setLogs((prev) => [normalizedLog, ...prev]);
     try {
-      await saveTaskLogToFirestore(newLog);
+      await saveTaskLogToFirestore(normalizedLog);
     } catch (e) {
       console.error('Failed to save task log to Firestore:', e);
     }

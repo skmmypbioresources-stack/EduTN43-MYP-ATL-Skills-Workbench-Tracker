@@ -91,6 +91,8 @@ export interface ATLTaskLog {
   academicYear: string; // e.g. "2025-2026"
   term: 'Term 1' | 'Term 2' | string;
   studentName: string;
+  studentId?: string;
+  classSection?: string;
   subject: string;
   topic: string;
   mypYear: string;
@@ -101,8 +103,10 @@ export interface ATLTaskLog {
   taskTitle: string;
   skillIndicators?: string[];
   responses: StudentResponseItem[];
+  studentResponse?: string;
   feedback: TaskFeedback;
   studentReflection?: string;
+  metacognitiveReflection?: string;
   attemptNumber?: number;
   criteria?: string[];
   strands?: string[];
@@ -125,6 +129,7 @@ export interface StudentRecord {
 export interface StudentEvidenceRosterItem {
   studentId?: string;
   studentName: string;
+  canonicalName?: string;
   mypYear: string;
   classSection?: string;
   subject?: string;

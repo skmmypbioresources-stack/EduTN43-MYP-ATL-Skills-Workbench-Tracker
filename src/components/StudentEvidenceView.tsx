@@ -1,13 +1,15 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { ATLTaskLog, ATLCategoryKey, AssignedTask, GeneratedTask, StudentResponseItem } from '../types';
-import { ATL_DATA, ALL_CLUSTERS } from '../data/atlData';
+import { ATL_DATA, ALL_CLUSTERS, SAMPLE_ASSIGNED_TASKS } from '../data/atlData';
 import { exportToWordDoc, exportToPdf, resolveSkillIndicators } from '../lib/exportUtils';
 import {
   copyToClipboard,
   getStudentEvidenceUrl,
   getStudentEvidenceToken,
   generateStudentUniqueId,
-  getCustomStudents
+  getCustomStudents,
+  findCanonicalStudent,
+  isSameStudent
 } from '../lib/evidenceUtils';
 import { evaluateTaskClient, generateTaskClient } from '../lib/geminiClient';
 import { resolveFormativeScore } from '../lib/scoreUtils';
@@ -58,7 +60,12 @@ import {
   ResponsiveContainer,
   LineChart,
   Line,
-  Cell
+  Cell,
+  RadarChart,
+  Radar,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis
 } from 'recharts';
 
 interface StudentEvidenceViewProps {
@@ -175,43 +182,48 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
   const [savedSuccessMsg, setSavedSuccessMsg] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const effectiveStudentName = (currentStudentName.trim() || studentName.trim() || 'Student');
-  const effectiveMypYear = currentMypYear || mypYear || '3';
-  const effectiveToken = evidenceToken || getStudentEvidenceToken(effectiveStudentName, effectiveMypYear);
-  const evidenceUrl = getStudentEvidenceUrl(effectiveToken, effectiveStudentName, effectiveMypYear);
+  // Canonical student identity resolution
+  const canonicalStudent = useMemo(() => {
+    return findCanonicalStudent(
+      currentStudentName || studentName || evidenceToken,
+      currentMypYear || mypYear
+    );
+  }, [currentStudentName, studentName, evidenceToken, currentMypYear, mypYear]);
 
-  // Derive unique student ID, registered subject, and class section
-  const { studentId, studentSubject, studentClassSection } = useMemo(() => {
-    const customList = getCustomStudents();
-    const match = customList.find((c) => c.name.trim().toLowerCase() === effectiveStudentName.trim().toLowerCase());
-    const id = match?.studentId || generateStudentUniqueId(effectiveStudentName, effectiveMypYear);
-    const sub = match?.subject || 'Science • Biology';
-    const section = match?.classSection || (normalizeMypYear(effectiveMypYear) === '2' ? 'MYP 2C' : `MYP ${normalizeMypYear(effectiveMypYear)}`);
-    return { studentId: id, studentSubject: sub, studentClassSection: section };
-  }, [effectiveStudentName, effectiveMypYear]);
+  const effectiveStudentName = canonicalStudent.canonicalName;
+  const effectiveMypYear = canonicalStudent.mypYear;
+  const effectiveToken = canonicalStudent.canonicalToken;
+  const studentId = canonicalStudent.studentId;
+  const studentSubject = canonicalStudent.subject;
+  const studentClassSection = canonicalStudent.classSection;
+  const evidenceUrl = useMemo(() => {
+    return getStudentEvidenceUrl(effectiveToken, effectiveStudentName, effectiveMypYear);
+  }, [effectiveToken, effectiveStudentName, effectiveMypYear]);
 
-  // Filter logs for this specific student and academic year
+  // Filter logs for this specific student and academic year using robust canonical matching
   const studentLogs = useMemo(() => {
-    const cleanStudentYear = normalizeMypYear(effectiveMypYear);
     return logs.filter((log) => {
-      const matchName = (log.studentName || '').trim().toLowerCase() === effectiveStudentName.trim().toLowerCase();
-      const matchYear = !academicYear || log.academicYear === academicYear;
-      const cleanLogYear = log.mypYear ? normalizeMypYear(log.mypYear) : '';
-      const matchClass = !cleanLogYear || cleanLogYear === cleanStudentYear;
-      return matchName && matchYear && matchClass;
-    });
-  }, [logs, effectiveStudentName, academicYear, effectiveMypYear]);
+      const isStudentMatch =
+        isSameStudent(log.studentName || '', effectiveStudentName, log.mypYear, effectiveMypYear) ||
+        (studentId && log.studentId && log.studentId === studentId) ||
+        (log.evidenceToken && log.evidenceToken.toLowerCase() === effectiveToken.toLowerCase());
 
-  // Relevant Assigned Tasks for this student - STRICT CLASS ISOLATION
+      const matchYear = !academicYear || !log.academicYear || log.academicYear === academicYear;
+      return isStudentMatch && matchYear;
+    });
+  }, [logs, effectiveStudentName, effectiveMypYear, effectiveToken, studentId, academicYear]);
+
+  // Relevant Assigned Tasks for this student - Class isolation with curriculum default fallback
   const relevantAssignedTasks = useMemo(() => {
     const cleanStudentYear = normalizeMypYear(effectiveMypYear);
-    return assignedTasks.filter((t) => {
+    const pool = (assignedTasks && assignedTasks.length > 0) ? assignedTasks : SAMPLE_ASSIGNED_TASKS;
+
+    const matched = pool.filter((t) => {
       if (t.active === false) return false;
-      
+
       // Strict Class (MYP Year) matching: Only tasks for this student's class (or 'All') are shown
       const cleanTaskYear = t.mypYear ? normalizeMypYear(t.mypYear) : '';
       const isClassMatch = t.mypYear === 'All' || (cleanTaskYear && cleanTaskYear === cleanStudentYear);
-      
       if (!isClassMatch) {
         return false;
       }
@@ -219,8 +231,8 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
       // If targeted to specific students, this student's name must be in the list
       const hasSpecificTargetStudents = Array.isArray(t.targetStudentNames) && t.targetStudentNames.length > 0;
       if (hasSpecificTargetStudents) {
-        const isTargeted = t.targetStudentNames!.some((n) => 
-          n.trim().toLowerCase() === effectiveStudentName.trim().toLowerCase()
+        const isTargeted = t.targetStudentNames!.some((n) =>
+          isSameStudent(n, effectiveStudentName, t.mypYear, effectiveMypYear)
         );
         if (!isTargeted) {
           return false;
@@ -230,6 +242,15 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
       const matchAcademicYear = !t.academicYear || !academicYear || t.academicYear === academicYear;
       return matchAcademicYear;
     });
+
+    if (matched.length === 0) {
+      return SAMPLE_ASSIGNED_TASKS.filter((st) => {
+        const cleanStYear = st.mypYear ? normalizeMypYear(st.mypYear) : '';
+        return st.active !== false && (st.mypYear === 'All' || cleanStYear === cleanStudentYear);
+      });
+    }
+
+    return matched;
   }, [assignedTasks, effectiveMypYear, effectiveStudentName, academicYear]);
 
   // Check completion status for assigned tasks
@@ -371,6 +392,15 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
       };
     });
   }, [studentLogs]);
+
+  // 5 ATL Categories Radar Chart Data
+  const radarChartData = useMemo(() => {
+    return categoryChartData.map((c) => ({
+      category: c.category,
+      score: c.averageScore > 0 ? c.averageScore : (c.count > 0 ? 4 : 0),
+      fullMark: 8
+    }));
+  }, [categoryChartData]);
 
   // Handle Copy Link
   const handleCopyLink = async () => {
@@ -1219,37 +1249,86 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                   </div>
                 </div>
 
-                {/* Chronological Score Progression Line Chart */}
+                {/* 5 ATL Categories Radar Profile */}
                 <div className="rounded-3xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h3 className="text-sm font-bold text-slate-900">Score Progression Over Time</h3>
-                      <p className="text-xs text-slate-500 font-medium">Tracking your formative scores (1–8) chronologically</p>
+                      <h3 className="text-sm font-bold text-slate-900">ATL Skill Categories Radar Profile</h3>
+                      <p className="text-xs text-slate-500 font-medium">Holistic balance across all 5 ATL skill domains</p>
                     </div>
                   </div>
 
-                  {scoreProgressionData.length < 2 ? (
-                    <div className="h-64 flex flex-col items-center justify-center text-center p-6 border border-dashed border-slate-200 rounded-2xl">
-                      <TrendingUp className="h-8 w-8 text-slate-300 mb-2" />
-                      <p className="text-xs font-bold text-slate-600">Complete at least 2 tasks to view progression trajectory</p>
-                    </div>
-                  ) : (
+                  <div className="h-64 w-full">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <RadarChart data={radarChartData} margin={{ top: 10, right: 20, left: 20, bottom: 10 }}>
+                        <PolarGrid stroke="#e2e8f0" />
+                        <PolarAngleAxis dataKey="category" tick={{ fill: '#475569', fontSize: 10, fontWeight: 600 }} />
+                        <PolarRadiusAxis angle={30} domain={[0, 8]} ticks={[2, 4, 6, 8]} tick={{ fill: '#94a3b8', fontSize: 9 }} />
+                        <Radar name="Formative Attainment" dataKey="score" stroke="#4f46e5" fill="#6366f1" fillOpacity={0.35} />
+                        <Tooltip
+                          content={({ active, payload }) => {
+                            if (active && payload && payload.length) {
+                              const data = payload[0].payload;
+                              return (
+                                <div className="rounded-xl border border-slate-200 bg-white p-2.5 shadow-md text-xs">
+                                  <div className="font-bold text-slate-900">{data.category}</div>
+                                  <div className="text-indigo-700 font-bold mt-1">
+                                    Attainment: {data.score}/8
+                                  </div>
+                                </div>
+                              );
+                            }
+                            return null;
+                          }}
+                        />
+                      </RadarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+
+              {/* Chronological Score Progression Line Chart (Full Width) */}
+              <div className="rounded-3xl border border-slate-200 bg-white p-6 space-y-4 shadow-sm">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-900">Longitudinal ATL Score Progression Over Time</h3>
+                    <p className="text-xs text-slate-500 font-medium">Tracking formative scores (1–8 IB Rubric) chronologically across assignments</p>
+                  </div>
+                  {scoreProgressionData.length === 1 && (
+                    <span className="inline-flex items-center gap-1.5 self-start sm:self-auto rounded-full bg-emerald-50 border border-emerald-200 px-3 py-1 text-[11px] font-bold text-emerald-800">
+                      <CheckCircle className="h-3 w-3 text-emerald-600" />
+                      Baseline Score: {scoreProgressionData[0].score}/8 ({scoreProgressionData[0].level})
+                    </span>
+                  )}
+                </div>
+
+                {scoreProgressionData.length === 0 ? (
+                  <div className="h-64 flex flex-col items-center justify-center text-center p-6 border border-dashed border-slate-200 rounded-2xl">
+                    <TrendingUp className="h-8 w-8 text-slate-300 mb-2" />
+                    <p className="text-xs font-bold text-slate-700">No evaluated tasks recorded yet</p>
+                    <p className="text-[11px] text-slate-400 mt-1">Complete an assigned task in Tab 1 to plot your learning growth trajectory</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
                     <div className="h-64 w-full">
                       <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={scoreProgressionData} margin={{ top: 10, right: 10, left: -20, bottom: 10 }}>
+                        <LineChart data={scoreProgressionData} margin={{ top: 15, right: 20, left: -10, bottom: 10 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
-                          <XAxis dataKey="taskNumber" tick={{ fill: '#64748b', fontSize: 10, fontWeight: 600 }} />
-                          <YAxis domain={[0, 8]} ticks={[0, 2, 4, 6, 8]} tick={{ fill: '#64748b', fontSize: 10 }} />
+                          <XAxis dataKey="taskNumber" tick={{ fill: '#64748b', fontSize: 11, fontWeight: 600 }} />
+                          <YAxis domain={[0, 8]} ticks={[0, 2, 4, 6, 8]} tick={{ fill: '#64748b', fontSize: 11 }} />
                           <Tooltip
                             content={({ active, payload }) => {
                               if (active && payload && payload.length) {
                                 const data = payload[0].payload;
                                 return (
-                                  <div className="rounded-xl border border-slate-200 bg-white p-2.5 shadow-md text-xs">
+                                  <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-lg text-xs space-y-1">
                                     <div className="font-bold text-slate-900">{data.title}</div>
                                     <div className="text-slate-500 text-[10px]">{data.date} • {data.cluster}</div>
-                                    <div className="text-indigo-700 font-bold mt-1">
-                                      Score: {data.score}/8 ({data.level})
+                                    <div className="inline-flex items-center gap-1.5 font-bold text-indigo-700 pt-1">
+                                      <span>Formative Score: {data.score}/8</span>
+                                      <span className="rounded bg-indigo-50 border border-indigo-100 text-[10px] px-1.5 py-0.5 text-indigo-800">
+                                        {data.level}
+                                      </span>
                                     </div>
                                   </div>
                                 );
@@ -1262,14 +1341,20 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                             dataKey="score"
                             stroke="#4f46e5"
                             strokeWidth={3}
-                            dot={{ fill: '#4f46e5', r: 4, strokeWidth: 2, stroke: '#ffffff' }}
-                            activeDot={{ r: 6, fill: '#4338ca' }}
+                            dot={{ fill: '#4f46e5', r: 6, strokeWidth: 2, stroke: '#ffffff' }}
+                            activeDot={{ r: 8, fill: '#4338ca' }}
                           />
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
-                  )}
-                </div>
+
+                    {scoreProgressionData.length === 1 && (
+                      <div className="rounded-xl bg-slate-50 border border-slate-200 p-3 text-center text-xs text-slate-600 font-medium">
+                        Baseline attainment benchmark established at <strong>{scoreProgressionData[0].score}/8 ({scoreProgressionData[0].level})</strong> for {scoreProgressionData[0].title}. As subsequent tasks are evaluated, your continuous progression line will plot automatically across academic terms.
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* 10 ATL Skill Cluster Badges Matrix */}

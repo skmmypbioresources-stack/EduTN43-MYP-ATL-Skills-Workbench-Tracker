@@ -279,27 +279,220 @@ export function setCachedToken(studentName: string, token: string): void {
 }
 
 /**
- * Generates a unique, deterministic, and tamper-proof evidence token for a student
+ * Canonical Student Representation
  */
-export function getStudentEvidenceToken(studentName: string, mypYear?: string): string {
-  const cleanName = studentName.trim();
-  const lowerKey = cleanName.toLowerCase();
-  
-  // 1. Check local cache
-  const cached = getCachedTokens();
-  if (cached[lowerKey]) {
-    return cached[lowerKey];
+export interface CanonicalStudentInfo {
+  canonicalName: string;
+  studentId: string;
+  mypYear: string;
+  classSection: string;
+  subject: string;
+  canonicalToken: string;
+  aliases: string[];
+}
+
+/**
+ * Computes a deterministic canonical token for a student
+ */
+export function computeCanonicalToken(canonicalName: string, studentId: string, mypYear: string): string {
+  const slug = slugifyStudentName(canonicalName);
+  const seed = `${canonicalName}-${studentId}-${mypYear}-toddle-portal-2025`;
+  const hash = simpleHash(seed);
+  return `${slug}-${hash}`;
+}
+
+/**
+ * Finds or constructs the single canonical identity for any student reference.
+ * Resolves short names ("Aarya"), full names ("AARYA SUDHIR BHOSLE"), IDs ("8547"),
+ * and tokens ("aarya-sudhir-bhosle-...", "aarya-...") to the exact same canonical profile.
+ */
+export function findCanonicalStudent(
+  identifier: string,
+  hintMypYear?: string
+): CanonicalStudentInfo {
+  const clean = (identifier || '').trim();
+  const lower = clean.toLowerCase();
+  const cleanYear = hintMypYear ? hintMypYear.replace(/\D/g, '') : '';
+
+  // Helper to build a complete CanonicalStudentInfo object
+  const buildCanonical = (
+    name: string,
+    id: string,
+    year: string,
+    section?: string,
+    subject?: string,
+    extraAliases: string[] = []
+  ): CanonicalStudentInfo => {
+    const canonicalName = name.trim();
+    const studentId = id.trim();
+    const mypYear = (year || '2').replace(/\D/g, '') || '2';
+    const classSection = section || (mypYear === '2' ? 'MYP 2C' : `MYP ${mypYear}`);
+    const finalSubject = subject || 'Science • Biology';
+    const canonicalToken = computeCanonicalToken(canonicalName, studentId, mypYear);
+
+    const aliases = Array.from(new Set([
+      canonicalName.toLowerCase(),
+      studentId,
+      canonicalToken.toLowerCase(),
+      slugifyStudentName(canonicalName),
+      ...canonicalName.toLowerCase().split(/\s+/),
+      ...extraAliases.map((a) => a.toLowerCase().trim())
+    ])).filter(Boolean);
+
+    // Cache token for canonical name and all aliases
+    aliases.forEach((alias) => {
+      setCachedToken(alias, canonicalToken);
+    });
+
+    return {
+      canonicalName,
+      studentId,
+      mypYear,
+      classSection,
+      subject: finalSubject,
+      canonicalToken,
+      aliases
+    };
+  };
+
+  // If empty or default generic, return student fallback
+  if (!clean || lower === 'student') {
+    return buildCanonical('Student', '0000', cleanYear || '2', 'MYP 2C', 'Science • Biology');
   }
 
-  // 2. Generate deterministic token: [slug]-[hash]
-  const slug = slugifyStudentName(cleanName);
-  const seed = `${cleanName}-${mypYear || 'myp'}-atl-toddle-2025`;
-  const hash = simpleHash(seed);
-  const token = `${slug}-${hash}`;
+  // 1. Direct match on 4-digit Student ID in official roster
+  if (/^\d{4}$/.test(lower)) {
+    const idMatch = ALL_STUDENTS_ROSTER.find((s) => s.id === lower);
+    if (idMatch) {
+      return buildCanonical(idMatch.name, idMatch.id, idMatch.mypYear, idMatch.classSection, idMatch.subject);
+    }
+  }
 
-  // Cache for instant recall
-  setCachedToken(cleanName, token);
-  return token;
+  // 2. Direct exact match on official student name
+  const exactOfficial = ALL_STUDENTS_ROSTER.find(
+    (s) => s.name.toLowerCase() === lower
+  );
+  if (exactOfficial) {
+    return buildCanonical(exactOfficial.name, exactOfficial.id, exactOfficial.mypYear, exactOfficial.classSection, exactOfficial.subject);
+  }
+
+  // 3. Match custom students from localStorage
+  const customList = getCustomStudents();
+  for (const cs of customList) {
+    if (cs.name.toLowerCase() === lower || cs.studentId === lower || cs.id === lower) {
+      return buildCanonical(cs.name, cs.studentId || cs.id || '7500', cs.mypYear, cs.classSection, cs.subject);
+    }
+  }
+
+  // 4. Match by token / slug
+  // Check if identifier is an existing token or matches a student slug
+  const parts = lower.split('-');
+  const slugPart = parts.length > 1 ? parts.slice(0, -1).join('-') : lower;
+
+  const candidates = cleanYear
+    ? ALL_STUDENTS_ROSTER.filter((s) => s.mypYear === cleanYear)
+    : ALL_STUDENTS_ROSTER;
+
+  const tokenMatch = candidates.find((s) => {
+    const sSlug = slugifyStudentName(s.name);
+    return lower === sSlug || lower.startsWith(`${sSlug}-`) || sSlug.startsWith(lower) || sSlug === slugPart || sSlug.startsWith(slugPart) || slugPart.startsWith(sSlug);
+  });
+  if (tokenMatch) {
+    return buildCanonical(tokenMatch.name, tokenMatch.id, tokenMatch.mypYear, tokenMatch.classSection, tokenMatch.subject, [clean, slugPart]);
+  }
+
+  // 5. Match by First Name / Name Substring within candidate pool
+  // 5a. First name match (e.g. "Aarya" matches "AARYA SUDHIR BHOSLE")
+  const firstNameMatches = candidates.filter((s) => {
+    const firstWord = s.name.trim().split(/\s+/)[0].toLowerCase();
+    return firstWord === lower || firstWord === slugPart;
+  });
+  if (firstNameMatches.length === 1) {
+    const m = firstNameMatches[0];
+    return buildCanonical(m.name, m.id, m.mypYear, m.classSection, m.subject, [clean]);
+  }
+
+  // If no single match in filtered candidates, search across all official students
+  if (cleanYear && firstNameMatches.length === 0) {
+    const allFirstMatches = ALL_STUDENTS_ROSTER.filter((s) => {
+      const firstWord = s.name.trim().split(/\s+/)[0].toLowerCase();
+      return firstWord === lower || firstWord === slugPart;
+    });
+    if (allFirstMatches.length === 1) {
+      const m = allFirstMatches[0];
+      return buildCanonical(m.name, m.id, m.mypYear, m.classSection, m.subject, [clean]);
+    }
+  }
+
+  // 5b. Words subset match (e.g. "Aarya Bhosle" matches "AARYA SUDHIR BHOSLE")
+  const inputWords = lower.replace(/\(.*?\)/g, '').split(/\s+/).filter(Boolean);
+  if (inputWords.length > 0) {
+    const subsetMatches = candidates.filter((s) => {
+      const targetWords = s.name.toLowerCase().split(/\s+/).filter(Boolean);
+      return inputWords.every((w) => targetWords.includes(w));
+    });
+    if (subsetMatches.length === 1) {
+      const m = subsetMatches[0];
+      return buildCanonical(m.name, m.id, m.mypYear, m.classSection, m.subject, [clean]);
+    }
+  }
+
+  // 6. Match custom student first name
+  for (const cs of customList) {
+    const firstWord = cs.name.trim().split(/\s+/)[0].toLowerCase();
+    if (firstWord === lower || firstWord === slugPart) {
+      return buildCanonical(cs.name, cs.studentId || cs.id || '7500', cs.mypYear, cs.classSection, cs.subject, [clean]);
+    }
+  }
+
+  // 7. Fallback: Stable canonical record for unlisted/ad-hoc student
+  const finalYear = cleanYear || '2';
+  const generatedId = cleanTo4DigitId('', clean, finalYear);
+  return buildCanonical(clean, generatedId, finalYear, finalYear === '2' ? 'MYP 2C' : `MYP ${finalYear}`, 'Science • Biology');
+}
+
+/**
+ * Checks if two student identifiers (names, tokens, or IDs) refer to the exact same student
+ */
+export function isSameStudent(
+  identA: string,
+  identB: string,
+  yearA?: string,
+  yearB?: string
+): boolean {
+  if (!identA || !identB) return false;
+  const cleanA = identA.trim().toLowerCase();
+  const cleanB = identB.trim().toLowerCase();
+  if (cleanA === cleanB) return true;
+
+  const canonA = findCanonicalStudent(identA, yearA);
+  const canonB = findCanonicalStudent(identB, yearB);
+
+  if (canonA.studentId && canonB.studentId && canonA.studentId === canonB.studentId) {
+    return true;
+  }
+  if (canonA.canonicalName.toLowerCase() === canonB.canonicalName.toLowerCase()) {
+    return true;
+  }
+  if (canonA.canonicalToken === canonB.canonicalToken) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Generates a unique, deterministic, and tamper-proof evidence token for a student
+ * Always resolves to the single canonical token for that student
+ */
+export function getStudentEvidenceToken(studentName: string, mypYear?: string): string {
+  const cleanName = (studentName || '').trim();
+  if (!cleanName || cleanName.toLowerCase() === 'student') {
+    return 'student-portal';
+  }
+
+  const canonical = findCanonicalStudent(cleanName, mypYear);
+  return canonical.canonicalToken;
 }
 
 /**
@@ -319,102 +512,57 @@ export function getAppBaseUrl(preferProduction: boolean = true): string {
 }
 
 /**
- * Constructs the standalone Student Personal Folder URL
- * Includes student name, class year, and token for maximum reliability across LMS embeds
+ * Constructs the standalone Student Personal Folder URL.
+ * Guarantees that the URL is always uniform and uses canonical parameters.
  */
 export function getStudentEvidenceUrl(token: string, studentName?: string, mypYear?: string, customBase?: string): string {
   const base = customBase ? customBase.replace(/\/+$/, '') : getAppBaseUrl(true);
+
+  // Resolve to canonical student so the URL is 100% unified
+  const identifier = studentName || token;
+  const canonical = identifier ? findCanonicalStudent(identifier, mypYear) : null;
+  const finalToken = canonical ? canonical.canonicalToken : token;
+  const finalName = canonical ? canonical.canonicalName : studentName;
+  const finalYear = canonical ? canonical.mypYear : (mypYear ? mypYear.replace(/\D/g, '') : undefined);
+
   const params = new URLSearchParams();
-  if (studentName) {
-    params.set('student', studentName);
+  if (finalName) {
+    params.set('student', finalName);
   }
-  if (mypYear) {
-    const cleanYear = mypYear.replace(/\D/g, '') || mypYear;
-    params.set('year', cleanYear);
+  if (finalYear) {
+    params.set('year', finalYear);
   }
-  params.set('token', token);
+  params.set('token', finalToken);
   return `${base}?${params.toString()}`;
 }
 
 /**
- * Resolves a student from a token, student ID, or student name string against logs and rosters
+ * Resolves a student from a token, student ID, or student name string against logs and rosters.
+ * Always returns the canonical student name, year, ID, and class section.
  */
 export function resolveStudentByToken(
   tokenOrName: string,
   logs: ATLTaskLog[],
   sampleStudents: string[] = []
-): { studentName: string; mypYear?: string } | null {
+): { studentName: string; mypYear?: string; studentId?: string; classSection?: string } | null {
   if (!tokenOrName) return null;
-  const clean = tokenOrName.trim().toLowerCase();
 
-  // 1. Direct match on 4-digit Student ID in official roster
-  const idMatch = ALL_STUDENTS_ROSTER.find(
-    (s) => s.id === clean || s.name.toLowerCase() === clean
+  // Check if token directly matches a log
+  const logMatch = logs.find(
+    (l) => (l.evidenceToken && l.evidenceToken.toLowerCase() === tokenOrName.trim().toLowerCase()) ||
+           (l.studentName && l.studentName.toLowerCase().trim() === tokenOrName.trim().toLowerCase())
   );
-  if (idMatch) {
-    return { studentName: idMatch.name, mypYear: idMatch.mypYear };
-  }
+  const seedName = logMatch?.studentName || tokenOrName;
+  const seedYear = logMatch?.mypYear;
 
-  // 2. Direct match on logs evidenceToken or studentName
-  const directLogTokenMatch = logs.find(
-    (l) => (l.evidenceToken && l.evidenceToken.toLowerCase() === clean) ||
-           (l.studentName && l.studentName.toLowerCase().trim() === clean)
-  );
-  if (directLogTokenMatch && directLogTokenMatch.studentName) {
-    return { studentName: directLogTokenMatch.studentName, mypYear: directLogTokenMatch.mypYear };
-  }
-
-  // 3. Check custom student roster in localStorage
-  const customStudents = getCustomStudents();
-  for (const cs of customStudents) {
-    const csToken = getStudentEvidenceToken(cs.name, cs.mypYear).toLowerCase();
-    if (cs.name.toLowerCase() === clean || csToken === clean || cs.studentId === clean || cs.id === clean) {
-      return { studentName: cs.name, mypYear: cs.mypYear };
-    }
-  }
-
-  // 4. Check all distinct student names from logs & official roster
-  const distinctStudentsMap = new Map<string, string>(); // name -> mypYear
-  ALL_STUDENTS_ROSTER.forEach((s) => {
-    distinctStudentsMap.set(s.name, s.mypYear);
-  });
-  logs.forEach((l) => {
-    if (l.studentName && l.studentName.trim()) {
-      const name = l.studentName.trim();
-      if (!distinctStudentsMap.has(name)) {
-        distinctStudentsMap.set(name, l.mypYear || '2');
-      }
-    }
-  });
-
-  for (const [name, year] of distinctStudentsMap.entries()) {
-    const computedToken = getStudentEvidenceToken(name, year).toLowerCase();
-    if (computedToken === clean || name.toLowerCase() === clean) {
-      return { studentName: name, mypYear: year };
-    }
-
-    // Secondary fallback: check slug equality
-    const slug = slugifyStudentName(name);
-    if (clean === slug || clean.startsWith(`${slug}-`)) {
-      return { studentName: name, mypYear: year };
-    }
-  }
-
-  // 5. Fallback: If token format is [slug]-[hash], convert slug back to title case name
-  const parts = clean.split('-');
-  if (parts.length >= 2) {
-    const nameParts = parts.slice(0, -1);
-    const reconstructed = nameParts
-      .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
-      .join(' ');
-    if (reconstructed.trim()) {
-      return { studentName: reconstructed, mypYear: '2' };
-    }
-  }
-
-  // 6. Direct fallback if a clean name was passed
-  if (tokenOrName.trim().length > 1 && !tokenOrName.includes('=')) {
-    return { studentName: tokenOrName.trim(), mypYear: '2' };
+  const canonical = findCanonicalStudent(seedName, seedYear);
+  if (canonical) {
+    return {
+      studentName: canonical.canonicalName,
+      mypYear: canonical.mypYear,
+      studentId: canonical.studentId,
+      classSection: canonical.classSection
+    };
   }
 
   return null;
@@ -422,14 +570,14 @@ export function resolveStudentByToken(
 
 /**
  * Builds the complete Toddle / LMS Student Roster with analytics & portal links.
- * Guarantees zero duplicate entries by ID, name, or evidenceToken.
+ * Guarantees zero duplicate entries by aggregating into the single canonical identity.
  */
 export function buildStudentEvidenceRoster(
   logs: ATLTaskLog[],
-  academicYear: string,
+  academicYear: string = '2025-2026',
   sampleStudents: string[] = []
 ): StudentEvidenceRosterItem[] {
-  // Canonical map: normNameKey -> student data object
+  // Canonical map: canonical studentId -> student data object
   const studentMap = new Map<string, {
     canonicalName: string;
     studentId: string;
@@ -439,100 +587,51 @@ export function buildStudentEvidenceRoster(
     logs: ATLTaskLog[];
   }>();
 
-  // Helper to normalize strings for comparison
-  const normalizeKey = (str: string) => str.trim().toLowerCase().replace(/\s+/g, ' ');
-
-  // Lookup maps for fast alias resolution
-  const nameToKeyMap = new Map<string, string>();
-  const idToKeyMap = new Map<string, string>();
-
   // 1. Populate all predefined official students
   ALL_STUDENTS_ROSTER.forEach((st) => {
-    const key = normalizeKey(st.name);
-    const cleanId = st.id.trim();
-    const cleanYear = (st.mypYear || '2').replace(/\D/g, '') || '2';
-    const classSection = st.classSection || (cleanYear === '2' ? 'MYP 2C' : `MYP ${cleanYear}`);
-    const subject = st.subject || 'Sciences';
-
-    studentMap.set(key, {
-      canonicalName: st.name.trim(),
-      studentId: cleanId,
-      mypYear: cleanYear,
-      classSection,
-      subject,
+    const canon = findCanonicalStudent(st.name, st.mypYear);
+    studentMap.set(canon.studentId, {
+      canonicalName: canon.canonicalName,
+      studentId: canon.studentId,
+      mypYear: canon.mypYear,
+      classSection: canon.classSection,
+      subject: canon.subject,
       logs: []
     });
-
-    nameToKeyMap.set(key, key);
-    idToKeyMap.set(cleanId, key);
   });
 
   // 2. Merge custom students from teacher roster
   const customStudents = getCustomStudents();
   customStudents.forEach((cs) => {
     if (!cs || !cs.name || !cs.name.trim()) return;
-    const cleanName = cs.name.trim();
-    const key = normalizeKey(cleanName);
-    const cleanYear = (cs.mypYear || '2').replace(/\D/g, '') || '2';
-    const customId = cleanTo4DigitId(cs.id || cs.studentId || '', cleanName, cleanYear);
-
-    // Resolve existing key by ID or name
-    let resolvedKey = idToKeyMap.get(customId) || nameToKeyMap.get(key);
-
-    if (resolvedKey && studentMap.has(resolvedKey)) {
-      const existing = studentMap.get(resolvedKey)!;
-      if (cs.subject) existing.subject = cs.subject;
-      if (cs.classSection) existing.classSection = cs.classSection;
-    } else {
-      resolvedKey = key;
-      studentMap.set(key, {
-        canonicalName: cleanName,
-        studentId: customId,
-        mypYear: cleanYear,
-        classSection: cs.classSection || (cleanYear === '2' ? 'MYP 2C' : `MYP ${cleanYear}`),
-        subject: cs.subject || 'Science • Biology',
+    const canon = findCanonicalStudent(cs.name, cs.mypYear);
+    if (!studentMap.has(canon.studentId)) {
+      studentMap.set(canon.studentId, {
+        canonicalName: canon.canonicalName,
+        studentId: canon.studentId,
+        mypYear: canon.mypYear,
+        classSection: cs.classSection || canon.classSection,
+        subject: cs.subject || canon.subject,
         logs: []
       });
-      nameToKeyMap.set(key, key);
-      idToKeyMap.set(customId, key);
     }
   });
 
   // 3. Process logs and attach to the single canonical student
   logs.forEach((log) => {
     if (log.academicYear === academicYear && log.studentName && log.studentName.trim()) {
-      const logName = log.studentName.trim();
-      const key = normalizeKey(logName);
-      const cleanYear = (log.mypYear || '2').replace(/\D/g, '') || '2';
-
-      // Check if matches known student
-      let resolvedKey = nameToKeyMap.get(key);
-
-      // Check if student name contains an ID or matches an official student partially
-      if (!resolvedKey) {
-        for (const [knownKey, targetKey] of nameToKeyMap.entries()) {
-          if (key === knownKey || key.includes(knownKey) || knownKey.includes(key)) {
-            resolvedKey = targetKey;
-            break;
-          }
-        }
-      }
-
-      if (resolvedKey && studentMap.has(resolvedKey)) {
-        studentMap.get(resolvedKey)!.logs.push(log);
+      const canon = findCanonicalStudent(log.studentId || log.studentName, log.mypYear);
+      if (studentMap.has(canon.studentId)) {
+        studentMap.get(canon.studentId)!.logs.push(log);
       } else {
-        // Create new unique record for unmapped student
-        const generatedId = generateStudentUniqueId(logName, cleanYear);
-        studentMap.set(key, {
-          canonicalName: logName,
-          studentId: generatedId,
-          mypYear: cleanYear,
-          classSection: cleanYear === '2' ? 'MYP 2C' : `MYP ${cleanYear}`,
-          subject: log.subject ? log.subject.replace(/ - /g, ' • ') : 'Science • Biology',
+        studentMap.set(canon.studentId, {
+          canonicalName: canon.canonicalName,
+          studentId: canon.studentId,
+          mypYear: canon.mypYear,
+          classSection: log.classSection || canon.classSection,
+          subject: log.subject || canon.subject,
           logs: [log]
         });
-        nameToKeyMap.set(key, key);
-        idToKeyMap.set(generatedId, key);
       }
     }
   });
@@ -600,6 +699,7 @@ export function buildStudentEvidenceRoster(
     roster.push({
       studentId: data.studentId,
       studentName: data.canonicalName,
+      canonicalName: data.canonicalName,
       mypYear: data.mypYear,
       classSection: data.classSection,
       subject: data.subject,
