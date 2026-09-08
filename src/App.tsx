@@ -212,7 +212,7 @@ export default function App() {
       window.removeEventListener('popstate', parseUrlToken);
       window.removeEventListener('hashchange', parseUrlToken);
     };
-  }, [logs]);
+  }, []);
 
   // Open standalone student evidence portal
   const handleOpenStudentEvidencePortal = (name: string, token: string, mypYear?: string) => {

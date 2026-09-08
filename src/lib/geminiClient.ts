@@ -15,7 +15,7 @@ async function fetchGeminiWithRetry(
   userPrompt: string,
   temperature = 0.3
 ): Promise<string> {
-  const models = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+  const models = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-2.5-flash', 'gemini-3.1-flash-lite'];
   let lastErrMessage = '';
 
   for (const model of models) {
@@ -38,21 +38,26 @@ async function fetchGeminiWithRetry(
           const errJson = await res.json().catch(() => ({}));
           const errMsg = errJson?.error?.message || `Gemini API status ${res.status}`;
           lastErrMessage = errMsg;
-          const isTransient =
+          const isDemandSpike =
             res.status === 503 ||
-            res.status === 429 ||
             errMsg.includes('503') ||
             errMsg.includes('high demand') ||
             errMsg.includes('UNAVAILABLE') ||
+            errMsg.includes('overloaded');
+          const isRateLimit =
+            res.status === 429 ||
+            errMsg.includes('429') ||
             errMsg.includes('RESOURCE_EXHAUSTED');
 
-          if (isTransient) {
-            console.warn(`[Client Gemini Retry] Model ${model} attempt ${attempt} failed (${errMsg}). Retrying...`);
+          if (isDemandSpike) {
+            console.warn(`[Client Gemini Fallback] Model ${model} experiencing high demand (503/UNAVAILABLE). Immediately switching to next model...`);
+            break; // Immediately move to next healthy model
+          } else if (isRateLimit) {
+            console.warn(`[Client Gemini Retry] Model ${model} rate limited (attempt ${attempt}). Retrying...`);
             if (attempt < 2) {
               await new Promise((r) => setTimeout(r, 1200));
               continue;
             }
-            console.warn(`[Client Gemini Fallback] Model ${model} exhausted retries, trying fallback model...`);
             break;
           } else {
             throw new Error(errMsg);
@@ -66,13 +71,15 @@ async function fetchGeminiWithRetry(
         }
       } catch (err: any) {
         lastErrMessage = err?.message || String(err);
-        if (
-          attempt < 2 &&
-          (lastErrMessage.includes('503') ||
-            lastErrMessage.includes('UNAVAILABLE') ||
-            lastErrMessage.includes('high demand'))
-        ) {
-          await new Promise((r) => setTimeout(r, 1200));
+        const isDemandSpike =
+          lastErrMessage.includes('503') ||
+          lastErrMessage.includes('UNAVAILABLE') ||
+          lastErrMessage.includes('high demand');
+        if (isDemandSpike) {
+          break; // Switch to next model immediately
+        }
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 1000));
           continue;
         }
       }

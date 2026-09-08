@@ -1,5 +1,4 @@
 import { TaskFeedback, TaskMeta, GeneratedTask, StudentResponseItem, ATLTaskLog } from '../types';
-import html2pdf from 'html2pdf.js';
 
 export interface ReportData {
   studentName: string;
@@ -320,6 +319,8 @@ export async function exportToPdf(data: ReportData): Promise<void> {
   };
 
   try {
+    const html2pdfModule = await import('html2pdf.js');
+    const html2pdf = (html2pdfModule as any).default || html2pdfModule;
     await html2pdf().set(opt).from(element).save();
   } finally {
     document.body.removeChild(element);

@@ -37,6 +37,11 @@ export function setConfiguredBaseUrl(url: string): void {
   }
 }
 
+// In-memory caches to eliminate synchronous disk I/O and redundant computations
+const canonicalStudentMemoryCache = new Map<string, CanonicalStudentInfo>();
+let customStudentsMemoryCache: CustomStudentEntry[] | null = null;
+let inMemoryTokenCache: Record<string, string> | null = null;
+
 export interface CustomStudentEntry {
   id?: string;
   studentId?: string;
@@ -48,9 +53,12 @@ export interface CustomStudentEntry {
 }
 
 /**
- * Gets custom students saved by teacher in localStorage
+ * Gets custom students saved by teacher in localStorage (cached in memory)
  */
 export function getCustomStudents(): CustomStudentEntry[] {
+  if (customStudentsMemoryCache !== null) {
+    return customStudentsMemoryCache;
+  }
   try {
     const stored = localStorage.getItem(CUSTOM_ROSTER_KEY);
     if (stored) {
@@ -91,12 +99,14 @@ export function getCustomStudents(): CustomStudentEntry[] {
           }
         });
 
+        customStudentsMemoryCache = result;
         return result;
       }
     }
   } catch (e) {
     console.error('Failed to read custom student roster from localStorage:', e);
   }
+  customStudentsMemoryCache = [];
   return [];
 }
 
@@ -176,6 +186,8 @@ export function saveCustomStudent(
 
   try {
     localStorage.setItem(CUSTOM_ROSTER_KEY, JSON.stringify(custom));
+    customStudentsMemoryCache = custom;
+    canonicalStudentMemoryCache.clear();
   } catch (e) {
     console.error('Failed to save custom student to localStorage:', e);
   }
@@ -218,6 +230,8 @@ export function deleteCustomStudent(name: string): void {
   const custom = getCustomStudents().filter((s) => s.name.toLowerCase() !== cleanName);
   try {
     localStorage.setItem(CUSTOM_ROSTER_KEY, JSON.stringify(custom));
+    customStudentsMemoryCache = custom;
+    canonicalStudentMemoryCache.clear();
   } catch (e) {
     console.error('Failed to delete custom student from localStorage:', e);
   }
@@ -251,27 +265,37 @@ function simpleHash(str: string): string {
 }
 
 /**
- * Gets cached custom tokens mapped from localStorage
+ * Gets cached custom tokens mapped from localStorage (memoized in memory)
  */
 function getCachedTokens(): Record<string, string> {
+  if (inMemoryTokenCache !== null) {
+    return inMemoryTokenCache;
+  }
   try {
     const stored = localStorage.getItem(TOKEN_CACHE_KEY);
     if (stored) {
-      return JSON.parse(stored);
+      inMemoryTokenCache = JSON.parse(stored);
+      return inMemoryTokenCache!;
     }
   } catch (e) {
     console.error('Failed to read evidence tokens from localStorage:', e);
   }
-  return {};
+  inMemoryTokenCache = {};
+  return inMemoryTokenCache;
 }
 
 /**
- * Stores a custom token for a student
+ * Stores a custom token for a student safely
  */
 export function setCachedToken(studentName: string, token: string): void {
+  const cleanName = studentName.trim().toLowerCase();
+  const cleanToken = token.trim();
+  const cached = getCachedTokens();
+  if (cached[cleanName] === cleanToken) return;
+
+  cached[cleanName] = cleanToken;
+  inMemoryTokenCache = cached;
   try {
-    const cached = getCachedTokens();
-    cached[studentName.trim().toLowerCase()] = token.trim();
     localStorage.setItem(TOKEN_CACHE_KEY, JSON.stringify(cached));
   } catch (e) {
     console.error('Failed to save evidence token to localStorage:', e);
@@ -305,6 +329,7 @@ export function computeCanonicalToken(canonicalName: string, studentId: string, 
  * Finds or constructs the single canonical identity for any student reference.
  * Resolves short names ("Aarya"), full names ("AARYA SUDHIR BHOSLE"), IDs ("8547"),
  * and tokens ("aarya-sudhir-bhosle-...", "aarya-...") to the exact same canonical profile.
+ * Optimized with high-speed in-memory indexing to prevent main-thread freezing.
  */
 export function findCanonicalStudent(
   identifier: string,
@@ -313,8 +338,13 @@ export function findCanonicalStudent(
   const clean = (identifier || '').trim();
   const lower = clean.toLowerCase();
   const cleanYear = hintMypYear ? hintMypYear.replace(/\D/g, '') : '';
+  const cacheKey = `${lower}__${cleanYear}`;
 
-  // Helper to build a complete CanonicalStudentInfo object
+  if (canonicalStudentMemoryCache.has(cacheKey)) {
+    return canonicalStudentMemoryCache.get(cacheKey)!;
+  }
+
+  // Helper to build a complete CanonicalStudentInfo object and index it in memory
   const buildCanonical = (
     name: string,
     id: string,
@@ -339,12 +369,7 @@ export function findCanonicalStudent(
       ...extraAliases.map((a) => a.toLowerCase().trim())
     ])).filter(Boolean);
 
-    // Cache token for canonical name and all aliases
-    aliases.forEach((alias) => {
-      setCachedToken(alias, canonicalToken);
-    });
-
-    return {
+    const info: CanonicalStudentInfo = {
       canonicalName,
       studentId,
       mypYear,
@@ -353,6 +378,21 @@ export function findCanonicalStudent(
       canonicalToken,
       aliases
     };
+
+    // Index all keys in memory (0ms cost, eliminates thousands of blocking localStorage writes)
+    canonicalStudentMemoryCache.set(cacheKey, info);
+    canonicalStudentMemoryCache.set(`${canonicalName.toLowerCase()}__${mypYear}`, info);
+    canonicalStudentMemoryCache.set(`${canonicalName.toLowerCase()}__`, info);
+    canonicalStudentMemoryCache.set(`${studentId}__${mypYear}`, info);
+    canonicalStudentMemoryCache.set(`${studentId}__`, info);
+    canonicalStudentMemoryCache.set(`${canonicalToken.toLowerCase()}__${mypYear}`, info);
+    canonicalStudentMemoryCache.set(`${canonicalToken.toLowerCase()}__`, info);
+    aliases.forEach((a) => {
+      canonicalStudentMemoryCache.set(`${a}__${mypYear}`, info);
+      canonicalStudentMemoryCache.set(`${a}__`, info);
+    });
+
+    return info;
   };
 
   // If empty or default generic, return student fallback

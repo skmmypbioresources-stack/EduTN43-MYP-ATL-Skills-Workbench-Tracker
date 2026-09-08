@@ -16,23 +16,6 @@
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
-    <script>
-      // Cleanly unregister any legacy service workers and clear cache to prevent iframe crashes
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.getRegistrations().then(function(registrations) {
-          for (var i = 0; i < registrations.length; i++) {
-            registrations[i].unregister();
-          }
-        }).catch(function() {});
-        if ('caches' in window) {
-          caches.keys().then(function(names) {
-            for (var j = 0; j < names.length; j++) {
-              caches.delete(names[j]);
-            }
-          }).catch(function() {});
-        }
-      }
-    </script>
   </body>
 </html>
 

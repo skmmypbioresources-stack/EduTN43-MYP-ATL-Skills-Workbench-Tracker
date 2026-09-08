@@ -42,7 +42,7 @@ async function generateContentWithRetry(
   },
   maxRetriesPerModel = 2
 ) {
-  const models = ['gemini-3.6-flash', 'gemini-2.5-flash', 'gemini-1.5-flash'];
+  const models = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-2.5-flash', 'gemini-3.1-flash-lite'];
   let lastErr: any = null;
 
   for (const modelName of models) {
@@ -63,22 +63,26 @@ async function generateContentWithRetry(
         lastErr = err;
         const msg = String(err?.message || err);
         const code = err?.status || err?.code;
-        const isTransient =
+        const isDemandSpike =
           code === 503 ||
-          code === 429 ||
           msg.includes('503') ||
           msg.includes('high demand') ||
           msg.includes('UNAVAILABLE') ||
-          msg.includes('RESOURCE_EXHAUSTED') ||
           msg.includes('overloaded');
+        const isRateLimit =
+          code === 429 ||
+          msg.includes('429') ||
+          msg.includes('RESOURCE_EXHAUSTED');
 
-        if (isTransient) {
-          console.warn(`[Gemini Retry] Model ${modelName} attempt ${attempt} failed (${msg}). Retrying...`);
+        if (isDemandSpike) {
+          console.warn(`[Gemini Fallback] Model ${modelName} experiencing high demand (503/UNAVAILABLE). Immediately switching to next model...`);
+          break; // Switch to the next model immediately instead of retrying the overloaded one
+        } else if (isRateLimit) {
+          console.warn(`[Gemini Retry] Model ${modelName} rate limited (attempt ${attempt}). Backing off...`);
           if (attempt < maxRetriesPerModel) {
             await new Promise((resolve) => setTimeout(resolve, attempt * 1200));
             continue;
           }
-          console.warn(`[Gemini Fallback] Model ${modelName} exhausted retries, trying next model...`);
           break;
         } else {
           throw err;
