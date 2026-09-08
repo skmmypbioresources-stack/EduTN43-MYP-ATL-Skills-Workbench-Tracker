@@ -1,12 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Header } from './components/Header';
-import { SetupStep } from './components/SetupStep';
-import { TaskStep } from './components/TaskStep';
-import { FeedbackStep } from './components/FeedbackStep';
 import { DashboardView } from './components/DashboardView';
 import { StudentEvidenceView } from './components/StudentEvidenceView';
 import { ToddleLinkManagerModal } from './components/ToddleLinkManagerModal';
-import { TaskMeta, GeneratedTask, StudentResponseItem, TaskFeedback, ATLTaskLog, AssignedTask, ATLCategoryKey } from './types';
+import { TaskMeta, ATLTaskLog, AssignedTask, ATLCategoryKey } from './types';
 import {
   subscribeToTaskLogs,
   saveTaskLogToFirestore,
@@ -16,9 +13,9 @@ import {
   saveAssignedTaskToFirestore,
   deleteAssignedTaskFromFirestore
 } from './lib/firebase';
-import { generateTaskClient, evaluateTaskClient } from './lib/geminiClient';
+import { generateTaskClient } from './lib/geminiClient';
 import { resolveFormativeScore } from './lib/scoreUtils';
-import { resolveStudentByToken, getStudentEvidenceToken, findCanonicalStudent, buildStudentEvidenceRoster } from './lib/evidenceUtils';
+import { getStudentEvidenceToken, findCanonicalStudent, buildStudentEvidenceRoster } from './lib/evidenceUtils';
 import { SAMPLE_LOGS, SAMPLE_ASSIGNED_TASKS } from './data/atlData';
 
 function extractStudentPortalInfoFromUrl() {
@@ -67,11 +64,10 @@ function extractStudentPortalInfoFromUrl() {
 export default function App() {
   const initialPortalState = useMemo(() => extractStudentPortalInfoFromUrl(), []);
 
-  // Navigation & Tabs: 'student' (Student Tasks Portal), 'workbench' (Teacher Studio), 'dashboard' (Year Analytics)
-  const [activeTab, setActiveTab] = useState<'student' | 'workbench' | 'dashboard'>(() => {
+  // Navigation & Tabs: 'student' (Student Tasks Portal), 'dashboard' (Teacher Dashboard & Analytics)
+  const [activeTab, setActiveTab] = useState<'student' | 'dashboard'>(() => {
     return initialPortalState.isStudentMode ? 'student' : 'student';
   });
-  const [step, setStep] = useState<1 | 2 | 3>(1);
 
   // Standalone Evidence Portal Mode State (for direct Toddle / LMS links with clean isolated UI)
   const [isEvidenceMode, setIsEvidenceMode] = useState<boolean>(() => initialPortalState.isStudentMode);
@@ -84,19 +80,6 @@ export default function App() {
 
   // Global Academic Year State
   const [academicYear, setAcademicYear] = useState<string>('2025-2026');
-
-  // Task Configuration Form State
-  const [meta, setMeta] = useState<TaskMeta>({
-    subject: '',
-    topic: '',
-    year: '3',
-    category: 'Communication',
-    cluster: 'Communication',
-    iduSubject: null,
-  });
-
-  const [studentName, setStudentName] = useState<string>('');
-  const [term, setTerm] = useState<string>('Term 1');
 
   // Custom Student / Teacher Gemini API Key State
   const [customApiKey, setCustomApiKey] = useState<string>(() => {
@@ -120,17 +103,6 @@ export default function App() {
       console.error('Failed to update user_gemini_api_key in localStorage:', e);
     }
   };
-
-  // Task & Feedback State
-  const [task, setTask] = useState<GeneratedTask | null>(null);
-  const [responses, setResponses] = useState<Record<number, string>>({});
-  const [feedback, setFeedback] = useState<TaskFeedback | null>(null);
-  const [currentLogId, setCurrentLogId] = useState<string | null>(null);
-
-  // Loading & Error States
-  const [isGenerating, setIsGenerating] = useState(false);
-  const [isEvaluating, setIsEvaluating] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Task Logs Database State (Firestore with local fallback)
   const [logs, setLogs] = useState<ATLTaskLog[]>(() => {
@@ -290,39 +262,6 @@ export default function App() {
     }
   };
 
-  // Handle Launching a Teacher Assigned Task
-  const handleSelectAssignedTask = (assignedTask: AssignedTask) => {
-    setErrorMessage(null);
-    if (!studentName.trim()) {
-      setErrorMessage('Please enter your Student or Class Name above before starting the assigned task.');
-      return;
-    }
-
-    const exactTitle = assignedTask.title || assignedTask.task?.title || assignedTask.topic;
-
-    setMeta({
-      title: exactTitle,
-      taskTitle: exactTitle,
-      subject: assignedTask.subject,
-      topic: assignedTask.topic,
-      year: assignedTask.mypYear,
-      category: assignedTask.category,
-      cluster: assignedTask.cluster,
-      iduSubject: null,
-      criteria: assignedTask.criteria || assignedTask.task?.target_criteria,
-      strands: assignedTask.strands || assignedTask.task?.target_strands,
-      assignedTaskId: assignedTask.id,
-      dueDate: assignedTask.dueDate,
-      assignedTeacherName: assignedTask.teacherName,
-    });
-    setTask({
-      ...assignedTask.task,
-      title: exactTitle,
-    });
-    setResponses({});
-    setStep(2);
-  };
-
   // Handle Teacher Creating & Publishing an Assigned Task
   const handleCreateAssignedTask = async (taskData: {
     teacherName: string;
@@ -372,7 +311,7 @@ export default function App() {
       teacherName: taskData.teacherName || 'Teacher',
       createdAt: new Date().toISOString(),
       academicYear,
-      term,
+      term: 'Term 1',
       active: true,
       criteria: taskData.criteria || generatedTask.target_criteria,
       strands: taskData.strands || generatedTask.target_strands,
@@ -386,142 +325,6 @@ export default function App() {
   // Handle Deleting an Assigned Task
   const handleDeleteAssignedTask = async (taskId: string) => {
     await deleteAssignedTaskFromFirestore(taskId);
-  };
-
-  // Handle Task Generation
-  const handleGenerateTask = async (autoCluster: boolean) => {
-    setErrorMessage(null);
-
-    if (!studentName.trim()) {
-      setErrorMessage('Please enter a student or class name so progress can be logged against your details.');
-      return;
-    }
-    if (!meta.subject) {
-      setErrorMessage('Please select a subject group.');
-      return;
-    }
-    if (!meta.topic.trim()) {
-      setErrorMessage('Please type a curriculum topic.');
-      return;
-    }
-
-    const exactTitle = meta.taskTitle?.trim() || meta.title?.trim() || meta.topic.trim();
-    const updatedMeta: TaskMeta = {
-      ...meta,
-      title: exactTitle,
-      taskTitle: exactTitle,
-      assignedTaskId: undefined,
-      dueDate: undefined,
-      assignedTeacherName: undefined,
-    };
-
-    // Reset any assigned task properties for a fresh custom task
-    setMeta(updatedMeta);
-
-    setIsGenerating(true);
-
-    try {
-      const generatedTask = await generateTaskClient(updatedMeta, autoCluster, customApiKey);
-      generatedTask.title = exactTitle;
-      setTask(generatedTask);
-      setResponses({});
-      setStep(2);
-    } catch (err: any) {
-      console.error('Error generating task:', err);
-      setErrorMessage(err?.message || 'Failed to generate task.');
-    } finally {
-      setIsGenerating(false);
-    }
-  };
-
-  // Handle Student Task Submission & AI Evaluation
-  const handleSubmitTask = async (formattedResponses: StudentResponseItem[]) => {
-    setErrorMessage(null);
-
-    const hasAnyResponse = formattedResponses.some((r) => r.response.trim().length > 0);
-    if (!hasAnyResponse) {
-      setErrorMessage('Please type a response to at least one part before submitting for feedback.');
-      return;
-    }
-
-    if (!task) return;
-
-    setIsEvaluating(true);
-
-    try {
-      const fbData = await evaluateTaskClient(task, meta, formattedResponses, customApiKey);
-      const computedScore = typeof fbData.formativeScore === 'number'
-        ? fbData.formativeScore
-        : resolveFormativeScore({ ...fbData, responses: formattedResponses });
-
-      fbData.formativeScore = computedScore;
-      setFeedback(fbData);
-
-      // Calculate Submission Timing Status
-      let submissionStatus: 'on_time' | 'overdue' | 'not_applicable' = 'not_applicable';
-      let daysOverdue = 0;
-
-      if (meta.dueDate) {
-        const todayStr = new Date().toISOString().split('T')[0];
-        if (todayStr <= meta.dueDate) {
-          submissionStatus = 'on_time';
-        } else {
-          submissionStatus = 'overdue';
-          const submissionDate = new Date();
-          const dueDateTime = new Date(meta.dueDate);
-          dueDateTime.setHours(23, 59, 59, 999);
-          const diffMs = Math.max(0, submissionDate.getTime() - dueDateTime.getTime());
-          daysOverdue = Math.max(1, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
-        }
-      }
-
-      // Auto Log to Academic Year Tracker & Firestore Cloud Database
-      const newLogId = 'log-' + Date.now();
-      setCurrentLogId(newLogId);
-
-      const exactTitle = meta.taskTitle || meta.title || task.title || meta.topic;
-      const canonical = findCanonicalStudent(studentName.trim() || 'Anonymous', meta.year);
-
-      const newLog: ATLTaskLog = {
-        id: newLogId,
-        date: new Date().toISOString().split('T')[0],
-        academicYear,
-        term,
-        studentName: canonical.canonicalName,
-        studentId: canonical.studentId,
-        evidenceToken: canonical.canonicalToken,
-        classSection: canonical.classSection,
-        subject: meta.subject,
-        topic: meta.topic,
-        mypYear: canonical.mypYear,
-        category: meta.category,
-        cluster: task.chosen_cluster || meta.cluster,
-        level: fbData.level,
-        formativeScore: computedScore,
-        taskTitle: exactTitle,
-        skillIndicators: task.skill_indicators,
-        responses: formattedResponses,
-        feedback: fbData,
-        criteria: meta.criteria || task.target_criteria,
-        strands: meta.strands || task.target_strands,
-        assignedTaskId: meta.assignedTaskId,
-        dueDate: meta.dueDate,
-        submissionStatus,
-        daysOverdue: daysOverdue > 0 ? daysOverdue : undefined,
-      };
-
-      setLogs((prev) => [newLog, ...prev]);
-      saveTaskLogToFirestore(newLog).catch((e) => {
-        console.error('Failed to sync new log to Firestore:', e);
-      });
-
-      setStep(3);
-    } catch (err: any) {
-      console.error('Error evaluating task:', err);
-      setErrorMessage(err?.message || 'Failed to evaluate task.');
-    } finally {
-      setIsEvaluating(false);
-    }
   };
 
   // Handle Saving Student Post-Task Reflection
@@ -629,110 +432,19 @@ export default function App() {
           <main className="mx-auto max-w-7xl px-4 py-8 sm:px-8">
             {activeTab === 'student' && (
               <StudentEvidenceView
-                studentName={evidenceStudentName || studentName || 'Student'}
-                mypYear={evidenceMypYear || meta.year || '3'}
-                evidenceToken={evidenceToken || getStudentEvidenceToken(evidenceStudentName || studentName || 'Student', evidenceMypYear || meta.year || '3')}
+                studentName={evidenceStudentName || 'Student'}
+                mypYear={evidenceMypYear || '3'}
+                evidenceToken={evidenceToken || getStudentEvidenceToken(evidenceStudentName || 'Student', evidenceMypYear || '3')}
                 logs={logs}
                 academicYear={academicYear}
                 assignedTasks={assignedTasks}
-                onBackToWorkbench={() => setActiveTab('workbench')}
+                onBackToWorkbench={() => setActiveTab('dashboard')}
                 availableStudents={availableStudentNames}
                 onSelectStudent={handleSelectStudentInEvidencePortal}
                 onSaveTaskLog={handleSaveDirectTaskLog}
                 onSaveReflection={handleSaveReflection}
                 customApiKey={customApiKey}
               />
-            )}
-
-            {activeTab === 'workbench' && (
-              <div>
-                {/* Step Indicators */}
-                <div className="mx-auto mb-8 flex max-w-xl items-center justify-between gap-3 print:hidden">
-                  <div className="flex-1">
-                    <div
-                      className={`h-2 rounded-full transition-all ${
-                        step >= 1 ? 'bg-indigo-600 shadow-xs' : 'bg-slate-200'
-                      }`}
-                    />
-                    <span className={`mt-1.5 block text-center text-[10px] font-bold uppercase tracking-wider ${
-                      step === 1 ? 'text-indigo-600' : 'text-slate-400'
-                    }`}>1. Task Config</span>
-                  </div>
-                  <div className="flex-1">
-                    <div
-                      className={`h-2 rounded-full transition-all ${
-                        step >= 2 ? 'bg-indigo-600 shadow-xs' : 'bg-slate-200'
-                      }`}
-                    />
-                    <span className={`mt-1.5 block text-center text-[10px] font-bold uppercase tracking-wider ${
-                      step === 2 ? 'text-indigo-600' : 'text-slate-400'
-                    }`}>2. Student Work</span>
-                  </div>
-                  <div className="flex-1">
-                    <div
-                      className={`h-2 rounded-full transition-all ${
-                        step >= 3 ? 'bg-emerald-600 shadow-xs' : 'bg-slate-200'
-                      }`}
-                    />
-                    <span className={`mt-1.5 block text-center text-[10px] font-bold uppercase tracking-wider ${
-                      step === 3 ? 'text-emerald-600' : 'text-slate-400'
-                    }`}>3. Evaluation</span>
-                  </div>
-                </div>
-
-                {/* Workbench Views */}
-                <div className="mx-auto max-w-4xl">
-                  {step === 1 && (
-                    <SetupStep
-                      meta={meta}
-                      setMeta={setMeta}
-                      studentName={studentName}
-                      setStudentName={setStudentName}
-                      term={term}
-                      setTerm={setTerm}
-                      onGenerate={handleGenerateTask}
-                      isLoading={isGenerating}
-                      errorMessage={errorMessage}
-                      assignedTasks={assignedTasks}
-                      onSelectAssignedTask={handleSelectAssignedTask}
-                      onDeleteAssignedTask={handleDeleteAssignedTask}
-                    />
-                  )}
-
-                  {step === 2 && task && (
-                    <TaskStep
-                      task={task}
-                      meta={meta}
-                      studentName={studentName}
-                      responses={responses}
-                      setResponses={setResponses}
-                      onBack={() => setStep(1)}
-                      onSubmit={handleSubmitTask}
-                      isLoading={isEvaluating}
-                      errorMessage={errorMessage}
-                    />
-                  )}
-
-                  {step === 3 && feedback && task && (
-                    <FeedbackStep
-                      feedback={feedback}
-                      task={task}
-                      meta={meta}
-                      studentName={studentName}
-                      responses={Object.entries(responses).map(([idx, resp]) => ({
-                        label: task.parts[Number(idx)]?.label || String.fromCharCode(65 + Number(idx)),
-                        prompt: task.parts[Number(idx)]?.prompt || '',
-                        response: resp,
-                      }))}
-                      onNewTask={() => setStep(1)}
-                      onGoToDashboard={() => setActiveTab('dashboard')}
-                      currentLogId={currentLogId}
-                      logs={logs}
-                      onSaveReflection={handleSaveReflection}
-                    />
-                  )}
-                </div>
-              </div>
             )}
 
             {activeTab === 'dashboard' && (

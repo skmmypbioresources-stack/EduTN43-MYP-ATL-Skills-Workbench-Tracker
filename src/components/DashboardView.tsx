@@ -901,7 +901,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           {assignedTasks.length === 0 ? (
             <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 p-4 text-center">
               <p className="text-xs font-medium text-slate-500">
-                No common tasks published yet. Click <strong className="text-indigo-600 font-bold">"Assign New Task"</strong> to create a shared task that appears on every student's workbench.
+                No common tasks published yet. Click <strong className="text-indigo-600 font-bold">"Assign New Task"</strong> to create a shared task that appears on every student's portal.
               </p>
             </div>
           ) : organizedDashboardTasks.totalMatching === 0 ? (
@@ -2249,7 +2249,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </div>
                 <div>
                   <h3 className="text-sm sm:text-base font-bold text-slate-900 leading-tight">Create & Assign Common Task</h3>
-                  <p className="text-[11px] text-slate-500 hidden sm:block">Generates a shared task that appears on every student's workbench</p>
+                  <p className="text-[11px] text-slate-500 hidden sm:block">Generates a shared task that appears on every student's portal</p>
                 </div>
               </div>
               
@@ -2289,7 +2289,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     <Check className="h-10 w-10 text-emerald-600" />
                     <span className="text-sm sm:text-base font-black">{publishSuccess}</span>
                     <p className="text-xs font-normal text-emerald-700 mt-1 max-w-md">
-                      Students will now see this task organized under your teacher name and class on their workbench.
+                      Students will now see this task organized under your teacher name and class on their portal.
                     </p>
                     <button
                       type="button"

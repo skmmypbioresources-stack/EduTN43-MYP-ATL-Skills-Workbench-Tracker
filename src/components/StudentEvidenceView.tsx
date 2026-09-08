@@ -75,7 +75,7 @@ interface StudentEvidenceViewProps {
   logs: ATLTaskLog[];
   academicYear: string;
   assignedTasks?: AssignedTask[];
-  onBackToWorkbench: () => void;
+  onBackToWorkbench?: () => void;
   availableStudents?: string[];
   onSelectStudent?: (name: string) => void;
   onSaveTaskLog?: (newLog: ATLTaskLog) => Promise<void>;
@@ -1212,7 +1212,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                   </div>
 
                   <div className="h-64 w-full">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height={256} minWidth={100} minHeight={256}>
                       <BarChart data={categoryChartData} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                         <XAxis
@@ -1259,11 +1259,11 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                   </div>
 
                   <div className="h-64 w-full">
-                    <ResponsiveContainer width="100%" height="100%">
+                    <ResponsiveContainer width="100%" height={256} minWidth={100} minHeight={256}>
                       <RadarChart data={radarChartData} margin={{ top: 10, right: 20, left: 20, bottom: 10 }}>
                         <PolarGrid stroke="#e2e8f0" />
                         <PolarAngleAxis dataKey="category" tick={{ fill: '#475569', fontSize: 10, fontWeight: 600 }} />
-                        <PolarRadiusAxis angle={30} domain={[0, 8]} ticks={[2, 4, 6, 8]} tick={{ fill: '#94a3b8', fontSize: 9 }} />
+                        <PolarRadiusAxis domain={[0, 8]} tick={{ fill: '#94a3b8', fontSize: 9 }} />
                         <Radar name="Formative Attainment" dataKey="score" stroke="#4f46e5" fill="#6366f1" fillOpacity={0.35} />
                         <Tooltip
                           content={({ active, payload }) => {
@@ -1311,7 +1311,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                 ) : (
                   <div className="space-y-3">
                     <div className="h-64 w-full">
-                      <ResponsiveContainer width="100%" height="100%">
+                      <ResponsiveContainer width="100%" height={256} minWidth={100} minHeight={256}>
                         <LineChart data={scoreProgressionData} margin={{ top: 15, right: 20, left: -10, bottom: 10 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                           <XAxis dataKey="taskNumber" tick={{ fill: '#64748b', fontSize: 11, fontWeight: 600 }} />

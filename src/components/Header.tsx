@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, BarChart3, Download, Laptop, Monitor, Apple, CheckCircle2, X, Key, Eye, EyeOff, ExternalLink, ShieldCheck, GraduationCap, Lock, Share2 } from 'lucide-react';
+import { BarChart3, Download, Laptop, Monitor, Apple, CheckCircle2, X, Key, Eye, EyeOff, ExternalLink, ShieldCheck, GraduationCap, Lock, Share2 } from 'lucide-react';
 
 interface HeaderProps {
-  activeTab: 'student' | 'workbench' | 'dashboard';
-  setActiveTab: (tab: 'student' | 'workbench' | 'dashboard') => void;
+  activeTab: 'student' | 'dashboard';
+  setActiveTab: (tab: 'student' | 'dashboard') => void;
   academicYear: string;
   setAcademicYear: (year: string) => void;
   totalLogsCount: number;
@@ -206,19 +206,6 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
 
               <button
-                id="tab-workbench"
-                onClick={() => setActiveTab('workbench')}
-                className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold tracking-wide transition-all ${
-                  activeTab === 'workbench'
-                    ? 'bg-indigo-600 text-white shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
-                }`}
-              >
-                <Sparkles className="h-4 w-4 text-indigo-300" />
-                <span>Teacher Studio</span>
-              </button>
-
-              <button
                 id="tab-dashboard"
                 onClick={() => setActiveTab('dashboard')}
                 className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-bold tracking-wide transition-all ${
@@ -228,7 +215,7 @@ export const Header: React.FC<HeaderProps> = ({
                 }`}
               >
                 <BarChart3 className="h-4 w-4 text-indigo-300" />
-                <span>Year Analytics</span>
+                <span>Teacher Dashboard & Analytics</span>
                 {!isAnalyticsUnlocked && (
                   <span title="Protected by Teacher Password" className="flex items-center">
                     <Lock className={`h-3 w-3 shrink-0 ${activeTab === 'dashboard' ? 'text-amber-300' : 'text-amber-500'}`} />
