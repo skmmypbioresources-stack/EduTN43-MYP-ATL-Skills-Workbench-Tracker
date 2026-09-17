@@ -114,6 +114,7 @@ export async function generateTaskClient(
           iduSubject: meta.iduSubject,
           criteria: meta.criteria,
           strands: meta.strands,
+          customInstructions: meta.customInstructions,
         }),
       });
 
@@ -200,6 +201,7 @@ ADDITIONAL MANDATES:
 1. AUTHENTIC GLOBAL CONTEXT: Embed a relevant global context (e.g. Globalisation & sustainability, Scientific & technical innovation, Fairness & development, Food security & biodiversity) that meaningfully influences the scenario.
 2. DIFFICULTY SCALING: Adapt cognitive demand for MYP Year ${meta.year || '4'}.
 3. EXACT TASK TITLE: The task title is strictly: "${exactTitle}". Do NOT modify or replace it.
+${meta.customInstructions ? `4. DIFFERENTIATION: Strictly tailor to the teacher's instructions: "${meta.customInstructions}".` : ''}
 
 Return strictly valid JSON with this structure (no markdown fences, no text outside JSON):
 {
@@ -291,6 +293,104 @@ Return strictly valid JSON with this structure (no markdown fences, no text outs
     fallback.target_strands = meta.strands;
   }
   return fallback;
+}
+
+export async function refineTaskClient(
+  currentTask: GeneratedTask,
+  instruction: string,
+  meta: TaskMeta,
+  partIndex?: number,
+  apiKey?: string
+): Promise<GeneratedTask> {
+  const trimmedKey = apiKey?.trim();
+
+  // 1. Try Backend API first
+  try {
+    const response = await fetch('/api/refine-task', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(trimmedKey ? { 'x-gemini-api-key': trimmedKey } : {}),
+      },
+      body: JSON.stringify({
+        currentTask,
+        instruction,
+        partIndex,
+        meta,
+        apiKey: trimmedKey,
+      }),
+    });
+
+    if (response.ok) {
+      const result = await response.json();
+      return result;
+    }
+  } catch (e) {
+    console.warn('Backend /api/refine-task unavailable or returned error, attempting client fallback.');
+  }
+
+  // 2. Direct client fallback if API key present
+  if (trimmedKey) {
+    try {
+      if (typeof partIndex === 'number' && partIndex >= 0 && currentTask.parts && currentTask.parts[partIndex]) {
+        const targetPart = currentTask.parts[partIndex];
+        const prompt = `
+You are an expert IB MYP Sciences Curriculum Specialist.
+Refine Question Part ${partIndex + 1} (${targetPart.label}) of the following task according to the teacher's instruction:
+"${instruction}"
+
+OVERALL CONTEXT:
+Task Title: "${currentTask.title}"
+Context: ${currentTask.context}
+
+CURRENT QUESTION PART:
+Label: ${targetPart.label}
+Prompt: ${targetPart.prompt}
+Placeholder: ${targetPart.placeholder || ''}
+
+Return ONLY valid JSON matching:
+{
+  "label": "${targetPart.label}",
+  "prompt": "Refined question prompt...",
+  "placeholder": "Refined placeholder..."
+}
+`;
+        const resText = await fetchGeminiWithRetry(trimmedKey, 'Output only valid JSON without markdown fences.', prompt, 0.3);
+        const updatedPart = JSON.parse(resText || '{}');
+        const updatedParts = [...currentTask.parts];
+        updatedParts[partIndex] = {
+          label: updatedPart.label || targetPart.label,
+          prompt: updatedPart.prompt || targetPart.prompt,
+          placeholder: updatedPart.placeholder || targetPart.placeholder,
+        };
+        return {
+          ...currentTask,
+          parts: updatedParts,
+        };
+      } else {
+        // Full task refinement
+        const prompt = `
+You are an expert IB MYP Sciences Curriculum Specialist.
+The teacher has requested this revision for the entire task:
+"${instruction}"
+
+CURRENT TASK STRUCTURE:
+${JSON.stringify(currentTask, null, 2)}
+
+Return the full updated task as strictly valid JSON matching the original schema.
+`;
+        const resText = await fetchGeminiWithRetry(trimmedKey, 'Output only valid JSON without markdown fences.', prompt, 0.3);
+        const updatedTask = JSON.parse(resText || '{}');
+        if (updatedTask && updatedTask.title && updatedTask.parts) {
+          return updatedTask;
+        }
+      }
+    } catch (err) {
+      console.warn('Direct client refine failed:', err);
+    }
+  }
+
+  return currentTask;
 }
 
 export async function evaluateTaskClient(

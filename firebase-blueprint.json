@@ -27,6 +27,11 @@
         "dueDate": { "type": "string" },
         "submissionStatus": { "type": "string" },
         "daysOverdue": { "type": "number" },
+        "originalTask": { "type": "object" },
+        "stimulusImages": { "type": "array" },
+        "studentAttachments": { "type": "array" },
+        "teacherEvaluation": { "type": "object" },
+        "badgeAwarded": { "type": "object" },
         "createdAt": { "type": "string" }
       },
       "required": ["id", "date", "studentName", "subject", "cluster", "level"]
@@ -52,7 +57,9 @@
         "criteria": { "type": "array" },
         "strands": { "type": "array" },
         "dueDate": { "type": "string" },
-        "dueDaysPeriod": { "type": "number" }
+        "dueDaysPeriod": { "type": "number" },
+        "stimulusImages": { "type": "array" },
+        "sourceType": { "type": "string" }
       },
       "required": ["id", "title", "subject", "topic", "task", "createdAt"]
     }

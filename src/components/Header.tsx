@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart3, Download, Laptop, Monitor, Apple, CheckCircle2, X, Key, Eye, EyeOff, ExternalLink, ShieldCheck, GraduationCap, Lock, Share2 } from 'lucide-react';
+import { AVAILABLE_ACADEMIC_YEARS } from '../types';
 
 interface HeaderProps {
   activeTab: 'student' | 'dashboard';
@@ -163,10 +164,13 @@ export const Header: React.FC<HeaderProps> = ({
                   id="academic-year-select"
                   value={academicYear}
                   onChange={(e) => setAcademicYear(e.target.value)}
-                  className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-700 shadow-xs focus:border-indigo-600 focus:outline-none"
+                  className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-bold text-slate-700 shadow-xs focus:border-indigo-600 focus:outline-none cursor-pointer"
                 >
-                  <option value="2025-2026">2025–2026</option>
-                  <option value="2026-2027">2026–2027</option>
+                  {AVAILABLE_ACADEMIC_YEARS.map((year) => (
+                    <option key={year} value={year}>
+                      {year.replace('-', '–')}{year === '2026-2027' ? ' (Current)' : ''}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>

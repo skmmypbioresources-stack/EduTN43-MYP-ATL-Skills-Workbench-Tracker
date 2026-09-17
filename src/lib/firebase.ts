@@ -14,9 +14,10 @@ import {
   orderBy
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
-import { ATLTaskLog, AssignedTask } from '../types';
+import { ATLTaskLog, AssignedTask, DEFAULT_ACADEMIC_YEAR } from '../types';
 import { resolveFormativeScore } from './scoreUtils';
 import { getStudentEvidenceToken } from './evidenceUtils';
+import { sanitizeAssignedTaskPayload, sanitizeTaskLogPayload } from '../utils/imageOptimizer';
 
 // Initialize Firebase App safely (singleton)
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
@@ -73,7 +74,7 @@ export function subscribeToTaskLogs(
             id: docSnap.id,
             ...data,
             date: data.date || new Date().toISOString().split('T')[0],
-            academicYear: data.academicYear || '2025-2026',
+            academicYear: data.academicYear || DEFAULT_ACADEMIC_YEAR,
             term: data.term || 'Term 1',
             studentName,
             subject: data.subject || 'Sciences',
@@ -142,10 +143,11 @@ export async function saveTaskLogToFirestore(log: ATLTaskLog): Promise<void> {
   try {
     const docRef = doc(db, COLLECTION_NAME, log.id);
     const token = log.evidenceToken || getStudentEvidenceToken(log.studentName || 'Student', log.mypYear || '1');
+    const sanitizedLog = await sanitizeTaskLogPayload(log);
     const dataToSave = removeUndefinedFields({
-      ...log,
+      ...sanitizedLog,
       evidenceToken: token,
-      createdAt: new Date().toISOString()
+      createdAt: sanitizedLog.createdAt || new Date().toISOString()
     });
     await setDoc(docRef, dataToSave);
   } catch (err) {
@@ -165,6 +167,19 @@ export async function updateTaskLogReflectionInFirestore(logId: string, reflecti
     }));
   } catch (err) {
     console.error('Failed to update student reflection in Firestore:', err);
+    throw err;
+  }
+}
+
+/**
+ * Update a task log in Firestore (for teacher grading, corrections, feedback, or badge awards)
+ */
+export async function updateTaskLogInFirestore(logId: string, partial: Partial<ATLTaskLog>): Promise<void> {
+  try {
+    const docRef = doc(db, COLLECTION_NAME, logId);
+    await updateDoc(docRef, removeUndefinedFields(partial));
+  } catch (err) {
+    console.error('Failed to update task log in Firestore:', err);
     throw err;
   }
 }
@@ -193,10 +208,9 @@ export function subscribeToAssignedTasks(
 ) {
   try {
     const tasksRef = collection(db, ASSIGNED_COLLECTION_NAME);
-    const q = query(tasksRef, orderBy('createdAt', 'desc'));
 
     return onSnapshot(
-      q,
+      tasksRef,
       (snapshot) => {
         const tasks: AssignedTask[] = [];
         snapshot.forEach((docSnap) => {
@@ -207,17 +221,19 @@ export function subscribeToAssignedTasks(
             title: data.title || 'Assigned Common Task',
             subject: data.subject || 'Sciences',
             topic: data.topic || 'General Topic',
-            mypYear: data.mypYear || '1',
+            mypYear: data.mypYear || 'All',
             category: data.category || 'Thinking',
             cluster: data.cluster || 'Critical thinking',
             task: data.task,
             teacherName: data.teacherName || 'Teacher',
             createdAt: data.createdAt || new Date().toISOString(),
-            academicYear: data.academicYear || '2025-2026',
+            academicYear: data.academicYear || DEFAULT_ACADEMIC_YEAR,
             term: data.term || 'Term 1',
+            targetStudentNames: Array.isArray(data.targetStudentNames) ? data.targetStudentNames : undefined,
             active: data.active !== false
           } as AssignedTask);
         });
+        tasks.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
         onUpdate(tasks);
       },
       (err) => {
@@ -238,13 +254,28 @@ export function subscribeToAssignedTasks(
 export async function saveAssignedTaskToFirestore(assignedTask: AssignedTask): Promise<void> {
   try {
     const docRef = doc(db, ASSIGNED_COLLECTION_NAME, assignedTask.id);
+    const sanitizedTask = await sanitizeAssignedTaskPayload(assignedTask);
     const dataToSave = removeUndefinedFields({
-      ...assignedTask,
-      createdAt: assignedTask.createdAt || new Date().toISOString()
+      ...sanitizedTask,
+      createdAt: sanitizedTask.createdAt || new Date().toISOString()
     });
     await setDoc(docRef, dataToSave);
   } catch (err) {
     console.error('Failed to save assigned task to Firestore:', err);
+    throw err;
+  }
+}
+
+/**
+ * Update specific fields of an assigned task in Firestore (e.g. changing academicYear)
+ */
+export async function updateAssignedTaskInFirestore(taskId: string, partial: Partial<AssignedTask>): Promise<void> {
+  try {
+    const docRef = doc(db, ASSIGNED_COLLECTION_NAME, taskId);
+    const dataToUpdate = removeUndefinedFields(partial);
+    await updateDoc(docRef, dataToUpdate);
+  } catch (err) {
+    console.error('Failed to update assigned task in Firestore:', err);
     throw err;
   }
 }

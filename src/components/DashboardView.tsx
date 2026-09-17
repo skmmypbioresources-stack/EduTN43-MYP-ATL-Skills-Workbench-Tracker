@@ -1,10 +1,20 @@
 import React, { useState, useMemo } from 'react';
-import { ATLTaskLog, ATLCategoryKey, AssignedTask } from '../types';
+import {
+  ATLTaskLog,
+  ATLCategoryKey,
+  AssignedTask,
+  GeneratedTask,
+  TaskPart,
+  TaskMeta,
+  AVAILABLE_ACADEMIC_YEARS,
+  DEFAULT_ACADEMIC_YEAR
+} from '../types';
 import { exportToWordDoc, exportToPdf, exportToCsvSpreadsheet, getAvailableMonthsFromLogs } from '../lib/exportUtils';
 import { ATL_DATA, ALL_CLUSTERS, ALL_STUDENTS_ROSTER } from '../data/atlData';
 import { MYPCriteriaSelector } from './MYPCriteriaSelector';
 import { ToddleLinkManagerModal } from './ToddleLinkManagerModal';
 import { getStudentEvidenceToken, getStudentEvidenceUrl, copyToClipboard, findCanonicalStudent, isSameStudent } from '../lib/evidenceUtils';
+import { generateTaskClient, refineTaskClient } from '../lib/geminiClient';
 import {
   BarChart,
   Bar,
@@ -62,7 +72,16 @@ import {
   Copy,
   ExternalLink,
   Link,
+  Sliders,
+  Wand2,
+  Edit3,
+  HelpCircle,
+  Trophy,
 } from 'lucide-react';
+import { CustomTaskCreatorModal } from './CustomTaskCreatorModal';
+import { TaskAssignmentModal } from './TaskAssignmentModal';
+import { TaskDetailModal } from './TaskDetailModal';
+import { TeacherGradingModal } from './TeacherGradingModal';
 
 interface DashboardViewProps {
   logs: ATLTaskLog[];
@@ -80,14 +99,21 @@ interface DashboardViewProps {
     mypYear: string;
     category: ATLCategoryKey;
     cluster: string;
+    academicYear?: string;
     iduSubject?: string | null;
     criteria?: string[];
     strands?: string[];
     dueDate?: string;
     dueDaysPeriod?: number;
+    finalTask?: GeneratedTask;
+    customInstructions?: string;
+    targetStudentNames?: string[];
   }) => Promise<void>;
+  onUpdateAssignedTask?: (taskId: string, partial: Partial<AssignedTask>) => Promise<void>;
   onDeleteAssignedTask?: (taskId: string) => Promise<void>;
   onOpenStudentPortal?: (studentName: string, evidenceToken: string, mypYear?: string) => void;
+  onUpdateTaskLog?: (logId: string, partial: Partial<ATLTaskLog>) => Promise<void>;
+  customApiKey?: string;
 }
 
 // Helpers for MYP Class Normalization & Formatting
@@ -101,15 +127,15 @@ const formatClassLabel = (yearKey: string): string => {
   const clean = normalizeMypYear(yearKey);
   switch (clean) {
     case '1':
-      return 'MYP 1 (Grade 6)';
+      return 'MYP 1 (Grade 6 · Ages 11–12)';
     case '2':
-      return 'MYP 2 (Grade 7)';
+      return 'MYP 2 (Grade 7 · Ages 12–13)';
     case '3':
-      return 'MYP 3 (Grade 8)';
+      return 'MYP 3 (Grade 8 · Ages 13–14)';
     case '4':
-      return 'MYP 4 (Grade 9)';
+      return 'MYP 4 (Grade 9 · Ages 14–15)';
     case '5':
-      return 'MYP 5 (Grade 10)';
+      return 'MYP 5 (Grade 10 · Ages 15–16)';
     default:
       return `MYP ${clean}`;
   }
@@ -201,19 +227,39 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   setIsUnlocked,
   assignedTasks = [],
   onCreateAssignedTask,
+  onUpdateAssignedTask,
   onDeleteAssignedTask,
   onOpenStudentPortal,
+  onUpdateTaskLog,
+  customApiKey,
 }) => {
   // Toddle Link Manager Modal State
   const [showToddleManagerModal, setShowToddleManagerModal] = useState<boolean>(false);
   const [copiedProfileToken, setCopiedProfileToken] = useState<boolean>(false);
 
-  // Assigned Tasks Creator State
+  // ChatGPT & Custom Questions Task Creator Modal State
+  const [showCustomCreatorModal, setShowCustomCreatorModal] = useState<boolean>(false);
+  const [taskToReassign, setTaskToReassign] = useState<AssignedTask | null>(null);
+  const [taskDetailLog, setTaskDetailLog] = useState<ATLTaskLog | null>(null);
+  const [teacherGradingLog, setTeacherGradingLog] = useState<ATLTaskLog | null>(null);
+
+  // Assigned Tasks Creator & Preview State
   const [showAssignModal, setShowAssignModal] = useState<boolean>(false);
+  const [assignModalStep, setAssignModalStep] = useState<'configure' | 'preview'>('configure');
+  const [previewTask, setPreviewTask] = useState<GeneratedTask | null>(null);
+  const [customInstructions, setCustomInstructions] = useState<string>('');
+  const [isGeneratingPreview, setIsGeneratingPreview] = useState<boolean>(false);
+  const [isRefiningTask, setIsRefiningTask] = useState<boolean>(false);
+  const [refineInstructionInput, setRefineInstructionInput] = useState<string>('');
+  const [activeRefiningPartIndex, setActiveRefiningPartIndex] = useState<number | null>(null);
+  const [partRefineInput, setPartRefineInput] = useState<string>('');
+  const [refineFeedbackMsg, setRefineFeedbackMsg] = useState<string | null>(null);
+
   const [newTeacherName, setNewTeacherName] = useState<string>('');
   const [newSubject, setNewSubject] = useState<string>('Sciences');
   const [newTopic, setNewTopic] = useState<string>('');
   const [newMypYear, setNewMypYear] = useState<string>('3');
+  const [newTaskAcademicYear, setNewTaskAcademicYear] = useState<string>(academicYear || DEFAULT_ACADEMIC_YEAR);
   const [newCategory, setNewCategory] = useState<ATLCategoryKey>('Thinking');
   const [newCluster, setNewCluster] = useState<string>('Critical thinking');
   const [newIduToggle, setNewIduToggle] = useState<boolean>(false);
@@ -223,6 +269,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [isPublishingTask, setIsPublishingTask] = useState<boolean>(false);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [publishSuccess, setPublishSuccess] = useState<string | null>(null);
+
+  // Keep newTaskAcademicYear in sync with currently selected global academicYear
+  React.useEffect(() => {
+    if (academicYear) {
+      setNewTaskAcademicYear(academicYear);
+    }
+  }, [academicYear, showAssignModal]);
 
   // Due Date settings for newly assigned tasks
   const [newDueDateType, setNewDueDateType] = useState<'period' | 'custom' | 'none'>('period');
@@ -237,13 +290,166 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   }, [newCategory]);
 
-  const handlePublishAssignedTask = async (e: React.FormEvent) => {
-    e.preventDefault();
+  // Generate Task Preview (Step 1 -> Step 2)
+  const handleGenerateAndPreview = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!newTopic.trim()) {
-      setPublishError('Please enter a curriculum topic for the assigned task.');
+      setPublishError('Please enter a curriculum topic or title for the task.');
       return;
     }
 
+    setIsGeneratingPreview(true);
+    setPublishError(null);
+    setPublishSuccess(null);
+    setRefineFeedbackMsg(null);
+
+    const exactTitle = newTopic.trim();
+    const taskMeta: TaskMeta = {
+      title: exactTitle,
+      taskTitle: exactTitle,
+      subject: newSubject,
+      topic: newTopic.trim(),
+      year: newMypYear,
+      category: newCategory,
+      cluster: newCluster,
+      iduSubject: newIduToggle ? newIduSubject : null,
+      criteria: newSelectedCriteria,
+      strands: newSelectedStrands,
+      customInstructions: customInstructions.trim() || undefined,
+    };
+
+    try {
+      const generated = await generateTaskClient(taskMeta, false, customApiKey);
+      generated.title = exactTitle;
+      setPreviewTask(generated);
+      setAssignModalStep('preview');
+    } catch (err: any) {
+      console.error('Failed to generate task preview:', err);
+      setPublishError(err?.message || 'Failed to generate task preview. Please try again.');
+    } finally {
+      setIsGeneratingPreview(false);
+    }
+  };
+
+  // 1-Click AI Difficulty Calibration (Simplify vs Elevate)
+  const handleCalibrateDifficulty = async (direction: 'simplify' | 'elevate') => {
+    if (!previewTask) return;
+    setIsRefiningTask(true);
+    setPublishError(null);
+    setRefineFeedbackMsg(null);
+
+    const taskMeta: TaskMeta = {
+      title: previewTask.title,
+      subject: newSubject,
+      topic: newTopic.trim(),
+      year: newMypYear,
+      category: newCategory,
+      cluster: newCluster,
+    };
+
+    const instruction = direction === 'simplify'
+      ? `Simplify and scaffold this task for MYP Year ${newMypYear} students (Ages ${newMypYear === '1' ? '11-12' : newMypYear === '2' ? '12-13' : newMypYear === '3' ? '13-14' : '14-16'}). Moderate scientific vocabulary, break down complex prompts into guided sub-steps, and provide supportive sentence starters in placeholders.`
+      : `Elevate scientific rigor and higher-order inquiry for MYP Year ${newMypYear}. Enhance critical thinking, demand deeper mechanistic reasoning, require critique of experimental validity and confounding variables, and justify conclusions using quantitative/biological principles.`;
+
+    try {
+      const revised = await refineTaskClient(previewTask, instruction, taskMeta, undefined, customApiKey);
+      setPreviewTask(revised);
+      setRefineFeedbackMsg(direction === 'simplify' ? '✨ Task simplified with additional age-appropriate scaffolding!' : '✨ Scientific rigor elevated to higher-order inquiry!');
+      setTimeout(() => setRefineFeedbackMsg(null), 4000);
+    } catch (err: any) {
+      console.error('Failed to calibrate difficulty:', err);
+      setPublishError(err?.message || 'Failed to adjust difficulty with AI.');
+    } finally {
+      setIsRefiningTask(false);
+    }
+  };
+
+  // Custom AI Revision across the entire task
+  const handleApplyCustomRefine = async (customInstruction: string) => {
+    if (!previewTask || !customInstruction.trim()) return;
+    setIsRefiningTask(true);
+    setPublishError(null);
+    setRefineFeedbackMsg(null);
+
+    const taskMeta: TaskMeta = {
+      title: previewTask.title,
+      subject: newSubject,
+      topic: newTopic.trim(),
+      year: newMypYear,
+      category: newCategory,
+      cluster: newCluster,
+    };
+
+    try {
+      const revised = await refineTaskClient(previewTask, customInstruction.trim(), taskMeta, undefined, customApiKey);
+      setPreviewTask(revised);
+      setRefineInstructionInput('');
+      setRefineFeedbackMsg('✨ AI successfully applied your customization to the task!');
+      setTimeout(() => setRefineFeedbackMsg(null), 4000);
+    } catch (err: any) {
+      console.error('Failed to apply custom revision:', err);
+      setPublishError(err?.message || 'Failed to apply revision.');
+    } finally {
+      setIsRefiningTask(false);
+    }
+  };
+
+  // Surgical single-part AI regeneration
+  const handleRegeneratePart = async (partIndex: number, specificInstruction?: string) => {
+    if (!previewTask || !previewTask.parts || !previewTask.parts[partIndex]) return;
+    setActiveRefiningPartIndex(partIndex);
+    setPublishError(null);
+    setRefineFeedbackMsg(null);
+
+    const taskMeta: TaskMeta = {
+      title: previewTask.title,
+      subject: newSubject,
+      topic: newTopic.trim(),
+      year: newMypYear,
+      category: newCategory,
+      cluster: newCluster,
+    };
+
+    const instruction = specificInstruction?.trim() || `Regenerate Part ${partIndex + 1} with a fresh, engaging inquiry question aligned with MYP Year ${newMypYear} and the task scenario.`;
+
+    try {
+      const revised = await refineTaskClient(previewTask, instruction, taskMeta, partIndex, customApiKey);
+      setPreviewTask(revised);
+      setPartRefineInput('');
+      setActiveRefiningPartIndex(null);
+      setRefineFeedbackMsg(`✨ Question Part ${String.fromCharCode(65 + partIndex)} successfully updated!`);
+      setTimeout(() => setRefineFeedbackMsg(null), 3000);
+    } catch (err: any) {
+      console.error('Failed to regenerate part:', err);
+      setPublishError(err?.message || 'Failed to regenerate question part.');
+      setActiveRefiningPartIndex(null);
+    }
+  };
+
+  // Direct edits to task title & context
+  const handleUpdateTaskTitle = (title: string) => {
+    if (!previewTask) return;
+    setPreviewTask({ ...previewTask, title });
+  };
+
+  const handleUpdateTaskContext = (context: string) => {
+    if (!previewTask) return;
+    setPreviewTask({ ...previewTask, context });
+  };
+
+  const handleUpdatePartField = (partIndex: number, field: keyof TaskPart, value: string) => {
+    if (!previewTask || !previewTask.parts[partIndex]) return;
+    const updatedParts = [...previewTask.parts];
+    updatedParts[partIndex] = {
+      ...updatedParts[partIndex],
+      [field]: value,
+    };
+    setPreviewTask({ ...previewTask, parts: updatedParts });
+  };
+
+  // Publish & Assign Final Task (from Step 2 Preview)
+  const handlePublishFinalTask = async () => {
+    if (!previewTask) return;
     if (!onCreateAssignedTask) return;
 
     setIsPublishingTask(true);
@@ -262,29 +468,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       await onCreateAssignedTask({
         teacherName: newTeacherName.trim(),
         subject: newSubject,
-        topic: newTopic.trim(),
+        topic: previewTask.title || newTopic.trim(),
         mypYear: newMypYear,
         category: newCategory,
         cluster: newCluster,
+        academicYear: newTaskAcademicYear || academicYear || DEFAULT_ACADEMIC_YEAR,
         iduSubject: newIduToggle ? newIduSubject : null,
         criteria: newSelectedCriteria,
         strands: newSelectedStrands,
         dueDate: effectiveDueDate,
         dueDaysPeriod: newDueDateType === 'period' ? newDuePeriodDays : undefined,
+        finalTask: previewTask,
+        customInstructions: customInstructions.trim() || undefined,
       });
 
-      setPublishSuccess('Task generated and assigned to students successfully with due date tracking!');
-      setNewTopic('');
-      setNewIduToggle(false);
-      setNewSelectedCriteria([]);
-      setNewSelectedStrands([]);
+      setPublishSuccess('Task successfully published and assigned to all students!');
       setTimeout(() => {
         setPublishSuccess(null);
         setShowAssignModal(false);
+        setAssignModalStep('configure');
+        setPreviewTask(null);
+        setNewTopic('');
+        setCustomInstructions('');
       }, 1500);
     } catch (err: any) {
       console.error('Failed to publish assigned task:', err);
-      setPublishError(err?.message || 'Failed to generate and assign task.');
+      setPublishError(err?.message || 'Failed to publish task.');
     } finally {
       setIsPublishingTask(false);
     }
@@ -323,9 +532,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [selectedExportClass, setSelectedExportClass] = useState<string>('ALL');
   const [selectedExportSubject, setSelectedExportSubject] = useState<string>('ALL');
 
-  // Teacher & Class Filters for Published Common Tasks Panel
+  // Teacher, Class & Academic Year Filters for Published Common Tasks Panel
   const [assignedTeacherFilter, setAssignedTeacherFilter] = useState<string>('All');
   const [assignedClassFilter, setAssignedClassFilter] = useState<string>('All');
+  const [assignedAcademicYearFilter, setAssignedAcademicYearFilter] = useState<string>('All');
 
   const distinctAssignedTeachers = useMemo(() => {
     return Array.from(
@@ -333,11 +543,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     ).sort();
   }, [assignedTasks]);
 
+  // Check how many tasks currently belong to 2025-2026
+  const tasksIn2025_2026 = useMemo(() => {
+    return assignedTasks.filter((t) => (t.academicYear || DEFAULT_ACADEMIC_YEAR) === '2025-2026');
+  }, [assignedTasks]);
+
+  const [isMigratingTasks, setIsMigratingTasks] = useState<boolean>(false);
+  const handleMigrateAllTasksTo2026 = async () => {
+    if (!onUpdateAssignedTask || tasksIn2025_2026.length === 0) return;
+    setIsMigratingTasks(true);
+    try {
+      await Promise.all(
+        tasksIn2025_2026.map((t) => onUpdateAssignedTask(t.id, { academicYear: DEFAULT_ACADEMIC_YEAR }))
+      );
+    } catch (err) {
+      console.error('Failed to migrate tasks to 2026-2027:', err);
+    } finally {
+      setIsMigratingTasks(false);
+    }
+  };
+
   const organizedDashboardTasks = useMemo(() => {
     const filtered = assignedTasks.filter((t) => {
       const teacher = t.teacherName?.trim() || 'General Teacher';
       if (assignedTeacherFilter !== 'All' && teacher !== assignedTeacherFilter) return false;
       if (assignedClassFilter !== 'All' && normalizeMypYear(t.mypYear) !== assignedClassFilter) return false;
+      const tYear = t.academicYear || DEFAULT_ACADEMIC_YEAR;
+      if (assignedAcademicYearFilter !== 'All' && tYear !== assignedAcademicYearFilter) return false;
       return true;
     });
 
@@ -354,7 +586,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       grouped,
       totalMatching: filtered.length,
     };
-  }, [assignedTasks, assignedTeacherFilter, assignedClassFilter]);
+  }, [assignedTasks, assignedTeacherFilter, assignedClassFilter, assignedAcademicYearFilter]);
 
   const availableMonths = useMemo(() => {
     return getAvailableMonthsFromLogs(logs);
@@ -889,11 +1121,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
 
               <button
+                onClick={() => setShowCustomCreatorModal(true)}
+                className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50 px-3 py-1.5 text-xs font-bold text-purple-700 hover:bg-purple-100 transition-all cursor-pointer shadow-2xs"
+                title="Paste questions, stimuli, and attach diagrams from ChatGPT or create custom multi-part tasks"
+              >
+                <Sparkles className="h-3.5 w-3.5 text-purple-600" />
+                <span>ChatGPT & Custom Questions</span>
+              </button>
+
+              <button
                 onClick={() => setShowAssignModal(true)}
                 className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition-all cursor-pointer"
               >
                 <Plus className="h-3.5 w-3.5" />
-                <span>Assign New Task</span>
+                <span>AI Generator Task</span>
               </button>
             </div>
           </div>
@@ -1011,6 +1252,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                   <p className="text-[11px] text-slate-500 line-clamp-2 mt-0.5">
                                     {at.topic} ({at.cluster})
                                   </p>
+
+                                  {/* Target Audience / Student Assignment Info */}
+                                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                    {Array.isArray(at.targetStudentNames) && at.targetStudentNames.length > 0 ? (
+                                      <span
+                                        className="inline-flex items-center gap-1 rounded-md bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[10px] font-bold text-amber-800"
+                                        title={at.targetStudentNames.join(', ')}
+                                      >
+                                        <UserCheck className="h-2.5 w-2.5 text-amber-600" />
+                                        <span>{at.targetStudentNames.length} Selected Students</span>
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 border border-slate-200 px-1.5 py-0.5 text-[10px] font-medium text-slate-600">
+                                        <Users className="h-2.5 w-2.5 text-slate-500" />
+                                        <span>Whole Class ({at.mypYear === 'All' ? 'All MYP' : `MYP ${at.mypYear}`})</span>
+                                      </span>
+                                    )}
+                                    {at.academicYear && (
+                                      <span className="rounded-md bg-slate-100 border border-slate-200 px-1.5 py-0.5 text-[9px] font-mono text-slate-500">
+                                        {at.academicYear}
+                                      </span>
+                                    )}
+                                  </div>
                                 </div>
 
                                 <div className="mt-2.5 flex items-center justify-between border-t border-slate-100 pt-2 text-[10px]">
@@ -1030,14 +1294,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                     )}
                                   </span>
 
-                                  {onDeleteAssignedTask && (
+                                  <div className="flex items-center gap-2">
                                     <button
-                                      onClick={() => promptDeleteAssignedTask(at.id, at.title || at.topic)}
-                                      className="text-rose-600 hover:text-rose-800 font-bold hover:underline cursor-pointer"
+                                      type="button"
+                                      onClick={() => setTaskToReassign(at)}
+                                      className="text-indigo-600 hover:text-indigo-800 font-bold hover:underline cursor-pointer flex items-center gap-1"
+                                      title="Reassign to specific students or change class"
                                     >
-                                      Delete
+                                      <Users className="h-3 w-3" />
+                                      <span>Assign</span>
                                     </button>
-                                  )}
+
+                                    {onDeleteAssignedTask && (
+                                      <button
+                                        onClick={() => promptDeleteAssignedTask(at.id, at.title || at.topic)}
+                                        className="text-rose-600 hover:text-rose-800 font-bold hover:underline cursor-pointer"
+                                      >
+                                        Delete
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
                             );
@@ -1903,9 +2179,35 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         {(log.formativeScore || log.feedback?.formativeScore) && <span className="opacity-40">•</span>}
                         <span>{log.level}</span>
                       </span>
+
+                      {(log.teacherEvaluation?.badgeAwarded || log.badgeAwarded) && (
+                        <div
+                          className="mt-1 flex items-center justify-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-1.5 py-0.5"
+                          title={(log.teacherEvaluation?.badgeAwarded || log.badgeAwarded)?.description}
+                        >
+                          <Trophy className="h-3 w-3 text-amber-600 shrink-0" />
+                          <span className="truncate max-w-[90px]">{(log.teacherEvaluation?.badgeAwarded || log.badgeAwarded)?.name}</span>
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 px-3 text-right">
                       <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => setTaskDetailLog(log)}
+                          className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                          title="View Full Task, Questions, Work & Evaluation"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
+                        {onUpdateTaskLog && (
+                          <button
+                            onClick={() => setTeacherGradingLog(log)}
+                            className="p-1.5 text-amber-600 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer"
+                            title="Teacher Grade, Correct & Award Badge"
+                          >
+                            <Award className="h-4 w-4" />
+                          </button>
+                        )}
                         <button
                           onClick={() => {
                             if (onOpenStudentPortal) {
@@ -1913,17 +2215,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                               onOpenStudentPortal(canonical.canonicalName, canonical.canonicalToken, canonical.mypYear);
                             }
                           }}
-                          className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                          className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
                           title={`Open ${log.studentName}'s Student Portal / Evidence Folder`}
                         >
                           <ExternalLink className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => setSelectedLogForModal(log)}
-                          className="p-1.5 text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                          title="View Details"
-                        >
-                          <Eye className="h-4 w-4" />
                         </button>
                         <button
                           onClick={() => promptDeleteLog(log.id, `${log.studentName} (${log.subject} - ${log.topic})`)}
@@ -2237,40 +2532,53 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       )}
 
-      {/* Assign Common Task Modal */}
+      {/* Assign Common Task Modal - 2-Step Preview, Differentiation & Live Editing */}
       {showAssignModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-3 sm:p-4 backdrop-blur-xs">
-          <div className="w-full max-w-xl max-h-[88vh] flex flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden animate-fadeIn">
-            {/* Sticky Header with prominent Back and Close buttons */}
+          <div className={`w-full ${assignModalStep === 'preview' ? 'max-w-4xl' : 'max-w-xl'} max-h-[90vh] flex flex-col rounded-2xl border border-slate-200 bg-white shadow-2xl overflow-hidden animate-fadeIn transition-all`}>
+            {/* Sticky Modal Header */}
             <div className="flex items-center justify-between border-b border-slate-200 px-5 sm:px-6 py-3.5 bg-slate-50/90 shrink-0">
               <div className="flex items-center gap-2.5">
-                <div className="rounded-xl bg-indigo-600 p-2 text-white shadow-xs">
-                  <ClipboardList className="h-5 w-5" />
+                <div className={`rounded-xl ${assignModalStep === 'preview' ? 'bg-emerald-600' : 'bg-indigo-600'} p-2 text-white shadow-xs transition-colors`}>
+                  {assignModalStep === 'preview' ? <Eye className="h-5 w-5" /> : <ClipboardList className="h-5 w-5" />}
                 </div>
                 <div>
-                  <h3 className="text-sm sm:text-base font-bold text-slate-900 leading-tight">Create & Assign Common Task</h3>
-                  <p className="text-[11px] text-slate-500 hidden sm:block">Generates a shared task that appears on every student's portal</p>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm sm:text-base font-bold text-slate-900 leading-tight">
+                      {assignModalStep === 'preview' ? 'Review & Calibrate Task Before Publishing' : 'Create & Personalize Common Task'}
+                    </h3>
+                    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                      assignModalStep === 'preview' ? 'bg-emerald-100 text-emerald-800' : 'bg-indigo-100 text-indigo-800'
+                    }`}>
+                      {assignModalStep === 'preview' ? 'Step 2: Preview & Refine' : 'Step 1: Parameters'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 hidden sm:block">
+                    {assignModalStep === 'preview'
+                      ? 'Live edit any text, calibrate difficulty with AI, or regenerate specific questions before assigning.'
+                      : 'Configure grade level, skill targets, and personalized teacher instructions.'}
+                  </p>
                 </div>
               </div>
               
               <div className="flex items-center gap-2">
+                {assignModalStep === 'preview' && (
+                  <button
+                    type="button"
+                    onClick={() => setAssignModalStep('configure')}
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-100 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
+                    title="Back to Parameters"
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5" />
+                    <span>Parameters</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
                     setShowAssignModal(false);
-                    setPublishError(null);
-                    setPublishSuccess(null);
-                  }}
-                  className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 hover:text-slate-900 transition-colors flex items-center gap-1 cursor-pointer shadow-2xs"
-                  title="Cancel and Go Back"
-                >
-                  <ArrowLeft className="h-3.5 w-3.5" />
-                  <span>Back</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowAssignModal(false);
+                    setAssignModalStep('configure');
+                    setPreviewTask(null);
                     setPublishError(null);
                     setPublishSuccess(null);
                   }}
@@ -2282,74 +2590,213 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               </div>
             </div>
 
-            <form onSubmit={handlePublishAssignedTask} className="flex flex-col flex-1 overflow-hidden text-xs">
-              {publishSuccess ? (
-                <div className="p-6 flex-1 flex flex-col items-center justify-center">
-                  <div className="w-full rounded-2xl border border-emerald-200 bg-emerald-50 p-6 text-center font-bold text-emerald-800 flex flex-col items-center gap-2 shadow-2xs">
-                    <Check className="h-10 w-10 text-emerald-600" />
-                    <span className="text-sm sm:text-base font-black">{publishSuccess}</span>
-                    <p className="text-xs font-normal text-emerald-700 mt-1 max-w-md">
-                      Students will now see this task organized under your teacher name and class on their portal.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowAssignModal(false);
-                        setPublishSuccess(null);
-                      }}
-                      className="mt-3 rounded-xl bg-emerald-600 px-5 py-2 text-xs font-bold text-white shadow-xs hover:bg-emerald-700 transition-colors cursor-pointer"
-                    >
-                      Done & Return to Dashboard
-                    </button>
+            {publishSuccess ? (
+              <div className="p-8 flex-1 flex flex-col items-center justify-center">
+                <div className="w-full max-w-md rounded-2xl border border-emerald-200 bg-emerald-50 p-6 text-center font-bold text-emerald-800 flex flex-col items-center gap-3 shadow-2xs">
+                  <div className="rounded-full bg-emerald-100 p-3 text-emerald-600">
+                    <Check className="h-8 w-8" />
                   </div>
+                  <span className="text-base font-black">{publishSuccess}</span>
+                  <p className="text-xs font-normal text-emerald-700 max-w-sm">
+                    Students will now see this task organized under your teacher name and class on their portal.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowAssignModal(false);
+                      setAssignModalStep('configure');
+                      setPreviewTask(null);
+                      setPublishSuccess(null);
+                    }}
+                    className="mt-2 rounded-xl bg-emerald-600 px-5 py-2 text-xs font-bold text-white shadow-xs hover:bg-emerald-700 transition-colors cursor-pointer"
+                  >
+                    Done & Return to Dashboard
+                  </button>
                 </div>
-              ) : (
-                <>
-                  {/* Scrollable Form Body */}
-                  <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4">
-                    {/* Teacher & Grade */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                          Teacher / Instructor Name
-                        </label>
-                        <input
-                          type="text"
-                          value={newTeacherName}
-                          onChange={(e) => setNewTeacherName(e.target.value)}
-                          placeholder="e.g. Ms. Smith (Science)"
-                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                          Grade / MYP Level <span className="text-rose-600">*</span>
-                        </label>
-                        <select
-                          value={newMypYear}
-                          onChange={(e) => setNewMypYear(e.target.value)}
-                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors cursor-pointer"
-                        >
-                          <option value="1">MYP 1 (Grade 6)</option>
-                          <option value="2">MYP 2 (Grade 7)</option>
-                          <option value="3">MYP 3 (Grade 8)</option>
-                          <option value="4">MYP 4 (Grade 9)</option>
-                          <option value="5">MYP 5 (Grade 10)</option>
-                        </select>
-                      </div>
+              </div>
+            ) : assignModalStep === 'configure' ? (
+              /* STEP 1: CONFIGURE & DIFFERENTIATE */
+              <form onSubmit={handleGenerateAndPreview} className="flex flex-col flex-1 overflow-hidden text-xs">
+                <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-4">
+                  {/* Teacher & Grade */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                        Teacher / Instructor Name
+                      </label>
+                      <input
+                        type="text"
+                        value={newTeacherName}
+                        onChange={(e) => setNewTeacherName(e.target.value)}
+                        placeholder="e.g. Ms. Smith (Science)"
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors"
+                      />
                     </div>
 
-                    {/* Subject & Topic */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                        Target Student Cohort / Age Group <span className="text-rose-600">*</span>
+                      </label>
+                      <select
+                        value={newMypYear}
+                        onChange={(e) => setNewMypYear(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors cursor-pointer"
+                      >
+                        <option value="All">All MYP Classes (MYP 1–5 · Whole School)</option>
+                        <option value="1">MYP 1 (Grade 6 · Ages 11–12)</option>
+                        <option value="2">MYP 2 (Grade 7 · Ages 12–13)</option>
+                        <option value="3">MYP 3 (Grade 8 · Ages 13–14)</option>
+                        <option value="4">MYP 4 (Grade 9 · Ages 14–15)</option>
+                        <option value="5">MYP 5 (Grade 10 · Ages 15–16)</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Subject & Topic */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                        Subject Group <span className="text-rose-600">*</span>
+                      </label>
+                      <select
+                        value={newSubject}
+                        onChange={(e) => setNewSubject(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors cursor-pointer"
+                      >
+                        <option value="Sciences">Sciences</option>
+                        <option value="Mathematics">Mathematics</option>
+                        <option value="Language and Literature">Language and Literature</option>
+                        <option value="Language Acquisition">Language Acquisition</option>
+                        <option value="Individuals and Societies">Individuals and Societies</option>
+                        <option value="Arts">Arts</option>
+                        <option value="Physical and Health Education">Physical and Health Education</option>
+                        <option value="Design">Design</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                        Task Title / Curriculum Topic <span className="text-rose-600">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={newTopic}
+                        onChange={(e) => setNewTopic(e.target.value)}
+                        placeholder="e.g. Cell Organelles: Build Your Own Analogy"
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Teacher Personalization & Differentiation Instructions */}
+                  <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3.5 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Sliders className="h-4 w-4 text-indigo-600" />
+                        <label className="text-xs font-bold text-indigo-950">
+                          Specific Personalization Instructions (Age, Scaffolding, Ability)
+                        </label>
+                      </div>
+                      <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-100/70 px-2 py-0.5 rounded-full">
+                        Optional AI Guidance
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-indigo-900/80 leading-relaxed">
+                      Instruct the AI on student reading levels, required scaffolds, sentence stems, or specific scientific scenarios.
+                    </p>
+                    <textarea
+                      rows={3}
+                      value={customInstructions}
+                      onChange={(e) => setCustomInstructions(e.target.value)}
+                      placeholder={`e.g. Tailor for ${formatClassLabel(newMypYear)}. Keep vocabulary accessible, break questions into guided steps, provide sentence starters in student placeholders, and focus on experimental control of variables.`}
+                      className="w-full rounded-xl border border-indigo-200 bg-white p-3 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:outline-none placeholder:text-slate-400"
+                    />
+
+                    {/* Quick suggestion pills */}
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                      <span className="text-[10px] font-bold text-indigo-950 uppercase tracking-wider mr-1">Quick Presets:</span>
+                      {[
+                        { label: '👶 Simplify for younger students (Ages 11–12)', text: 'Simplify vocabulary for 11-12 year old beginners. Break complex questions into sub-steps and provide supportive sentence starters.' },
+                        { label: '💬 Add ELL sentence starters', text: 'Include sentence starters and linguistic frames in student placeholders for English Language Learners.' },
+                        { label: '🔬 Elevate higher-order critique', text: 'Elevate scientific rigor. Challenge students to critique methodology, analyze anomalous data, and evaluate validity.' },
+                        { label: '🌱 Connect to real-world context', text: 'Anchor the scenario in a relatable everyday life or ecological context.' },
+                      ].map((preset) => (
+                        <button
+                          key={preset.label}
+                          type="button"
+                          onClick={() => setCustomInstructions((prev) => prev ? `${prev} ${preset.text}` : preset.text)}
+                          className="rounded-lg border border-indigo-200/80 bg-white/90 px-2 py-1 text-[10px] font-semibold text-indigo-900 hover:bg-indigo-100/60 transition-colors cursor-pointer"
+                        >
+                          {preset.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* ATL Category & Cluster */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                        ATL Skill Category
+                      </label>
+                      <select
+                        value={newCategory}
+                        onChange={(e) => setNewCategory(e.target.value as ATLCategoryKey)}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors cursor-pointer"
+                      >
+                        <option value="Communication">Communication</option>
+                        <option value="Social">Social</option>
+                        <option value="Self-management">Self-management</option>
+                        <option value="Research">Research</option>
+                        <option value="Thinking">Thinking</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                        Skill Cluster
+                      </label>
+                      <select
+                        value={newCluster}
+                        onChange={(e) => setNewCluster(e.target.value)}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors cursor-pointer"
+                      >
+                        {Object.keys(ATL_DATA[newCategory]?.clusters || {}).map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* IDU Connection Toggle & Secondary Subject Option */}
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3.5 space-y-2.5">
+                    <div className="flex items-center justify-between">
                       <div>
-                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                          Subject Group <span className="text-rose-600">*</span>
+                        <div className="text-xs font-bold text-slate-800">Interdisciplinary connection (IDU)</div>
+                        <div className="text-[11px] text-slate-500 font-medium">Require students to synthesize concepts with a secondary MYP subject group.</div>
+                      </div>
+                      <label className="relative inline-flex cursor-pointer items-center">
+                        <input
+                          type="checkbox"
+                          checked={newIduToggle}
+                          onChange={(e) => setNewIduToggle(e.target.checked)}
+                          className="peer sr-only"
+                        />
+                        <div className="peer h-5 w-9 rounded-full bg-slate-200 after:absolute after:top-0.5 after:left-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-xs after:transition-all peer-checked:bg-indigo-600 peer-checked:after:translate-x-full"></div>
+                      </label>
+                    </div>
+
+                    {newIduToggle && (
+                      <div className="rounded-xl border border-indigo-100 bg-white p-3 space-y-1.5 animate-fadeIn">
+                        <label className="block text-[11px] font-bold text-indigo-900 uppercase tracking-wider">
+                          Secondary Subject Group (IDU Partner)
                         </label>
                         <select
-                          value={newSubject}
-                          onChange={(e) => setNewSubject(e.target.value)}
-                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors cursor-pointer"
+                          value={newIduSubject}
+                          onChange={(e) => setNewIduSubject(e.target.value)}
+                          className="w-full rounded-xl border border-indigo-200 bg-indigo-50/30 px-3 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:outline-none cursor-pointer"
                         >
                           <option value="Sciences">Sciences</option>
                           <option value="Mathematics">Mathematics</option>
@@ -2361,262 +2808,523 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           <option value="Design">Design</option>
                         </select>
                       </div>
+                    )}
+                  </div>
 
-                      <div>
-                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                          Task Title / Curriculum Topic <span className="text-rose-600">*</span>
-                        </label>
-                        <input
-                          type="text"
-                          value={newTopic}
-                          onChange={(e) => setNewTopic(e.target.value)}
-                          placeholder="e.g. Cell Organelles: Build Your Own Analogy"
-                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors"
-                        />
+                  {/* MYP Assessment Criteria & Strands Selector */}
+                  <div>
+                    <MYPCriteriaSelector
+                      selectedCriteria={newSelectedCriteria}
+                      selectedStrands={newSelectedStrands}
+                      onChange={(crit, str) => {
+                        setNewSelectedCriteria(crit);
+                        setNewSelectedStrands(str);
+                      }}
+                    />
+                  </div>
+
+                  {/* Submission Due Date & Period Settings */}
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3.5 space-y-3">
+                    <div>
+                      <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                        <Calendar className="h-4 w-4 text-indigo-600" />
+                        <span>Submission Due Date & Automatic Archival</span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 font-medium">
+                        Choose whether this task has a deadline or stays open indefinitely.
                       </div>
                     </div>
 
-                    {/* ATL Category & Cluster */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                          ATL Skill Category
-                        </label>
-                        <select
-                          value={newCategory}
-                          onChange={(e) => setNewCategory(e.target.value as ATLCategoryKey)}
-                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors cursor-pointer"
-                        >
-                          <option value="Communication">Communication</option>
-                          <option value="Social">Social</option>
-                          <option value="Self-management">Self-management</option>
-                          <option value="Research">Research</option>
-                          <option value="Thinking">Thinking</option>
-                        </select>
-                      </div>
-
-                      <div>
-                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                          Skill Cluster
-                        </label>
-                        <select
-                          value={newCluster}
-                          onChange={(e) => setNewCluster(e.target.value)}
-                          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors cursor-pointer"
-                        >
-                          {Object.keys(ATL_DATA[newCategory]?.clusters || {}).map((c) => (
-                            <option key={c} value={c}>
-                              {c}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                    <div>
+                      <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
+                        Select Due Date / Deadline Mode
+                      </label>
+                      <select
+                        value={newDueDateType}
+                        onChange={(e) => setNewDueDateType(e.target.value as 'period' | 'custom' | 'none')}
+                        className="w-full rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-xs font-bold text-indigo-950 focus:border-indigo-600 focus:outline-none cursor-pointer shadow-2xs"
+                      >
+                        <option value="none">✨ No Due Date (Open Task - Active Indefinitely)</option>
+                        <option value="period">⏱️ Submission Period (Active window e.g. 7 days, 14 days, 30 days)</option>
+                        <option value="custom">📅 Specific Calendar Due Date (Pick exact deadline date)</option>
+                      </select>
                     </div>
 
-                    {/* IDU Connection Toggle & Secondary Subject Option */}
-                    <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3.5 space-y-2.5">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="text-xs font-bold text-slate-800">Interdisciplinary connection (IDU)</div>
-                          <div className="text-[11px] text-slate-500 font-medium">Require students to synthesize concepts with a secondary MYP subject group.</div>
-                        </div>
-                        <label className="relative inline-flex cursor-pointer items-center">
-                          <input
-                            type="checkbox"
-                            checked={newIduToggle}
-                            onChange={(e) => setNewIduToggle(e.target.checked)}
-                            className="peer sr-only"
-                          />
-                          <div className="peer h-5 w-9 rounded-full bg-slate-200 after:absolute after:top-0.5 after:left-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-xs after:transition-all peer-checked:bg-indigo-600 peer-checked:after:translate-x-full"></div>
-                        </label>
-                      </div>
-
-                      {newIduToggle && (
-                        <div className="rounded-xl border border-indigo-100 bg-white p-3 space-y-1.5 animate-fadeIn">
-                          <label className="block text-[11px] font-bold text-indigo-900 uppercase tracking-wider">
-                            Secondary Subject Group (IDU Partner)
+                    {newDueDateType === 'period' && (
+                      <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3.5 space-y-2.5 animate-fadeIn">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                          <label className="block text-[11px] font-bold text-indigo-950 uppercase tracking-wider">
+                            Submission Window Duration:
                           </label>
                           <select
-                            value={newIduSubject}
-                            onChange={(e) => setNewIduSubject(e.target.value)}
-                            className="w-full rounded-xl border border-indigo-200 bg-indigo-50/30 px-3 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:outline-none cursor-pointer"
+                            value={newDuePeriodDays}
+                            onChange={(e) => setNewDuePeriodDays(Number(e.target.value))}
+                            className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-bold text-indigo-900 focus:border-indigo-600 focus:outline-none cursor-pointer"
                           >
-                            <option value="Sciences">Sciences</option>
-                            <option value="Mathematics">Mathematics</option>
-                            <option value="Language and Literature">Language and Literature</option>
-                            <option value="Language Acquisition">Language Acquisition</option>
-                            <option value="Individuals and Societies">Individuals and Societies</option>
-                            <option value="Arts">Arts</option>
-                            <option value="Physical and Health Education">Physical and Health Education</option>
-                            <option value="Design">Design</option>
+                            <option value={3}>3 Days</option>
+                            <option value={5}>5 Days</option>
+                            <option value={7}>7 Days (1 Week) - Standard</option>
+                            <option value={10}>10 Days</option>
+                            <option value={14}>14 Days (2 Weeks)</option>
+                            <option value={21}>21 Days (3 Weeks)</option>
+                            <option value={30}>30 Days (1 Month)</option>
                           </select>
                         </div>
-                      )}
-                    </div>
 
-                    {/* MYP Assessment Criteria & Strands Selector */}
-                    <div>
-                      <MYPCriteriaSelector
-                        selectedCriteria={newSelectedCriteria}
-                        selectedStrands={newSelectedStrands}
-                        onChange={(crit, str) => {
-                          setNewSelectedCriteria(crit);
-                          setNewSelectedStrands(str);
-                        }}
-                      />
-                    </div>
-
-                    {/* Submission Due Date & Period Settings with Clean Dropdown Access */}
-                    <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-3.5 space-y-3">
-                      <div>
-                        <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
-                          <Calendar className="h-4 w-4 text-indigo-600" />
-                          <span>Submission Due Date & Automatic Archival</span>
-                        </div>
-                        <div className="text-[11px] text-slate-500 font-medium">
-                          Choose whether this task has a deadline or stays open indefinitely.
-                        </div>
-                      </div>
-
-                      {/* Dropdown Selector for Deadline Mode */}
-                      <div>
-                        <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-600 mb-1">
-                          Select Due Date / Deadline Mode
-                        </label>
-                        <select
-                          value={newDueDateType}
-                          onChange={(e) => setNewDueDateType(e.target.value as 'period' | 'custom' | 'none')}
-                          className="w-full rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-xs font-bold text-indigo-950 focus:border-indigo-600 focus:outline-none cursor-pointer shadow-2xs"
-                        >
-                          <option value="none">✨ No Due Date (Open Task - Active Indefinitely)</option>
-                          <option value="period">⏱️ Submission Period (Active window e.g. 7 days, 14 days, 30 days)</option>
-                          <option value="custom">📅 Specific Calendar Due Date (Pick exact deadline date)</option>
-                        </select>
-                      </div>
-
-                      {/* Submission Period configuration */}
-                      {newDueDateType === 'period' && (
-                        <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3.5 space-y-2.5 animate-fadeIn">
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                            <label className="block text-[11px] font-bold text-indigo-950 uppercase tracking-wider">
-                              Submission Window Duration:
-                            </label>
-                            <select
-                              value={newDuePeriodDays}
-                              onChange={(e) => setNewDuePeriodDays(Number(e.target.value))}
-                              className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-bold text-indigo-900 focus:border-indigo-600 focus:outline-none cursor-pointer"
+                        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                          {[
+                            { days: 3, label: '3d' },
+                            { days: 5, label: '5d' },
+                            { days: 7, label: '7d (1w)' },
+                            { days: 10, label: '10d' },
+                            { days: 14, label: '14d (2w)' },
+                            { days: 21, label: '21d (3w)' },
+                            { days: 30, label: '30d (1m)' },
+                          ].map((opt) => (
+                            <button
+                              key={opt.days}
+                              type="button"
+                              onClick={() => setNewDuePeriodDays(opt.days)}
+                              className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition-all cursor-pointer ${
+                                newDuePeriodDays === opt.days
+                                  ? 'bg-indigo-600 text-white shadow-2xs'
+                                  : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                              }`}
                             >
-                              <option value={3}>3 Days</option>
-                              <option value={5}>5 Days</option>
-                              <option value={7}>7 Days (1 Week) - Standard</option>
-                              <option value={10}>10 Days</option>
-                              <option value={14}>14 Days (2 Weeks)</option>
-                              <option value={21}>21 Days (3 Weeks)</option>
-                              <option value={30}>30 Days (1 Month)</option>
-                            </select>
-                          </div>
-
-                          {/* Quick Select Duration Buttons */}
-                          <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                            {[
-                              { days: 3, label: '3d' },
-                              { days: 5, label: '5d' },
-                              { days: 7, label: '7d (1w)' },
-                              { days: 10, label: '10d' },
-                              { days: 14, label: '14d (2w)' },
-                              { days: 21, label: '21d (3w)' },
-                              { days: 30, label: '30d (1m)' },
-                            ].map((opt) => (
-                              <button
-                                key={opt.days}
-                                type="button"
-                                onClick={() => setNewDuePeriodDays(opt.days)}
-                                className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition-all cursor-pointer ${
-                                  newDuePeriodDays === opt.days
-                                    ? 'bg-indigo-600 text-white shadow-2xs'
-                                    : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
-                                }`}
-                              >
-                                {opt.label}
-                              </button>
-                            ))}
-                          </div>
-
-                          <div className="text-[11px] font-semibold text-indigo-900 pt-1.5 flex items-center gap-1.5 border-t border-indigo-200/60">
-                            <Check className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
-                            <span>
-                              Final Deadline will be:{' '}
-                              <strong className="text-indigo-950 font-black">{calculateDueDateFromPeriod(newDuePeriodDays)} (11:59 PM)</strong>
-                            </span>
-                          </div>
+                              {opt.label}
+                            </button>
+                          ))}
                         </div>
-                      )}
 
-                      {/* Custom Date Picker */}
-                      {newDueDateType === 'custom' && (
-                        <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3.5 space-y-2.5 animate-fadeIn">
-                          <label className="block text-[11px] font-bold text-indigo-950 uppercase tracking-wider">
-                            Pick Exact Calendar Deadline Date:
-                          </label>
-                          <input
-                            type="date"
-                            min={getTodayDateString()}
-                            value={newCustomDueDate}
-                            onChange={(e) => setNewCustomDueDate(e.target.value)}
-                            className="w-full sm:w-auto rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-xs font-bold text-indigo-950 focus:border-indigo-600 focus:outline-none cursor-pointer"
-                          />
-                          <div className="text-[11px] font-semibold text-indigo-900 pt-1.5 flex items-center gap-1.5 border-t border-indigo-200/60">
-                            <Check className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
-                            <span>
-                              Deadline set to:{' '}
-                              <strong className="text-indigo-950 font-black">{newCustomDueDate || 'Please select date'} (11:59 PM)</strong>
-                            </span>
-                          </div>
+                        <div className="text-[11px] font-semibold text-indigo-900 pt-1.5 flex items-center gap-1.5 border-t border-indigo-200/60">
+                          <Check className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                          <span>
+                            Final Deadline will be:{' '}
+                            <strong className="text-indigo-950 font-black">{calculateDueDateFromPeriod(newDuePeriodDays)} (11:59 PM)</strong>
+                          </span>
                         </div>
-                      )}
-                    </div>
+                      </div>
+                    )}
 
-                    {publishError && (
-                      <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 font-bold text-rose-700 flex items-center gap-2 text-xs">
-                        <ShieldAlert className="h-4 w-4 shrink-0 text-rose-600" />
-                        <span>{publishError}</span>
+                    {newDueDateType === 'custom' && (
+                      <div className="rounded-xl border border-indigo-100 bg-indigo-50/60 p-3.5 space-y-2.5 animate-fadeIn">
+                        <label className="block text-[11px] font-bold text-indigo-950 uppercase tracking-wider">
+                          Pick Exact Calendar Deadline Date:
+                        </label>
+                        <input
+                          type="date"
+                          min={getTodayDateString()}
+                          value={newCustomDueDate}
+                          onChange={(e) => setNewCustomDueDate(e.target.value)}
+                          className="w-full sm:w-auto rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-xs font-bold text-indigo-950 focus:border-indigo-600 focus:outline-none cursor-pointer"
+                        />
+                        <div className="text-[11px] font-semibold text-indigo-900 pt-1.5 flex items-center gap-1.5 border-t border-indigo-200/60">
+                          <Check className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                          <span>
+                            Deadline set to:{' '}
+                            <strong className="text-indigo-950 font-black">{newCustomDueDate || 'Please select date'} (11:59 PM)</strong>
+                          </span>
+                        </div>
                       </div>
                     )}
                   </div>
 
-                  {/* Sticky Footer: Always in sight with Cancel/Back & Submit buttons */}
-                  <div className="shrink-0 border-t border-slate-200 bg-slate-50/95 px-5 sm:px-6 py-3.5 flex items-center justify-between gap-3">
+                  {publishError && (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 font-bold text-rose-700 flex items-center gap-2 text-xs">
+                      <ShieldAlert className="h-4 w-4 shrink-0 text-rose-600" />
+                      <span>{publishError}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Sticky Footer: Step 1 Actions */}
+                <div className="shrink-0 border-t border-slate-200 bg-slate-50/95 px-5 sm:px-6 py-3.5 flex items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowAssignModal(false)}
+                    disabled={isGeneratingPreview}
+                    className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 font-bold text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5 text-slate-500" />
+                    <span>Cancel</span>
+                  </button>
+                  
+                  <button
+                    type="submit"
+                    disabled={isGeneratingPreview || !newTopic.trim()}
+                    className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 font-bold text-white shadow-xs hover:bg-indigo-700 transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    {isGeneratingPreview ? (
+                      <>
+                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+                        <span>Generating Preview…</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-4 w-4" />
+                        <span>Generate & Review Task →</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              /* STEP 2: PREVIEW, LIVE EDIT & AI CALIBRATION */
+              <div className="flex flex-col flex-1 overflow-hidden text-xs">
+                {/* Scrollable Preview & Edit Body */}
+                <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-5">
+                  {/* Status Banner */}
+                  <div className="rounded-2xl border border-indigo-200 bg-indigo-50/50 p-4 flex items-start gap-3 shadow-2xs">
+                    <div className="rounded-xl bg-indigo-600 p-2 text-white shrink-0">
+                      <Eye className="h-4 w-4" />
+                    </div>
+                    <div className="flex-1">
+                      <h4 className="text-xs font-bold text-indigo-950">
+                        Generated Task Preview ({formatClassLabel(newMypYear)})
+                      </h4>
+                      <p className="text-[11px] text-indigo-900/80 leading-relaxed mt-0.5">
+                        First review your task below. You can directly edit the title, context scenario, question prompts, and student sentence starters, or use the AI tools to calibrate difficulty. Once satisfied, click <strong>"Publish & Assign to Students"</strong> below.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Feedback Flash Message */}
+                  {refineFeedbackMsg && (
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 font-bold text-emerald-800 flex items-center gap-2 text-xs animate-fadeIn">
+                      <Check className="h-4 w-4 text-emerald-600 shrink-0" />
+                      <span>{refineFeedbackMsg}</span>
+                    </div>
+                  )}
+
+                  {publishError && (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 font-bold text-rose-700 flex items-center gap-2 text-xs">
+                      <ShieldAlert className="h-4 w-4 shrink-0 text-rose-600" />
+                      <span>{publishError}</span>
+                    </div>
+                  )}
+
+                  {/* AI Calibration & Revision Toolbar */}
+                  <div className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <Wand2 className="h-4 w-4 text-indigo-600" />
+                        <span className="text-xs font-bold text-slate-900">AI Difficulty Calibration & Custom Revision</span>
+                      </div>
+                      <span className="text-[10px] text-slate-500 font-medium">
+                        Instant adjustments without losing your task structure
+                      </span>
+                    </div>
+
+                    {/* Quick Difficulty Calibrator Buttons */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      <button
+                        type="button"
+                        disabled={isRefiningTask}
+                        onClick={() => handleCalibrateDifficulty('simplify')}
+                        className="rounded-xl border border-amber-200 bg-amber-50/70 p-2.5 text-left hover:bg-amber-100/70 transition-all flex items-center gap-2.5 cursor-pointer disabled:opacity-50 group shadow-2xs"
+                      >
+                        <div className="rounded-lg bg-amber-500 text-white p-1.5 shrink-0 group-hover:scale-105 transition-transform">
+                          <Sliders className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-amber-950">Too Hard? Simplify & Scaffold</div>
+                          <div className="text-[10px] text-amber-800/80">Softens vocabulary & adds guided sub-steps for {newMypYear ? `MYP ${newMypYear}` : 'cohort'}</div>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={isRefiningTask}
+                        onClick={() => handleCalibrateDifficulty('elevate')}
+                        className="rounded-xl border border-purple-200 bg-purple-50/70 p-2.5 text-left hover:bg-purple-100/70 transition-all flex items-center gap-2.5 cursor-pointer disabled:opacity-50 group shadow-2xs"
+                      >
+                        <div className="rounded-lg bg-purple-600 text-white p-1.5 shrink-0 group-hover:scale-105 transition-transform">
+                          <TrendingUp className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <div className="text-xs font-bold text-purple-950">Too Easy? Elevate Scientific Rigor</div>
+                          <div className="text-[10px] text-purple-800/80">Enhances critical evaluation, experimental errors & depth</div>
+                        </div>
+                      </button>
+                    </div>
+
+                    {/* Custom instruction prompt bar */}
+                    <div className="pt-1 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                      <div className="relative flex-1">
+                        <input
+                          type="text"
+                          value={refineInstructionInput}
+                          onChange={(e) => setRefineInstructionInput(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleApplyCustomRefine(refineInstructionInput);
+                            }
+                          }}
+                          placeholder="e.g. Change scenario context to a local river ecosystem, or make questions shorter..."
+                          disabled={isRefiningTask}
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:outline-none placeholder:text-slate-400"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        disabled={isRefiningTask || !refineInstructionInput.trim()}
+                        onClick={() => handleApplyCustomRefine(refineInstructionInput)}
+                        className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-600 transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5 shrink-0 cursor-pointer shadow-xs"
+                      >
+                        {isRefiningTask ? (
+                          <>
+                            <div className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+                            <span>Applying…</span>
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-3.5 w-3.5" />
+                            <span>Apply AI Revision</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {previewTask && (
+                    <div className="space-y-4">
+                      {/* Editable Task Title */}
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-2 shadow-2xs">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                            <Edit3 className="h-3.5 w-3.5 text-indigo-600" />
+                            <span>Task Title (Live Editable)</span>
+                          </label>
+                          <span className="text-[10px] text-slate-400">Directly editable</span>
+                        </div>
+                        <input
+                          type="text"
+                          value={previewTask.title}
+                          onChange={(e) => handleUpdateTaskTitle(e.target.value)}
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50/60 px-3.5 py-2 text-xs font-bold text-slate-900 focus:border-indigo-600 focus:bg-white focus:outline-none"
+                        />
+                        <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-slate-500 font-medium">
+                          <span className="rounded-md bg-slate-100 px-2 py-0.5 font-bold text-slate-700">
+                            {previewTask.subject || newSubject}
+                          </span>
+                          <span className="rounded-md bg-indigo-50 px-2 py-0.5 font-bold text-indigo-700">
+                            {previewTask.atl_category || newCategory} • {previewTask.atl_cluster || newCluster}
+                          </span>
+                          {previewTask.idu_subject && (
+                            <span className="rounded-md bg-amber-50 px-2 py-0.5 font-bold text-amber-800">
+                              IDU: {previewTask.idu_subject}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Editable Context / Scenario */}
+                      <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-2 shadow-2xs">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                            <BookOpen className="h-3.5 w-3.5 text-indigo-600" />
+                            <span>Inquiry Scenario & Context (Stimulus)</span>
+                          </label>
+                          <span className="text-[10px] text-slate-400">Directly editable</span>
+                        </div>
+                        <textarea
+                          rows={4}
+                          value={previewTask.context}
+                          onChange={(e) => handleUpdateTaskContext(e.target.value)}
+                          className="w-full rounded-xl border border-slate-200 bg-slate-50/60 p-3 text-xs leading-relaxed text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
+                        />
+                      </div>
+
+                      {/* Dataset Display (if present) */}
+                      {previewTask.dataset && (
+                        <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-2.5 shadow-2xs">
+                          <div className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                            <FileSpreadsheet className="h-3.5 w-3.5 text-indigo-600" />
+                            <span>Scientific Stimulus Dataset ({previewTask.dataset.title})</span>
+                          </div>
+                          <div className="overflow-x-auto rounded-xl border border-slate-200">
+                            <table className="w-full text-[11px] text-left">
+                              <thead className="bg-slate-100/90 text-slate-700 font-bold border-b border-slate-200">
+                                <tr>
+                                  {previewTask.dataset.headers.map((h, i) => (
+                                    <th key={i} className="px-3 py-2">{h}</th>
+                                  ))}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100 font-medium">
+                                {previewTask.dataset.rows.map((row, rIdx) => (
+                                  <tr key={rIdx} className="hover:bg-slate-50/70">
+                                    {row.map((cell, cIdx) => (
+                                      <td key={cIdx} className="px-3 py-1.5 text-slate-800">{cell}</td>
+                                    ))}
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Question Parts with Surgical Regeneration Tools */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                            <Target className="h-4 w-4 text-indigo-600" />
+                            <span>Task Question Parts ({previewTask.parts?.length || 0} Questions)</span>
+                          </h4>
+                          <span className="text-[10px] text-slate-500">
+                            Edit directly or click surgical tools to calibrate specific questions
+                          </span>
+                        </div>
+
+                        {previewTask.parts?.map((part, pIdx) => {
+                          const isRefiningThisPart = activeRefiningPartIndex === pIdx;
+                          return (
+                            <div key={pIdx} className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3 shadow-2xs">
+                              {/* Part Header & Surgical Actions */}
+                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                                <div className="flex items-center gap-2">
+                                  <span className="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-2 py-1 text-xs font-black text-white">
+                                    Part {String.fromCharCode(65 + pIdx)}
+                                  </span>
+                                  <span className="font-bold text-slate-800 text-xs">
+                                    {part.label || `Question ${pIdx + 1}`}
+                                  </span>
+                                  {part.criterion_assessed && (
+                                    <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">
+                                      Criterion {part.criterion_assessed}
+                                    </span>
+                                  )}
+                                </div>
+
+                                {/* Single Part AI Quick Actions */}
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    disabled={isRefiningTask || activeRefiningPartIndex !== null}
+                                    onClick={() => handleRegeneratePart(pIdx, `Make Part ${pIdx + 1} simpler with accessible language, extra scaffolding, and clear step-by-step guidance.`)}
+                                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold text-slate-600 hover:bg-amber-50 hover:text-amber-800 hover:border-amber-200 transition-colors cursor-pointer disabled:opacity-40"
+                                    title="Make this specific question simpler"
+                                  >
+                                    📉 Simpler
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    disabled={isRefiningTask || activeRefiningPartIndex !== null}
+                                    onClick={() => handleRegeneratePart(pIdx, `Elevate Part ${pIdx + 1} with higher-order inquiry, critical variable analysis, and justification.`)}
+                                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[10px] font-bold text-slate-600 hover:bg-purple-50 hover:text-purple-800 hover:border-purple-200 transition-colors cursor-pointer disabled:opacity-40"
+                                    title="Make this specific question harder"
+                                  >
+                                    📈 Harder
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    disabled={isRefiningTask || activeRefiningPartIndex !== null}
+                                    onClick={() => handleRegeneratePart(pIdx)}
+                                    className="rounded-lg border border-indigo-200 bg-indigo-50/70 px-2.5 py-1 text-[10px] font-bold text-indigo-700 hover:bg-indigo-100 transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-40"
+                                    title="Regenerate this specific question"
+                                  >
+                                    <RefreshCw className={`h-3 w-3 ${isRefiningThisPart ? 'animate-spin' : ''}`} />
+                                    <span>{isRefiningThisPart ? 'Refining…' : 'Regenerate'}</span>
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* Editable Question Prompt */}
+                              <div className="space-y-1">
+                                <label className="text-[11px] font-bold text-slate-700 flex items-center justify-between">
+                                  <span>Question Prompt</span>
+                                  <span className="text-[10px] text-slate-400 font-normal">Editable</span>
+                                </label>
+                                <textarea
+                                  rows={3}
+                                  value={part.prompt}
+                                  onChange={(e) => handleUpdatePartField(pIdx, 'prompt', e.target.value)}
+                                  className="w-full rounded-xl border border-slate-200 bg-slate-50/60 p-2.5 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
+                                />
+                              </div>
+
+                              {/* Editable Student Scaffold / Sentence Starter */}
+                              <div className="space-y-1">
+                                <label className="text-[11px] font-bold text-indigo-900 flex items-center justify-between">
+                                  <span>Student Scaffold / Sentence Starter (Placeholder)</span>
+                                  <span className="text-[10px] text-indigo-500 font-normal">Editable</span>
+                                </label>
+                                <input
+                                  type="text"
+                                  value={part.placeholder || ''}
+                                  onChange={(e) => handleUpdatePartField(pIdx, 'placeholder', e.target.value)}
+                                  placeholder="e.g. As temperature increased from 20°C to 40°C, the enzyme rate..."
+                                  className="w-full rounded-xl border border-indigo-200/80 bg-indigo-50/30 px-3 py-2 text-xs font-medium text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
+                                />
+                              </div>
+
+                              {/* Exemplar / Evaluation Guidance */}
+                              {part.exemplar && (
+                                <div className="rounded-xl border border-slate-100 bg-slate-50/70 p-2.5 text-[11px] space-y-1">
+                                  <div className="font-bold text-slate-600 uppercase tracking-wider text-[10px]">
+                                    Expected Scientific Response / Rubric Target:
+                                  </div>
+                                  <p className="text-slate-700 italic">{part.exemplar}</p>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Sticky Footer: Step 2 Final Actions */}
+                <div className="shrink-0 border-t border-slate-200 bg-slate-50/95 px-5 sm:px-6 py-3.5 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => setShowAssignModal(false)}
-                      disabled={isPublishingTask}
-                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 font-bold text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                      onClick={() => setAssignModalStep('configure')}
+                      disabled={isPublishingTask || isRefiningTask}
+                      className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
                     >
                       <ArrowLeft className="h-3.5 w-3.5 text-slate-500" />
-                      <span>Cancel / Go Back</span>
+                      <span>Back to Parameters</span>
                     </button>
-                    
+
                     <button
-                      type="submit"
-                      disabled={isPublishingTask}
-                      className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 font-bold text-white shadow-xs hover:bg-indigo-700 transition-colors disabled:opacity-50 cursor-pointer"
+                      type="button"
+                      onClick={() => handleGenerateAndPreview()}
+                      disabled={isPublishingTask || isRefiningTask}
+                      className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                      title="Regenerate the whole task from scratch"
                     >
-                      {isPublishingTask ? (
-                        <>
-                          <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
-                          <span>Generating & Publishing…</span>
-                        </>
-                      ) : (
-                        <>
-                          <Sparkles className="h-4 w-4" />
-                          <span>Generate & Assign Task</span>
-                        </>
-                      )}
+                      <RefreshCw className="h-3.5 w-3.5 text-slate-500" />
+                      <span>Re-roll Task</span>
                     </button>
                   </div>
-                </>
-              )}
-            </form>
+
+                  <button
+                    type="button"
+                    onClick={handlePublishFinalTask}
+                    disabled={isPublishingTask || isRefiningTask || !previewTask}
+                    className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-6 py-2.5 font-bold text-white shadow-xs hover:bg-emerald-700 transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    {isPublishingTask ? (
+                      <>
+                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent"></div>
+                        <span>Publishing to Student Portals…</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="h-4 w-4" />
+                        <span>Publish & Assign Task to Students</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -2856,6 +3564,97 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           academicYear={academicYear}
           onClose={() => setShowToddleManagerModal(false)}
           onOpenStudentPortal={onOpenStudentPortal}
+        />
+      )}
+
+      {/* ChatGPT & Custom Task Creator Modal */}
+      <CustomTaskCreatorModal
+        isOpen={showCustomCreatorModal}
+        onClose={() => setShowCustomCreatorModal(false)}
+        onCreateTask={async (data) => {
+          if (onCreateAssignedTask) {
+            await onCreateAssignedTask({
+              teacherName: data.teacherName,
+              subject: data.subject,
+              topic: data.topic,
+              mypYear: data.mypYear,
+              category: data.category,
+              cluster: data.cluster,
+              academicYear: data.academicYear,
+              dueDate: data.dueDate,
+              finalTask: data.finalTask,
+              targetStudentNames: data.targetStudentNames,
+            });
+          }
+        }}
+        defaultTeacherName={assignedTeacherFilter !== 'All' ? assignedTeacherFilter : ''}
+        defaultMypYear={assignedClassFilter !== 'All' ? assignedClassFilter : 'All'}
+        academicYear={academicYear}
+      />
+
+      {/* Task Reassignment & Individual Student Selector Modal */}
+      {taskToReassign && (
+        <TaskAssignmentModal
+          isOpen={!!taskToReassign}
+          onClose={() => setTaskToReassign(null)}
+          task={taskToReassign}
+          onSave={async (taskId, updates) => {
+            if (onUpdateAssignedTask) {
+              await onUpdateAssignedTask(taskId, updates);
+            }
+          }}
+        />
+      )}
+
+      {/* Full Task Detail Viewer Modal */}
+      {taskDetailLog && (
+        <TaskDetailModal
+          isOpen={!!taskDetailLog}
+          onClose={() => setTaskDetailLog(null)}
+          log={taskDetailLog}
+          onGradeClick={
+            onUpdateTaskLog
+              ? () => {
+                  const targetLog = taskDetailLog;
+                  setTaskDetailLog(null);
+                  setTeacherGradingLog(targetLog);
+                }
+              : undefined
+          }
+        />
+      )}
+
+      {/* Teacher Grading, Corrections & Badge Awarding Modal */}
+      {teacherGradingLog && (
+        <TeacherGradingModal
+          isOpen={!!teacherGradingLog}
+          onClose={() => setTeacherGradingLog(null)}
+          log={teacherGradingLog}
+          onSaveGrade={async (evalData, badge) => {
+            if (teacherGradingLog && onUpdateTaskLog) {
+              const effectiveScore = evalData.formativeScore ?? evalData.score ?? 5;
+              await onUpdateTaskLog(teacherGradingLog.id, {
+                formativeScore: effectiveScore,
+                level: evalData.level,
+                status: 'graded',
+                feedback: {
+                  formativeScore: effectiveScore,
+                  level: evalData.level,
+                  summary: evalData.feedback || evalData.overallFeedback || 'Teacher evaluation completed.',
+                  strengths: evalData.strengths || [],
+                  next_steps: evalData.nextSteps || [],
+                  rubric_matrix: evalData.rubricMatrix || []
+                },
+                teacherEvaluation: {
+                  ...evalData,
+                  formativeScore: effectiveScore,
+                  badgeAwarded: badge
+                },
+                badgeAwarded: badge || teacherGradingLog.badgeAwarded
+              });
+            }
+            setTeacherGradingLog(null);
+          }}
         />
       )}
     </div>

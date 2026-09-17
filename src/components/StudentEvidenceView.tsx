@@ -1,5 +1,14 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { ATLTaskLog, ATLCategoryKey, AssignedTask, GeneratedTask, StudentResponseItem } from '../types';
+import {
+  ATLTaskLog,
+  ATLCategoryKey,
+  AssignedTask,
+  GeneratedTask,
+  StudentResponseItem,
+  TaskImageAttachment,
+  DigitalBadge,
+  TeacherEvaluation
+} from '../types';
 import { ATL_DATA, ALL_CLUSTERS, SAMPLE_ASSIGNED_TASKS } from '../data/atlData';
 import { exportToWordDoc, exportToPdf, resolveSkillIndicators } from '../lib/exportUtils';
 import {
@@ -13,6 +22,11 @@ import {
 } from '../lib/evidenceUtils';
 import { evaluateTaskClient, generateTaskClient } from '../lib/geminiClient';
 import { resolveFormativeScore } from '../lib/scoreUtils';
+import { calculateStudentMilestoneBadges } from '../lib/badgeUtils';
+import { compressImage } from '../utils/imageOptimizer';
+import { TaskDetailModal } from './TaskDetailModal';
+import { TeacherGradingModal } from './TeacherGradingModal';
+import { DigitalBadgesGallery } from './DigitalBadgesGallery';
 import {
   Award,
   BookOpen,
@@ -48,7 +62,14 @@ import {
   RotateCcw,
   BarChart3,
   CheckSquare,
-  ListTodo
+  ListTodo,
+  Trophy,
+  Image as ImageIcon,
+  Upload,
+  Trash2,
+  Paperclip,
+  Eye,
+  X
 } from 'lucide-react';
 import {
   BarChart,
@@ -79,6 +100,7 @@ interface StudentEvidenceViewProps {
   availableStudents?: string[];
   onSelectStudent?: (name: string) => void;
   onSaveTaskLog?: (newLog: ATLTaskLog) => Promise<void>;
+  onUpdateTaskLog?: (logId: string, partial: Partial<ATLTaskLog>) => Promise<void>;
   onSaveReflection?: (logId: string, reflection: string) => Promise<void>;
   customApiKey?: string;
 }
@@ -124,11 +146,12 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
   availableStudents = [],
   onSelectStudent,
   onSaveTaskLog,
+  onUpdateTaskLog,
   onSaveReflection,
   customApiKey
 }) => {
-  // Navigation within student folder: 'assigned' | 'analytics' | 'portfolio'
-  const [activeTab, setActiveTab] = useState<'assigned' | 'analytics' | 'portfolio'>('assigned');
+  // Navigation within student folder: 'assigned' | 'analytics' | 'portfolio' | 'badges'
+  const [activeTab, setActiveTab] = useState<'assigned' | 'analytics' | 'portfolio' | 'badges'>('assigned');
 
   // Local Student Name & Class state (allows student to enter / update their name and class)
   const [currentStudentName, setCurrentStudentName] = useState<string>(() => {
@@ -158,10 +181,17 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
   const [copiedToken, setCopiedToken] = useState<boolean>(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  const [showAllSchoolTasks, setShowAllSchoolTasks] = useState<boolean>(false);
 
-  // Active Task Solving State
+  // Modals for Task Detail, Grading, and Image Preview
+  const [detailModalLog, setDetailModalLog] = useState<ATLTaskLog | null>(null);
+  const [gradingModalLog, setGradingModalLog] = useState<ATLTaskLog | null>(null);
+  const [previewModalImage, setPreviewModalImage] = useState<string | null>(null);
+
+  // Active Task Solving State & Student Attachments
   const [activeSolvingTask, setActiveSolvingTask] = useState<AssignedTask | null>(null);
   const [customPracticeTask, setCustomPracticeTask] = useState<GeneratedTask | null>(null);
+  const [studentAttachments, setStudentAttachments] = useState<Record<number, TaskImageAttachment[]>>({});
   const [practiceMeta, setPracticeMeta] = useState<{
     subject: string;
     topic: string;
@@ -213,45 +243,106 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
     });
   }, [logs, effectiveStudentName, effectiveMypYear, effectiveToken, studentId, academicYear]);
 
-  // Relevant Assigned Tasks for this student - Class isolation with curriculum default fallback
+  // Compute all earned badges for this student (Teacher Awarded + Milestones & Mastery)
+  const allEarnedBadges = useMemo(() => {
+    const teacherBadges: DigitalBadge[] = [];
+    studentLogs.forEach((log) => {
+      const badge = log.teacherEvaluation?.badgeAwarded || log.badgeAwarded;
+      if (badge && !teacherBadges.some((b) => b.id === badge.id)) {
+        teacherBadges.push({
+          ...badge,
+          taskLogId: log.id,
+          taskTitle: log.taskTitle || log.topic,
+          earnedAt: badge.earnedAt || log.date || 'Recent'
+        });
+      }
+    });
+
+    const milestoneBadges = calculateStudentMilestoneBadges(studentLogs);
+    const combined = [...teacherBadges];
+    milestoneBadges.forEach((mb) => {
+      if (!combined.some((b) => b.id === mb.id)) {
+        combined.push(mb);
+      }
+    });
+    return combined;
+  }, [studentLogs]);
+
+  // Handle student photo/diagram file attachment upload with automatic client-side compression
+  const handleStudentAttachmentUpload = async (partIndex: number, file: File) => {
+    if (!file.type.startsWith('image/')) return;
+    try {
+      const dataUrl = await compressImage(file, {
+        maxWidth: 1280,
+        maxHeight: 1280,
+        quality: 0.75,
+        targetMaxBytes: 250 * 1024
+      });
+      const newAtt: TaskImageAttachment = {
+        id: `att-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
+        url: dataUrl,
+        name: file.name,
+        caption: file.name.replace(/\.[^/.]+$/, '')
+      };
+      setStudentAttachments((prev) => ({
+        ...prev,
+        [partIndex]: [...(prev[partIndex] || []), newAtt]
+      }));
+    } catch (err) {
+      console.error('Failed to compress student upload:', err);
+    }
+  };
+
+  // Relevant Assigned Tasks for this student - Class matching with whole school, targeted student & custom task support
   const relevantAssignedTasks = useMemo(() => {
     const cleanStudentYear = normalizeMypYear(effectiveMypYear);
     const pool = (assignedTasks && assignedTasks.length > 0) ? assignedTasks : SAMPLE_ASSIGNED_TASKS;
 
+    // If student/teacher chose to view all school tasks across all cohorts:
+    if (showAllSchoolTasks) {
+      return pool.filter((t) => t.active !== false);
+    }
+
     const matched = pool.filter((t) => {
       if (t.active === false) return false;
 
-      // Strict Class (MYP Year) matching: Only tasks for this student's class (or 'All') are shown
-      const cleanTaskYear = t.mypYear ? normalizeMypYear(t.mypYear) : '';
-      const isClassMatch = t.mypYear === 'All' || (cleanTaskYear && cleanTaskYear === cleanStudentYear);
-      if (!isClassMatch) {
-        return false;
-      }
-
-      // If targeted to specific students, this student's name must be in the list
       const hasSpecificTargetStudents = Array.isArray(t.targetStudentNames) && t.targetStudentNames.length > 0;
+
+      // 1. If targeted to specific students:
       if (hasSpecificTargetStudents) {
-        const isTargeted = t.targetStudentNames!.some((n) =>
-          isSameStudent(n, effectiveStudentName, t.mypYear, effectiveMypYear)
+        return t.targetStudentNames!.some((n) =>
+          isSameStudent(n, effectiveStudentName, t.mypYear, effectiveMypYear) ||
+          (studentId && n.includes(studentId)) ||
+          n.trim().toLowerCase() === effectiveStudentName.trim().toLowerCase()
         );
-        if (!isTargeted) {
-          return false;
-        }
       }
 
-      const matchAcademicYear = !t.academicYear || !academicYear || t.academicYear === academicYear;
-      return matchAcademicYear;
+      // 2. Class / Whole School matching (for tasks without specific individual targets):
+      const cleanTaskYear = t.mypYear ? normalizeMypYear(t.mypYear) : '';
+      const isClassMatch =
+        t.mypYear === 'All' ||
+        !t.mypYear ||
+        cleanTaskYear === cleanStudentYear ||
+        cleanTaskYear === '';
+
+      return isClassMatch;
     });
 
     if (matched.length === 0) {
-      return SAMPLE_ASSIGNED_TASKS.filter((st) => {
-        const cleanStYear = st.mypYear ? normalizeMypYear(st.mypYear) : '';
-        return st.active !== false && (st.mypYear === 'All' || cleanStYear === cleanStudentYear);
+      // Fallback: If no tasks for this specific class, show active non-targeted tasks across the school
+      const generalTasks = pool.filter((t) => {
+        if (t.active === false) return false;
+        const hasSpecific = Array.isArray(t.targetStudentNames) && t.targetStudentNames.length > 0;
+        return !hasSpecific;
       });
+      if (generalTasks.length > 0) {
+        return generalTasks;
+      }
+      return SAMPLE_ASSIGNED_TASKS.filter((st) => st.active !== false);
     }
 
     return matched;
-  }, [assignedTasks, effectiveMypYear, effectiveStudentName, academicYear]);
+  }, [assignedTasks, effectiveMypYear, effectiveStudentName, studentId, showAllSchoolTasks]);
 
   // Check completion status for assigned tasks
   const assignedTasksWithStatus = useMemo(() => {
@@ -375,20 +466,46 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
     });
   }, [studentLogs]);
 
-  // Chronological Score Progression Data
+  // Chronological Score Progression Data (filtering evaluated tasks with scores)
   const scoreProgressionData = useMemo(() => {
-    const sorted = [...studentLogs].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const evaluatedLogs = studentLogs.filter(
+      (log) =>
+        log.status !== 'pending_review' &&
+        (typeof log.formativeScore === 'number' ||
+          (log.feedback && typeof log.feedback.formativeScore === 'number') ||
+          log.teacherEvaluation)
+    );
+    const sorted = [...evaluatedLogs].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
     return sorted.map((log, idx) => {
-      const score = typeof log.formativeScore === 'number'
-        ? log.formativeScore
-        : (log.feedback && typeof log.feedback.formativeScore === 'number' ? log.feedback.formativeScore : resolveFormativeScore(log));
+      const score =
+        typeof log.formativeScore === 'number'
+          ? log.formativeScore
+          : log.feedback && typeof log.feedback.formativeScore === 'number'
+          ? log.feedback.formativeScore
+          : resolveFormativeScore(log);
+
+      const prevScore =
+        idx > 0
+          ? typeof sorted[idx - 1].formativeScore === 'number'
+            ? sorted[idx - 1].formativeScore!
+            : resolveFormativeScore(sorted[idx - 1])
+          : null;
+
+      const diff = prevScore !== null ? Number((score - prevScore).toFixed(1)) : null;
+
       return {
+        id: log.id,
         taskNumber: `Task ${idx + 1}`,
         date: log.date ? log.date.split('T')[0] : `Task ${idx + 1}`,
         score: score || 0,
+        diff,
         title: log.taskTitle || log.topic,
-        level: log.level,
-        cluster: log.cluster
+        level: log.level || 'Applying',
+        cluster: log.cluster,
+        subject: log.subject,
+        teacherName: log.teacherEvaluation?.gradedBy || 'Teacher',
+        feedback: log.teacherEvaluation?.feedback || log.feedback?.summary || '',
+        badge: log.badgeAwarded || log.teacherEvaluation?.badgeAwarded
       };
     });
   }, [studentLogs]);
@@ -515,8 +632,11 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
       const responseItems: StudentResponseItem[] = Object.entries(studentResponses).map(([idx, text]) => ({
         label: currentTask.parts[Number(idx)]?.label || String.fromCharCode(65 + Number(idx)),
         prompt: currentTask.parts[Number(idx)]?.prompt || '',
-        response: typeof text === 'string' ? text : ''
+        response: typeof text === 'string' ? text : '',
+        attachments: studentAttachments[Number(idx)] || []
       }));
+
+      const allAttachments = Object.values(studentAttachments).flat();
 
       const newLog: ATLTaskLog = {
         id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
@@ -547,6 +667,9 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
           feedback: evaluationFeedback
         }),
         responses: responseItems,
+        originalTask: currentTask,
+        stimulusImages: currentTask.stimulusImages || [],
+        studentAttachments: allAttachments,
         feedback: evaluationFeedback,
         studentReflection: metacognitiveReflection || undefined,
         assignedTaskId: activeSolvingTask?.id,
@@ -565,6 +688,84 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
     } catch (err: any) {
       console.error('Failed to save task to portfolio:', err);
       setErrorMessage(err.message || 'Failed to save to portfolio.');
+    } finally {
+      setIsSavingLog(false);
+    }
+  };
+
+  // Submit Directly for Teacher Review & Grading
+  const handleSubmitDirectToTeacher = async () => {
+    const currentTask = activeSolvingTask ? activeSolvingTask.task : customPracticeTask;
+    if (!currentTask || !onSaveTaskLog) return;
+
+    const hasResponse =
+      Object.values(studentResponses).some((r) => typeof r === 'string' && r.trim().length > 0) ||
+      Object.values(studentAttachments).some((arr) => arr.length > 0);
+
+    if (!hasResponse) {
+      setErrorMessage('Please provide a response or attach work before submitting.');
+      return;
+    }
+
+    setIsSavingLog(true);
+    setErrorMessage(null);
+
+    try {
+      const responseItems: StudentResponseItem[] = Object.entries(studentResponses).map(([idx, text]) => ({
+        label: currentTask.parts[Number(idx)]?.label || String.fromCharCode(65 + Number(idx)),
+        prompt: currentTask.parts[Number(idx)]?.prompt || '',
+        response: typeof text === 'string' ? text : '',
+        attachments: studentAttachments[Number(idx)] || []
+      }));
+
+      const allAttachments = Object.values(studentAttachments).flat();
+
+      const newLog: ATLTaskLog = {
+        id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+        date: new Date().toISOString().split('T')[0],
+        academicYear,
+        term: activeSolvingTask?.term || 'Term 1',
+        studentName: effectiveStudentName,
+        subject: activeSolvingTask?.subject || practiceMeta.subject,
+        topic: activeSolvingTask?.topic || practiceMeta.topic,
+        mypYear: effectiveMypYear,
+        category: activeSolvingTask?.category || practiceMeta.category,
+        cluster: activeSolvingTask?.cluster || practiceMeta.cluster,
+        level: 'Applying',
+        formativeScore: 5,
+        taskTitle: currentTask.title,
+        skillIndicators: currentTask.skill_indicators || [
+          'Demonstrates understanding of concepts',
+          'Applies structured ATL approaches to inquiry'
+        ],
+        responses: responseItems,
+        originalTask: currentTask,
+        stimulusImages: currentTask.stimulusImages || [],
+        studentAttachments: allAttachments,
+        feedback: {
+          formativeScore: 5,
+          level: 'Applying',
+          summary: 'Work submitted for teacher review and grading.',
+          strengths: ['Submitted on time', 'Provided answers and evidence'],
+          next_steps: ['Awaiting teacher feedback and evaluation.'],
+          rubric_matrix: []
+        },
+        assignedTaskId: activeSolvingTask?.id,
+        dueDate: activeSolvingTask?.dueDate,
+        evidenceToken: effectiveToken
+      };
+
+      await onSaveTaskLog(newLog);
+      setSavedSuccessMsg('Work submitted successfully! Your teacher can now review, correct, and grade your task.');
+      setTimeout(() => {
+        setActiveSolvingTask(null);
+        setCustomPracticeTask(null);
+        setActiveTab('portfolio');
+        setSavedSuccessMsg(null);
+      }, 1800);
+    } catch (err: any) {
+      console.error('Failed to submit to teacher:', err);
+      setErrorMessage(err.message || 'Failed to submit work.');
     } finally {
       setIsSavingLog(false);
     }
@@ -788,6 +989,30 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
             <BarChart3 className="h-4 w-4" />
             <span>My ATL Growth & Trajectory</span>
           </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('badges');
+              setActiveSolvingTask(null);
+              setCustomPracticeTask(null);
+            }}
+            className={`inline-flex items-center gap-2 rounded-2xl px-4 py-2.5 text-xs font-bold transition-all shrink-0 cursor-pointer ${
+              activeTab === 'badges'
+                ? 'bg-amber-600 text-white shadow-xs'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            <Trophy className="h-4 w-4" />
+            <span>Digital Badges & Achievements</span>
+            {allEarnedBadges.length > 0 && (
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                activeTab === 'badges' ? 'bg-white text-amber-900' : 'bg-amber-100 text-amber-800'
+              }`}>
+                {allEarnedBadges.length}
+              </span>
+            )}
+          </button>
         </div>
       </div>
 
@@ -848,13 +1073,42 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
           </div>
 
           {/* Stimulus / Context */}
-          <div className="rounded-2xl bg-indigo-50/60 border border-indigo-100 p-5 space-y-3">
+          <div className="rounded-2xl bg-indigo-50/60 border border-indigo-100 p-5 space-y-4">
             <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-800">
               Context & Stimulus
             </h3>
             <p className="text-xs sm:text-sm text-slate-700 leading-relaxed whitespace-pre-line font-medium">
               {(activeSolvingTask ? activeSolvingTask.task : customPracticeTask)?.context}
             </p>
+
+            {/* Stimulus Images / Question Diagrams (ChatGPT or Teacher generated) */}
+            {((activeSolvingTask ? activeSolvingTask.task : customPracticeTask)?.stimulusImages || []).length > 0 && (
+              <div className="pt-2 border-t border-indigo-100/80 space-y-2">
+                <span className="text-xs font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-1.5">
+                  <ImageIcon className="h-3.5 w-3.5 text-indigo-600" />
+                  Attached Question Diagrams, Charts & Images ({((activeSolvingTask ? activeSolvingTask.task : customPracticeTask)?.stimulusImages || []).length})
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                  {((activeSolvingTask ? activeSolvingTask.task : customPracticeTask)?.stimulusImages || []).map((img, i) => (
+                    <div
+                      key={img.id || i}
+                      onClick={() => setPreviewModalImage(img.url)}
+                      className="group cursor-pointer rounded-xl border border-indigo-200 bg-white overflow-hidden shadow-2xs hover:shadow-md transition-all"
+                    >
+                      <img
+                        src={img.url}
+                        alt={img.caption || `Diagram ${i + 1}`}
+                        className="w-full h-36 object-cover group-hover:scale-105 transition-transform"
+                      />
+                      <div className="p-2 text-xs font-medium text-slate-700 bg-white truncate">
+                        {img.caption || img.name || `Diagram ${i + 1}`}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="pt-2 border-t border-indigo-100/80 text-[11px] text-indigo-700 font-semibold flex items-center gap-1.5">
               <Sparkles className="h-3.5 w-3.5 text-indigo-600" />
               <span>ATL Focus: {(activeSolvingTask ? activeSolvingTask.task : customPracticeTask)?.atl_focus_explainer}</span>
@@ -870,7 +1124,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
               </h3>
 
               {(activeSolvingTask ? activeSolvingTask.task : customPracticeTask)?.parts.map((part, idx) => (
-                <div key={idx} className="rounded-2xl border border-slate-200 bg-white p-5 space-y-2.5">
+                <div key={idx} className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
                   <div className="flex items-start justify-between gap-3">
                     <label className="text-xs sm:text-sm font-bold text-slate-800">
                       <span className="inline-block px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 font-bold mr-2 text-xs">
@@ -888,18 +1142,86 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs sm:text-sm text-slate-800 font-normal focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors"
                   />
 
-                  <div className="text-right text-[10px] text-slate-400 font-medium">
-                    Word count: {(studentResponses[idx] || '').trim().split(/\s+/).filter(Boolean).length} words
+                  {/* Student Attachments for this Question Part */}
+                  <div className="pt-1 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors cursor-pointer shadow-2xs">
+                        <Upload className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>Attach Photo of Work / Graph</span>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (f) {
+                              handleStudentAttachmentUpload(idx, f);
+                              e.target.value = '';
+                            }
+                          }}
+                        />
+                      </label>
+                      <span className="text-[11px] text-slate-400">Upload handwritten work, diagrams, or charts</span>
+                    </div>
+
+                    <div className="text-right text-[10px] text-slate-400 font-medium">
+                      Word count: {(studentResponses[idx] || '').trim().split(/\s+/).filter(Boolean).length} words
+                    </div>
                   </div>
+
+                  {/* Thumbnails of attached work */}
+                  {(studentAttachments[idx] || []).length > 0 && (
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      {(studentAttachments[idx] || []).map((att, attIdx) => (
+                        <div
+                          key={att.id || attIdx}
+                          className="relative rounded-xl border border-indigo-200 bg-indigo-50/40 p-1 flex items-center gap-2 pr-2 shadow-2xs"
+                        >
+                          <img
+                            src={att.url}
+                            alt={att.name || 'Student work'}
+                            onClick={() => setPreviewModalImage(att.url)}
+                            className="w-10 h-10 object-cover rounded-lg cursor-pointer hover:opacity-80 transition-opacity"
+                          />
+                          <span className="text-xs font-semibold text-slate-700 max-w-[140px] truncate">
+                            {att.name || 'Work photo'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setStudentAttachments((prev) => ({
+                                ...prev,
+                                [idx]: (prev[idx] || []).filter((_, i) => i !== attIdx)
+                              }));
+                            }}
+                            className="text-slate-400 hover:text-rose-600 p-0.5"
+                            title="Remove attachment"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ))}
 
-              <div className="flex items-center justify-end gap-3 pt-4">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={handleSubmitDirectToTeacher}
+                  disabled={isSavingLog}
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-indigo-200 bg-white px-5 py-3 text-xs sm:text-sm font-bold text-indigo-700 shadow-2xs hover:bg-indigo-50 transition-all disabled:opacity-50 cursor-pointer"
+                >
+                  <Send className="h-4 w-4 text-indigo-600" />
+                  <span>Submit Directly to Teacher</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={handleSubmitTaskForEvaluation}
                   disabled={isEvaluating}
-                  className="inline-flex items-center gap-2 rounded-2xl bg-indigo-600 px-6 py-3 text-xs sm:text-sm font-bold text-white shadow-md hover:bg-indigo-700 transition-all disabled:opacity-50 cursor-pointer"
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-6 py-3 text-xs sm:text-sm font-bold text-white shadow-md hover:bg-indigo-700 transition-all disabled:opacity-50 cursor-pointer"
                 >
                   {isEvaluating ? (
                     <>
@@ -908,8 +1230,8 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                     </>
                   ) : (
                     <>
-                      <Send className="h-4 w-4" />
-                      <span>Submit Work for Formative Assessment</span>
+                      <Sparkles className="h-4 w-4 text-amber-300" />
+                      <span>Submit & Evaluate with AI Rubric</span>
                     </>
                   )}
                 </button>
@@ -1042,12 +1364,32 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                     <span>My Assigned Tasks ({assignedTasksWithStatus.length})</span>
                   </h2>
                   <p className="text-xs text-slate-500 font-medium mt-0.5">
-                    Showing tasks published for <strong className="text-indigo-700">{formatClassLabel(effectiveMypYear)}</strong>. Tasks from other classes are restricted.
+                    {showAllSchoolTasks ? (
+                      <span>Displaying all active tasks published across all MYP classes and whole school.</span>
+                    ) : (
+                      <>
+                        Showing tasks published for <strong className="text-indigo-700">{formatClassLabel(effectiveMypYear)}</strong> & personal assignments.
+                      </>
+                    )}
                   </p>
                 </div>
-                <div className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50/80 px-3 py-1.5 text-xs font-bold text-blue-800 shrink-0">
-                  <ShieldCheck className="h-4 w-4 text-blue-600" />
-                  <span>Class: {formatClassLabel(effectiveMypYear)} Only</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAllSchoolTasks((prev) => !prev)}
+                    className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition-all cursor-pointer shadow-2xs ${
+                      showAllSchoolTasks
+                        ? 'border-purple-300 bg-purple-100 text-purple-900'
+                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    <Layers className="h-3.5 w-3.5 text-purple-600" />
+                    <span>{showAllSchoolTasks ? 'Showing All Classes' : 'View All School Tasks'}</span>
+                  </button>
+                  <div className="inline-flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50/80 px-3 py-1.5 text-xs font-bold text-blue-800 shrink-0">
+                    <ShieldCheck className="h-4 w-4 text-blue-600" />
+                    <span>Class: {formatClassLabel(effectiveMypYear)}</span>
+                  </div>
                 </div>
               </div>
 
@@ -1083,9 +1425,32 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                       <div className="space-y-2.5">
                         {/* Status Pills */}
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="rounded-md bg-indigo-100 text-indigo-800 px-2 py-0.5 text-[10px] font-bold">
-                            {task.subject}
-                          </span>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <span className="rounded-md bg-indigo-100 text-indigo-800 px-2 py-0.5 text-[10px] font-bold">
+                              {task.subject}
+                            </span>
+                            {Array.isArray(task.targetStudentNames) && task.targetStudentNames.length > 0 && (
+                              <span className="rounded-md bg-amber-100 text-amber-900 border border-amber-300 px-2 py-0.5 text-[10px] font-black flex items-center gap-1">
+                                <Sparkles className="h-3 w-3 text-amber-600" />
+                                <span>Assigned Personally to You</span>
+                              </span>
+                            )}
+                            {task.mypYear === 'All' && (
+                              <span className="rounded-md bg-purple-100 text-purple-800 px-2 py-0.5 text-[10px] font-bold">
+                                All MYP Classes
+                              </span>
+                            )}
+                            {(task.sourceType === 'chatgpt_custom' || task.task?.sourceType === 'chatgpt_custom') && (
+                              <span className="rounded-md bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[10px] font-bold">
+                                ChatGPT / Teacher Task
+                              </span>
+                            )}
+                            {((task.stimulusImages && task.stimulusImages.length > 0) || (task.task?.stimulusImages && task.task.stimulusImages.length > 0)) && (
+                              <span className="rounded-md bg-amber-100 text-amber-900 px-2 py-0.5 text-[10px] font-bold flex items-center gap-1">
+                                <span>📊</span> Diagram
+                              </span>
+                            )}
+                          </div>
 
                           {task.isCompleted ? (
                             <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 text-emerald-800 px-2.5 py-0.5 text-[10px] font-bold">
@@ -1353,6 +1718,82 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                         Baseline attainment benchmark established at <strong>{scoreProgressionData[0].score}/8 ({scoreProgressionData[0].level})</strong> for {scoreProgressionData[0].title}. As subsequent tasks are evaluated, your continuous progression line will plot automatically across academic terms.
                       </div>
                     )}
+
+                    {/* Formative Progress & Results Breakdown Table */}
+                    {scoreProgressionData.length > 0 && (
+                      <div className="mt-4 pt-4 border-t border-slate-100 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-900">Evaluated Results & Progress Trajectory ({scoreProgressionData.length})</span>
+                          <span className="text-[10px] text-slate-400">Chronological learning journey</span>
+                        </div>
+
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-xs">
+                            <thead>
+                              <tr className="border-b border-slate-200 text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+                                <th className="py-2 px-2">Task</th>
+                                <th className="py-2 px-2">Topic & Cluster</th>
+                                <th className="py-2 px-2">Teacher Result</th>
+                                <th className="py-2 px-2">Progress Delta</th>
+                                <th className="py-2 px-2">Teacher Comments & Badge</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100 font-medium">
+                              {scoreProgressionData.map((item, i) => (
+                                <tr key={item.id || i} className="hover:bg-slate-50/70 transition-colors">
+                                  <td className="py-2.5 px-2 text-slate-500 whitespace-nowrap">
+                                    <div className="font-bold text-slate-800">{item.taskNumber}</div>
+                                    <div className="text-[10px] text-slate-400">{item.date}</div>
+                                  </td>
+                                  <td className="py-2.5 px-2">
+                                    <div className="font-bold text-slate-900">{item.title}</div>
+                                    <div className="text-[10px] text-slate-500">{item.cluster} • {item.subject}</div>
+                                  </td>
+                                  <td className="py-2.5 px-2 whitespace-nowrap">
+                                    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-indigo-50 border border-indigo-100 text-indigo-800">
+                                      <span className="font-black text-xs">{item.score}/8</span>
+                                      <span className="text-[10px] font-bold uppercase">{item.level}</span>
+                                    </div>
+                                  </td>
+                                  <td className="py-2.5 px-2 whitespace-nowrap">
+                                    {item.diff === null ? (
+                                      <span className="text-[11px] text-slate-400 font-bold">Baseline</span>
+                                    ) : item.diff > 0 ? (
+                                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
+                                        +{item.diff} Growth
+                                      </span>
+                                    ) : item.diff === 0 ? (
+                                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-600 bg-slate-100 px-2 py-0.5 rounded-md">
+                                        Consistent
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-100">
+                                        {item.diff} Refine
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="py-2.5 px-2">
+                                    {item.feedback ? (
+                                      <p className="text-[11px] text-slate-600 line-clamp-1 italic">
+                                        "{item.feedback}"
+                                      </p>
+                                    ) : (
+                                      <span className="text-[10px] text-slate-400">Feedback recorded</span>
+                                    )}
+                                    {item.badge && (
+                                      <span className="inline-flex items-center gap-1 mt-1 text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-50 text-purple-700 border border-purple-200">
+                                        <Award className="w-3 h-3 text-purple-600" />
+                                        <span>Badge: {item.badge.name}</span>
+                                      </span>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1521,7 +1962,14 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                           </div>
 
                           {/* Score & Attainment Badge */}
-                          <div className="flex items-center gap-2 shrink-0">
+                          <div className="flex flex-wrap items-center gap-2 shrink-0">
+                            {(log.teacherEvaluation?.badgeAwarded || log.badgeAwarded) && (
+                              <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-gradient-to-r from-amber-500/15 via-amber-400/20 to-orange-400/15 border border-amber-300 text-amber-900 font-bold text-xs shadow-2xs">
+                                <Trophy className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                                <span>{(log.teacherEvaluation?.badgeAwarded || log.badgeAwarded)?.name}</span>
+                              </div>
+                            )}
+
                             <div className="flex items-center gap-2 rounded-2xl bg-indigo-50 border border-indigo-100 px-3.5 py-1.5">
                               <div className="text-xl font-black text-indigo-700">{score}/8</div>
                               <div className="text-left">
@@ -1658,14 +2106,38 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                           </div>
                         )}
 
-                        {/* Toggle Details Button */}
-                        <div className="pt-2 border-t border-slate-100 flex items-center justify-end">
+                        {/* Card Actions */}
+                        <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setDetailModalLog(log)}
+                              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-50 border border-indigo-200 text-indigo-700 px-3 py-1.5 text-xs font-bold hover:bg-indigo-100 transition-colors cursor-pointer shadow-2xs"
+                              title="View full task, questions, attached diagrams, and student work"
+                            >
+                              <Eye className="h-3.5 w-3.5 text-indigo-600" />
+                              <span>View Complete Task</span>
+                            </button>
+
+                            {onUpdateTaskLog && (
+                              <button
+                                type="button"
+                                onClick={() => setGradingModalLog(log)}
+                                className="inline-flex items-center gap-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 px-3 py-1.5 text-xs font-bold hover:bg-amber-100 transition-colors cursor-pointer shadow-2xs"
+                                title="Teacher evaluation, corrections, and badge awarding"
+                              >
+                                <Award className="h-3.5 w-3.5 text-amber-600" />
+                                <span>Teacher Grade & Badge</span>
+                              </button>
+                            )}
+                          </div>
+
                           <button
                             type="button"
                             onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
-                            className="inline-flex items-center gap-1 text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors cursor-pointer"
+                            className="inline-flex items-center gap-1 text-xs font-bold text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
                           >
-                            <span>{isExpanded ? 'Hide Details' : 'View Full Task, Answers & Rubric'}</span>
+                            <span>{isExpanded ? 'Hide' : 'Quick Preview'}</span>
                             <ChevronDown className={`h-4 w-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
                           </button>
                         </div>
@@ -1674,6 +2146,29 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                   })}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* TAB 4: DIGITAL BADGES GALLERY */}
+          {/* ========================================================================= */}
+          {activeTab === 'badges' && (
+            <div className="animate-in fade-in space-y-6">
+              <DigitalBadgesGallery
+                badges={allEarnedBadges}
+                studentName={effectiveStudentName}
+                onViewTaskByBadge={(badgeId) => {
+                  const log = studentLogs.find(
+                    (l) =>
+                      l.id === badgeId ||
+                      l.teacherEvaluation?.badgeAwarded?.id === badgeId ||
+                      l.badgeAwarded?.id === badgeId
+                  );
+                  if (log) {
+                    setDetailModalLog(log);
+                  }
+                }}
+              />
             </div>
           )}
         </>
@@ -1752,6 +2247,87 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* FULL TASK DETAIL MODAL (Questions, Context, Attached Images, Work, Grade) */}
+      {/* ========================================================================= */}
+      {detailModalLog && (
+        <TaskDetailModal
+          isOpen={!!detailModalLog}
+          onClose={() => setDetailModalLog(null)}
+          log={detailModalLog}
+          onGradeClick={
+            onUpdateTaskLog
+              ? () => {
+                  const targetLog = detailModalLog;
+                  setDetailModalLog(null);
+                  setGradingModalLog(targetLog);
+                }
+              : undefined
+          }
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* TEACHER GRADING, CORRECTION & BADGE AWARDING MODAL */}
+      {/* ========================================================================= */}
+      {gradingModalLog && (
+        <TeacherGradingModal
+          isOpen={!!gradingModalLog}
+          onClose={() => setGradingModalLog(null)}
+          log={gradingModalLog}
+          onSaveGrade={async (evalData, badge) => {
+            if (gradingModalLog && onUpdateTaskLog) {
+              await onUpdateTaskLog(gradingModalLog.id, {
+                formativeScore: evalData.score,
+                level: evalData.level,
+                feedback: {
+                  formativeScore: evalData.score,
+                  level: evalData.level,
+                  summary: evalData.overallFeedback,
+                  strengths: evalData.strengths,
+                  next_steps: evalData.nextSteps,
+                  rubric_matrix: evalData.rubricMatrix
+                },
+                teacherEvaluation: {
+                  ...evalData,
+                  badgeAwarded: badge
+                },
+                badgeAwarded: badge || gradingModalLog.badgeAwarded
+              });
+            }
+            setGradingModalLog(null);
+          }}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* IMAGE PREVIEW LIGHTBOX */}
+      {/* ========================================================================= */}
+      {previewModalImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-xs animate-in fade-in"
+          onClick={() => setPreviewModalImage(null)}
+        >
+          <div
+            className="relative max-w-4xl max-h-[90vh] bg-white rounded-2xl overflow-hidden shadow-2xl p-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setPreviewModalImage(null)}
+              className="absolute top-4 right-4 z-10 rounded-full bg-slate-900/70 p-2 text-white hover:bg-slate-900 transition-colors cursor-pointer"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <img
+              src={previewModalImage}
+              alt="Preview"
+              className="w-auto h-auto max-h-[82vh] max-w-full mx-auto object-contain rounded-xl"
+            />
           </div>
         </div>
       )}

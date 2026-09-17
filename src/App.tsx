@@ -3,14 +3,16 @@ import { Header } from './components/Header';
 import { DashboardView } from './components/DashboardView';
 import { StudentEvidenceView } from './components/StudentEvidenceView';
 import { ToddleLinkManagerModal } from './components/ToddleLinkManagerModal';
-import { TaskMeta, ATLTaskLog, AssignedTask, ATLCategoryKey } from './types';
+import { TaskMeta, ATLTaskLog, AssignedTask, ATLCategoryKey, GeneratedTask, DEFAULT_ACADEMIC_YEAR } from './types';
 import {
   subscribeToTaskLogs,
   saveTaskLogToFirestore,
+  updateTaskLogInFirestore,
   updateTaskLogReflectionInFirestore,
   deleteTaskLogFromFirestore,
   subscribeToAssignedTasks,
   saveAssignedTaskToFirestore,
+  updateAssignedTaskInFirestore,
   deleteAssignedTaskFromFirestore
 } from './lib/firebase';
 import { generateTaskClient } from './lib/geminiClient';
@@ -78,8 +80,24 @@ export default function App() {
   // Global Toddle Manager Modal State
   const [showGlobalToddleModal, setShowGlobalToddleModal] = useState<boolean>(false);
 
-  // Global Academic Year State
-  const [academicYear, setAcademicYear] = useState<string>('2025-2026');
+  // Global Academic Year State - Defaults to 2026-2027
+  const [academicYear, setAcademicYearState] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('myp_atl_academic_year');
+      return saved || DEFAULT_ACADEMIC_YEAR;
+    } catch {
+      return DEFAULT_ACADEMIC_YEAR;
+    }
+  });
+
+  const setAcademicYear = (year: string) => {
+    setAcademicYearState(year);
+    try {
+      localStorage.setItem('myp_atl_academic_year', year);
+    } catch (e) {
+      console.warn('Failed to save academic year to localStorage:', e);
+    }
+  };
 
   // Custom Student / Teacher Gemini API Key State
   const [customApiKey, setCustomApiKey] = useState<string>(() => {
@@ -123,8 +141,21 @@ export default function App() {
     return SAMPLE_LOGS;
   });
 
-  // Assigned Common Tasks State (Firestore with fallback sample tasks)
-  const [assignedTasks, setAssignedTasks] = useState<AssignedTask[]>(SAMPLE_ASSIGNED_TASKS);
+  // Assigned Common Tasks State (Firestore with fallback sample tasks and localStorage caching)
+  const [assignedTasks, setAssignedTasks] = useState<AssignedTask[]>(() => {
+    try {
+      const saved = localStorage.getItem('atl_assigned_tasks_v2');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to parse assignedTasks from localStorage:', e);
+    }
+    return SAMPLE_ASSIGNED_TASKS;
+  });
 
   // Subscribe to real-time Firestore database updates for logs & assigned tasks
   useEffect(() => {
@@ -145,14 +176,45 @@ export default function App() {
       const active = (tasks || []).filter((t) => t.active !== false);
       if (active.length > 0) {
         setAssignedTasks(active);
+        try {
+          localStorage.setItem('atl_assigned_tasks_v2', JSON.stringify(active));
+        } catch (e) {
+          console.error('Failed to cache assigned tasks in localStorage:', e);
+        }
       } else {
-        setAssignedTasks(SAMPLE_ASSIGNED_TASKS);
+        setAssignedTasks((prev) => (prev.length > 0 ? prev : SAMPLE_ASSIGNED_TASKS));
       }
     });
+
+    // Cross-tab synchronization via storage event
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'atl_assigned_tasks_v2' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setAssignedTasks(parsed);
+          }
+        } catch (err) {
+          console.error('Failed to sync assigned tasks from storage event:', err);
+        }
+      }
+      if (e.key === 'atl_workbench_logs_v2' && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setLogs(parsed);
+          }
+        } catch (err) {
+          console.error('Failed to sync logs from storage event:', err);
+        }
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
 
     return () => {
       unsubscribeLogs();
       unsubscribeAssigned();
+      window.removeEventListener('storage', handleStorageChange);
     };
   }, []);
 
@@ -271,30 +333,45 @@ export default function App() {
     mypYear: string;
     category: ATLCategoryKey;
     cluster: string;
+    academicYear?: string;
     iduSubject?: string | null;
     criteria?: string[];
     strands?: string[];
     dueDate?: string;
     dueDaysPeriod?: number;
+    finalTask?: GeneratedTask;
+    customInstructions?: string;
+    targetStudentNames?: string[];
   }) => {
     const exactTitle = taskData.title?.trim() || taskData.topic.trim();
 
-    const taskMeta: TaskMeta = {
-      title: exactTitle,
-      taskTitle: exactTitle,
-      subject: taskData.subject,
-      topic: taskData.topic,
-      year: taskData.mypYear,
-      category: taskData.category,
-      cluster: taskData.cluster,
-      iduSubject: taskData.iduSubject || null,
-      criteria: taskData.criteria,
-      strands: taskData.strands,
-      dueDate: taskData.dueDate,
-    };
+    let taskToAssign: GeneratedTask;
 
-    const generatedTask = await generateTaskClient(taskMeta, false, customApiKey);
-    generatedTask.title = exactTitle;
+    if (taskData.finalTask) {
+      taskToAssign = {
+        ...taskData.finalTask,
+        title: exactTitle,
+      };
+    } else {
+      const taskMeta: TaskMeta = {
+        title: exactTitle,
+        taskTitle: exactTitle,
+        subject: taskData.subject,
+        topic: taskData.topic,
+        year: taskData.mypYear,
+        category: taskData.category,
+        cluster: taskData.cluster,
+        iduSubject: taskData.iduSubject || null,
+        criteria: taskData.criteria,
+        strands: taskData.strands,
+        dueDate: taskData.dueDate,
+        customInstructions: taskData.customInstructions,
+      };
+
+      const generatedTask = await generateTaskClient(taskMeta, false, customApiKey);
+      generatedTask.title = exactTitle;
+      taskToAssign = generatedTask;
+    }
 
     const newAssignedTask: AssignedTask = {
       id: 'assigned-' + Date.now(),
@@ -305,26 +382,75 @@ export default function App() {
       category: taskData.category,
       cluster: taskData.cluster,
       task: {
-        ...generatedTask,
+        ...taskToAssign,
         title: exactTitle,
       },
       teacherName: taskData.teacherName || 'Teacher',
       createdAt: new Date().toISOString(),
-      academicYear,
+      academicYear: taskData.academicYear || academicYear || DEFAULT_ACADEMIC_YEAR,
       term: 'Term 1',
       active: true,
-      criteria: taskData.criteria || generatedTask.target_criteria,
-      strands: taskData.strands || generatedTask.target_strands,
+      criteria: taskData.criteria || taskToAssign.target_criteria,
+      strands: taskData.strands || taskToAssign.target_strands,
       dueDate: taskData.dueDate,
       dueDaysPeriod: taskData.dueDaysPeriod,
+      targetStudentNames: taskData.targetStudentNames,
+      stimulusImages: taskToAssign.stimulusImages || [],
+      sourceType: taskToAssign.sourceType || 'manual'
     };
 
-    await saveAssignedTaskToFirestore(newAssignedTask);
+    // Optimistically update React state and localStorage immediately
+    setAssignedTasks((prev) => {
+      const updated = [newAssignedTask, ...prev.filter((t) => t.id !== newAssignedTask.id)];
+      try {
+        localStorage.setItem('atl_assigned_tasks_v2', JSON.stringify(updated));
+      } catch (e) {
+        console.error('Failed to cache assigned tasks:', e);
+      }
+      return updated;
+    });
+
+    try {
+      await saveAssignedTaskToFirestore(newAssignedTask);
+    } catch (err) {
+      console.error('Firestore save failed, task safely preserved in local state:', err);
+    }
   };
 
   // Handle Deleting an Assigned Task
   const handleDeleteAssignedTask = async (taskId: string) => {
-    await deleteAssignedTaskFromFirestore(taskId);
+    setAssignedTasks((prev) => {
+      const updated = prev.filter((t) => t.id !== taskId);
+      try {
+        localStorage.setItem('atl_assigned_tasks_v2', JSON.stringify(updated));
+      } catch (e) {
+        console.error('Failed to update local storage after task deletion:', e);
+      }
+      return updated;
+    });
+    try {
+      await deleteAssignedTaskFromFirestore(taskId);
+    } catch (err) {
+      console.error('Failed to delete assigned task from Firestore:', err);
+    }
+  };
+
+  // Handle Updating an Assigned Task (e.g. changing Academic Year)
+  const handleUpdateAssignedTask = async (taskId: string, partial: Partial<AssignedTask>) => {
+    setAssignedTasks((prev) => {
+      const updated = prev.map((t) => (t.id === taskId ? { ...t, ...partial } : t));
+      try {
+        localStorage.setItem('atl_assigned_tasks_v2', JSON.stringify(updated));
+      } catch (e) {
+        console.error('Failed to cache updated task:', e);
+      }
+      return updated;
+    });
+    try {
+      await updateAssignedTaskInFirestore(taskId, partial);
+    } catch (err) {
+      console.error('Failed to update assigned task in Firestore:', err);
+    }
   };
 
   // Handle Saving Student Post-Task Reflection
@@ -393,6 +519,18 @@ export default function App() {
     }
   };
 
+  // Update a task log with teacher evaluation, score, or digital badge
+  const handleUpdateTaskLog = async (logId: string, partial: Partial<ATLTaskLog>) => {
+    setLogs((prev) =>
+      prev.map((log) => (log.id === logId ? { ...log, ...partial } : log))
+    );
+    try {
+      await updateTaskLogInFirestore(logId, partial);
+    } catch (e) {
+      console.error('Failed to update task log in Firestore:', e);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-900 font-sans antialiased">
       {/* If in standalone evidence portal mode, show dedicated StudentEvidenceView */}
@@ -409,6 +547,7 @@ export default function App() {
             availableStudents={availableStudentNames}
             onSelectStudent={handleSelectStudentInEvidencePortal}
             onSaveTaskLog={handleSaveDirectTaskLog}
+            onUpdateTaskLog={handleUpdateTaskLog}
             onSaveReflection={handleSaveReflection}
             customApiKey={customApiKey}
           />
@@ -442,6 +581,7 @@ export default function App() {
                 availableStudents={availableStudentNames}
                 onSelectStudent={handleSelectStudentInEvidencePortal}
                 onSaveTaskLog={handleSaveDirectTaskLog}
+                onUpdateTaskLog={handleUpdateTaskLog}
                 onSaveReflection={handleSaveReflection}
                 customApiKey={customApiKey}
               />
@@ -458,8 +598,11 @@ export default function App() {
                 setIsUnlocked={setIsAnalyticsUnlocked}
                 assignedTasks={assignedTasks}
                 onCreateAssignedTask={handleCreateAssignedTask}
+                onUpdateAssignedTask={handleUpdateAssignedTask}
                 onDeleteAssignedTask={handleDeleteAssignedTask}
                 onOpenStudentPortal={handleOpenStudentEvidencePortal}
+                onUpdateTaskLog={handleUpdateTaskLog}
+                customApiKey={customApiKey}
               />
             )}
           </main>

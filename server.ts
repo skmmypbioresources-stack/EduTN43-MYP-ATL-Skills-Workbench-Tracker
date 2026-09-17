@@ -11,7 +11,8 @@ import {
 const app = express();
 const PORT = 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Initialize Gemini Client lazily or safely
 function getGenAIClient(customKey?: string) {
@@ -101,7 +102,7 @@ app.get('/api/health', (req, res) => {
 // Task Generator API
 app.post('/api/generate-task', async (req, res) => {
   try {
-    const { subject, topic, year, category, cluster, autoCluster, iduSubject, criteria, strands, title, taskTitle, apiKey: bodyApiKey } = req.body;
+    const { subject, topic, year, category, cluster, autoCluster, iduSubject, criteria, strands, title, taskTitle, customInstructions, apiKey: bodyApiKey } = req.body;
     const customApiKey = (req.headers['x-gemini-api-key'] as string) || bodyApiKey;
 
     if (!subject || !topic) {
@@ -181,6 +182,10 @@ ADDITIONAL MANDATES:
 1. AUTHENTIC GLOBAL CONTEXT: Embed a relevant global context (e.g. Globalisation & sustainability, Scientific & technical innovation, Fairness & development, Food security & biodiversity) that meaningfully influences the scenario.
 2. DIFFICULTY SCALING: Adapt cognitive demand for MYP Year ${year || '4'} (deep mechanistic understanding, precise terminology like ATP, membrane transport, phosphorylation, enzyme kinetics, ecological cascades).
 3. EXACT TASK TITLE: The task title is strictly: "${exactTitle}". Do NOT modify or replace it.
+${customInstructions ? `4. TEACHER CUSTOM DIFFERENTIATION & AGE-GROUP GUIDANCE:
+The teacher provided specific instructions for this student cohort/age group:
+"${customInstructions}"
+You MUST strictly incorporate these instructions to tailor the vocabulary, scaffolding, examples, and cognitive demand accordingly.` : ''}
 
 Return ONLY valid JSON matching the schema without markdown formatting.`;
 
@@ -195,6 +200,7 @@ ATL CLUSTER: ${cluster || 'Critical thinking'}
 ${iduSubject ? `INTERDISCIPLINARY SECOND SUBJECT: ${iduSubject}` : 'NO IDU'}
 ${criteria && criteria.length > 0 ? `ALL SELECTED CRITERIA: ${criteria.join(', ')}` : `CRITERION: ${primaryCriterion}`}
 ${strands && strands.length > 0 ? `TARGET STRANDS:\n${strands.join('\n')}` : ''}
+${customInstructions ? `TEACHER DIFFERENTIATION / INSTRUCTIONS:\n${customInstructions}` : ''}
     `;
 
     if (ai) {
@@ -320,6 +326,175 @@ ${strands && strands.length > 0 ? `TARGET STRANDS:\n${strands.join('\n')}` : ''}
   } catch (err: any) {
     console.error('Server error in /api/generate-task:', err);
     res.status(500).json({ error: 'Failed to generate task.' });
+  }
+});
+
+// Task Refinement & Calibration API (Difficulty adjustment and surgical part regeneration)
+app.post('/api/refine-task', async (req, res) => {
+  try {
+    const { currentTask, instruction, partIndex, meta, apiKey: bodyApiKey } = req.body;
+    const customApiKey = (req.headers['x-gemini-api-key'] as string) || bodyApiKey;
+
+    if (!currentTask || !instruction) {
+      return res.status(400).json({ error: 'currentTask and instruction are required.' });
+    }
+
+    const ai = getGenAIClient(customApiKey);
+    if (!ai) {
+      return res.status(503).json({ error: 'Gemini AI is not initialized.' });
+    }
+
+    // 1. Surgical refinement of a single question part
+    if (typeof partIndex === 'number' && partIndex >= 0 && currentTask.parts && currentTask.parts[partIndex]) {
+      const targetPart = currentTask.parts[partIndex];
+      const partPrompt = `
+You are an expert IB MYP Sciences Curriculum Specialist.
+The teacher has generated an assessment task and wants to refine ONLY Question Part ${partIndex + 1} (${targetPart.label}).
+
+OVERALL TASK CONTEXT:
+Task Title: "${currentTask.title}"
+Context / Scenario: ${currentTask.context}
+Target Level: MYP Year ${meta?.year || '3'} (${meta?.subject || 'Sciences'})
+
+CURRENT QUESTION PART:
+Label: ${targetPart.label}
+Prompt: ${targetPart.prompt}
+Placeholder / Guidance: ${targetPart.placeholder || ''}
+
+TEACHER'S REVISION INSTRUCTION:
+"${instruction}"
+
+GUIDELINES:
+- Rewrite ONLY this question part to strictly fulfill the teacher's instruction (e.g. adjust age appropriateness, change difficulty, clarify questions, add scaffolding).
+- Maintain alignment with the overall task scenario and MYP inquiry standards.
+- Provide a helpful, age-appropriate placeholder sentence starter or scaffolding cue.
+
+Return ONLY valid JSON matching:
+{
+  "label": "${targetPart.label}",
+  "prompt": "The refined question prompt...",
+  "placeholder": "Sentence starter or guidance..."
+}
+`;
+
+      const response = await generateContentWithRetry(ai, {
+        contents: partPrompt,
+        systemInstruction: 'You are an IB MYP curriculum specialist. Output only valid JSON without markdown.',
+        temperature: 0.3,
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            label: { type: Type.STRING },
+            prompt: { type: Type.STRING },
+            placeholder: { type: Type.STRING },
+          },
+          required: ['label', 'prompt'],
+        },
+      });
+
+      const updatedPart = JSON.parse(response.text || '{}');
+      const updatedParts = [...currentTask.parts];
+      updatedParts[partIndex] = {
+        label: updatedPart.label || targetPart.label,
+        prompt: updatedPart.prompt || targetPart.prompt,
+        placeholder: updatedPart.placeholder || targetPart.placeholder,
+      };
+
+      return res.json({
+        ...currentTask,
+        parts: updatedParts,
+      });
+    }
+
+    // 2. Full Task Difficulty Calibration or General Revision
+    const fullPrompt = `
+You are a distinguished International Baccalaureate (IB) MYP Sciences Senior Examiner.
+The teacher is reviewing an AI-generated assessment task and has requested revisions before publishing to students.
+
+CURRENT TASK:
+${JSON.stringify(currentTask, null, 2)}
+
+TEACHER'S REVISION & CALIBRATION REQUEST:
+"${instruction}"
+TARGET LEVEL: MYP Year ${meta?.year || '3'} (${meta?.subject || 'Sciences'})
+
+CRITICAL MANDATES:
+1. If the teacher requested "Simplify" or "Make easier / lower difficulty":
+   - Moderate the scientific vocabulary and simplify sentence structures for students aged ${meta?.year === '1' ? '11-12' : meta?.year === '2' ? '12-13' : meta?.year === '3' ? '13-14' : '14-16'}.
+   - Break down complex multi-step prompts into clear, scaffolded sub-questions.
+   - Include helpful sentence starters in placeholders.
+   - Keep the core scientific integrity and curriculum objectives intact.
+2. If the teacher requested "Elevate Rigor" or "Make harder / higher difficulty":
+   - Increase cognitive demand toward higher-order analysis, evaluation, and critique (Bloom's Taxonomy).
+   - Require students to evaluate experimental limitations, suggest mechanistic hypotheses, or justify decisions with quantitative evidence.
+3. If the teacher provided a custom scenario or content revision (e.g. change topic/organism/context):
+   - Seamlessly adapt the narrative scenario, questions, and ATL focus to reflect the teacher's desired direction.
+4. Keep the exact task title "${currentTask.title}" unless the teacher explicitly requested changing it.
+5. If the task contains a "scientific_dataset", maintain its structure and ensure numbers/labels remain biologically plausible.
+
+Return ONLY valid JSON matching the full task schema without markdown formatting.
+`;
+
+    const response = await generateContentWithRetry(ai, {
+      contents: fullPrompt,
+      systemInstruction: 'You are an IB MYP curriculum specialist revising an assessment task. Output only valid JSON.',
+      temperature: 0.3,
+      responseMimeType: 'application/json',
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          title: { type: Type.STRING },
+          chosen_cluster: { type: Type.STRING },
+          global_context: { type: Type.STRING },
+          context: { type: Type.STRING },
+          atl_focus_explainer: { type: Type.STRING },
+          skill_indicators: { type: Type.ARRAY, items: { type: Type.STRING } },
+          scientific_dataset: {
+            type: Type.OBJECT,
+            properties: {
+              graph_type: { type: Type.STRING, enum: ['line', 'bar', 'scatter', 'histogram', 'pie'] },
+              title: { type: Type.STRING },
+              global_context: { type: Type.STRING },
+              description: { type: Type.STRING },
+              x_axis_label: { type: Type.STRING },
+              y_axis_label: { type: Type.STRING },
+              unit_x: { type: Type.STRING },
+              unit_y: { type: Type.STRING },
+              source_label: { type: Type.STRING },
+              x_key: { type: Type.STRING },
+              y_keys: { type: Type.ARRAY, items: { type: Type.STRING } },
+              series_labels: { type: Type.OBJECT },
+              data: { type: Type.ARRAY, items: { type: Type.OBJECT } },
+            },
+          },
+          idu_note: { type: Type.STRING },
+          target_criteria: { type: Type.ARRAY, items: { type: Type.STRING } },
+          target_strands: { type: Type.ARRAY, items: { type: Type.STRING } },
+          parts: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                label: { type: Type.STRING },
+                prompt: { type: Type.STRING },
+                placeholder: { type: Type.STRING },
+              },
+              required: ['label', 'prompt'],
+            },
+          },
+          estimated_minutes: { type: Type.NUMBER },
+        },
+        required: ['title', 'context', 'parts'],
+      },
+    });
+
+    const revisedTask = JSON.parse(response.text || '{}');
+    revisedTask.title = currentTask.title;
+    return res.json(revisedTask);
+  } catch (err: any) {
+    console.error('Server error in /api/refine-task:', err);
+    res.status(500).json({ error: err?.message || 'Failed to refine task.' });
   }
 });
 

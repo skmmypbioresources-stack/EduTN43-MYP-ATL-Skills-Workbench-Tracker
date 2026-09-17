@@ -1,4 +1,4 @@
-import { ATLTaskLog, StudentEvidenceRosterItem, StudentRecord } from '../types';
+import { ATLTaskLog, StudentEvidenceRosterItem, StudentRecord, DEFAULT_ACADEMIC_YEAR } from '../types';
 import { resolveFormativeScore } from './scoreUtils';
 import { ALL_STUDENTS_ROSTER, DEFAULT_STUDENTS_BY_CLASS } from '../data/atlData';
 
@@ -14,11 +14,37 @@ export function getConfiguredBaseUrl(): string {
   try {
     const saved = localStorage.getItem(CUSTOM_BASE_URL_KEY);
     if (saved && saved.trim()) {
-      return saved.trim().replace(/\/+$/, '');
+      const cleanSaved = saved.trim().replace(/\/+$/, '');
+      // If the saved URL is a temporary dev container or localhost, discard it
+      if (
+        !cleanSaved.includes('run.app') &&
+        !cleanSaved.includes('localhost') &&
+        !cleanSaved.includes('127.0.0.1') &&
+        !cleanSaved.includes('ai.studio')
+      ) {
+        return cleanSaved;
+      }
     }
   } catch (e) {
     console.error('Failed to read custom base URL:', e);
   }
+
+  // If the user is currently browsing on a live non-sandbox custom domain (e.g. on Vercel), use that origin
+  if (typeof window !== 'undefined' && window.location && window.location.origin) {
+    const origin = window.location.origin.replace(/\/+$/, '');
+    const isSandboxOrDev =
+      origin.includes('localhost') ||
+      origin.includes('run.app') ||
+      origin.includes('ai.studio') ||
+      origin.includes('webcontainer') ||
+      origin.includes('127.0.0.1') ||
+      origin === 'null';
+    if (!isSandboxOrDev && origin.startsWith('http')) {
+      return origin;
+    }
+  }
+
+  // Default to the official live Vercel production URL for all student and Toddle links
   return DEFAULT_PRODUCTION_URL;
 }
 
@@ -505,6 +531,11 @@ export function isSameStudent(
   const cleanB = identB.trim().toLowerCase();
   if (cleanA === cleanB) return true;
 
+  // Direct ID extraction (e.g. "8654" or "[8654]")
+  const matchIdA = cleanA.match(/\b\d{4}\b/)?.[0];
+  const matchIdB = cleanB.match(/\b\d{4}\b/)?.[0];
+  if (matchIdA && matchIdB && matchIdA === matchIdB) return true;
+
   const canonA = findCanonicalStudent(identA, yearA);
   const canonB = findCanonicalStudent(identB, yearB);
 
@@ -518,7 +549,59 @@ export function isSameStudent(
     return true;
   }
 
+  // Also check if identA is canonicalName of B or vice versa
+  if (cleanA === canonB.canonicalName.toLowerCase() || cleanB === canonA.canonicalName.toLowerCase()) {
+    return true;
+  }
+
   return false;
+}
+
+export interface SelectableStudent {
+  name: string;
+  id: string;
+  mypYear: string;
+  classSection: string;
+}
+
+/**
+ * Returns the full list of students available for selection for a given MYP Year or whole school
+ */
+export function getRosterForClass(targetMypYear?: string): SelectableStudent[] {
+  const normTarget = targetMypYear && targetMypYear !== 'All' ? targetMypYear.replace(/^MYP\s*/i, '').trim() : 'All';
+  
+  const custom = getCustomStudents();
+  const map = new Map<string, SelectableStudent>();
+
+  ALL_STUDENTS_ROSTER.forEach((s) => {
+    const sYear = s.mypYear ? s.mypYear.replace(/^MYP\s*/i, '').trim() : '3';
+    if (normTarget === 'All' || sYear === normTarget) {
+      map.set(s.name.trim().toLowerCase(), {
+        name: s.name.trim(),
+        id: s.id,
+        mypYear: sYear,
+        classSection: s.classSection || (sYear === '2' ? 'MYP 2C' : `MYP ${sYear}`)
+      });
+    }
+  });
+
+  custom.forEach((c) => {
+    if (!c.name || !c.name.trim()) return;
+    const cYear = c.mypYear ? c.mypYear.replace(/^MYP\s*/i, '').trim() : '3';
+    if (normTarget === 'All' || cYear === normTarget) {
+      map.set(c.name.trim().toLowerCase(), {
+        name: c.name.trim(),
+        id: c.studentId || cleanTo4DigitId('', c.name, cYear),
+        mypYear: cYear,
+        classSection: c.classSection || (cYear === '2' ? 'MYP 2C' : `MYP ${cYear}`)
+      });
+    }
+  });
+
+  return Array.from(map.values()).sort((a, b) => {
+    if (a.mypYear !== b.mypYear) return a.mypYear.localeCompare(b.mypYear);
+    return a.name.localeCompare(b.name);
+  });
 }
 
 /**
@@ -546,6 +629,15 @@ export function getAppBaseUrl(preferProduction: boolean = true): string {
   }
   if (typeof window === 'undefined') return DEFAULT_PRODUCTION_URL;
   const { protocol, host, pathname } = window.location;
+  if (
+    host.includes('run.app') ||
+    host.includes('localhost') ||
+    host.includes('ai.studio') ||
+    host.includes('127.0.0.1') ||
+    host.includes('webcontainer')
+  ) {
+    return DEFAULT_PRODUCTION_URL;
+  }
   // Ensure we get clean origin and pathname
   const cleanPath = pathname === '/' ? '' : pathname;
   return `${protocol}//${host}${cleanPath}`;
@@ -614,7 +706,7 @@ export function resolveStudentByToken(
  */
 export function buildStudentEvidenceRoster(
   logs: ATLTaskLog[],
-  academicYear: string = '2025-2026',
+  academicYear: string = DEFAULT_ACADEMIC_YEAR,
   sampleStudents: string[] = []
 ): StudentEvidenceRosterItem[] {
   // Canonical map: canonical studentId -> student data object
