@@ -1,4 +1,5 @@
 import { TaskFeedback, TaskMeta, GeneratedTask, StudentResponseItem, ATLTaskLog } from '../types';
+import { buildATLSkillGuideAndIntro } from './scientificDatasetGenerator';
 
 export interface ReportData {
   studentName: string;
@@ -13,6 +14,8 @@ export interface ReportData {
   formativeScore?: number;
   taskTitle: string;
   context?: string;
+  atlPedagogicalIntro?: string;
+  atl_skill_guide?: any;
   skillIndicators?: string[];
   responses: StudentResponseItem[];
   feedback: TaskFeedback;
@@ -241,6 +244,58 @@ function generateReportHtml(data: ReportData): string {
         </div>
       `
           : ''
+      }
+
+      ${
+        (() => {
+          const rawIntro = data.atlPedagogicalIntro;
+          const rawGuide = data.atl_skill_guide;
+          const derived = buildATLSkillGuideAndIntro(
+            data.cluster || 'Critical thinking',
+            data.category || 'Thinking',
+            data.topic,
+            data.criteria?.[0] || 'Criterion C',
+            data.subject
+          );
+          const resolvedIntro = rawIntro || derived.atlPedagogicalIntro;
+          const resolvedGuide = rawGuide || derived.atl_skill_guide;
+
+          return `
+            <div style="margin-bottom: 20px; border: 1px solid #c7d2fe; background-color: #f5f3ff; border-left: 4px solid #6366f1; padding: 14px 16px; border-radius: 8px;">
+              <div style="font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: #4338ca; margin-bottom: 4px; font-size: 9.5pt;">
+                Approaches to Learning (ATL) Pedagogical Purpose • Named & Taught on Purpose
+              </div>
+              <div style="font-size: 11pt; font-weight: bold; color: #1e1b4b; margin-bottom: 6px;">
+                Targeted Skill: ${sanitize(resolvedGuide?.skill_name || data.cluster)} (${sanitize(data.category)})
+              </div>
+              <p style="font-size: 10pt; color: #312e81; line-height: 1.5; margin: 0 0 10px 0;">
+                ${sanitize(resolvedIntro)}
+              </p>
+              ${
+                resolvedGuide
+                  ? `
+                <table style="width: 100%; border-collapse: collapse; margin-top: 8px;">
+                  <tr>
+                    <td style="padding: 8px 10px; background-color: #ffffff; border: 1px solid #e0e7ff; border-radius: 6px; font-size: 9.5pt; width: 33%; vertical-align: top;">
+                      <strong style="color: #4338ca; display: block; margin-bottom: 2px;">1. What You Are Doing:</strong>
+                      <span style="color: #334155;">${sanitize(resolvedGuide.what_you_are_doing)}</span>
+                    </td>
+                    <td style="padding: 8px 10px; background-color: #ffffff; border: 1px solid #e0e7ff; border-radius: 6px; font-size: 9.5pt; width: 33%; vertical-align: top;">
+                      <strong style="color: #4338ca; display: block; margin-bottom: 2px;">2. How It Is Tested (CER):</strong>
+                      <span style="color: #334155;">${sanitize(resolvedGuide.how_it_is_tested)}</span>
+                    </td>
+                    <td style="padding: 8px 10px; background-color: #ffffff; border: 1px solid #e0e7ff; border-radius: 6px; font-size: 9.5pt; width: 34%; vertical-align: top;">
+                      <strong style="color: #4338ca; display: block; margin-bottom: 2px;">3. What Is Being Developed:</strong>
+                      <span style="color: #334155;">${sanitize(resolvedGuide.what_is_being_developed)}</span>
+                    </td>
+                  </tr>
+                </table>
+              `
+                  : ''
+              }
+            </div>
+          `;
+        })()
       }
 
       ${
@@ -532,6 +587,58 @@ export function exportToWordDoc(data: ReportData) {
         </div>
       `
           : ''
+      }
+
+      ${
+        (() => {
+          const rawIntro = data.atlPedagogicalIntro;
+          const rawGuide = data.atl_skill_guide;
+          const derived = buildATLSkillGuideAndIntro(
+            data.cluster || 'Critical thinking',
+            data.category || 'Thinking',
+            data.topic,
+            data.criteria?.[0] || 'Criterion C',
+            data.subject
+          );
+          const resolvedIntro = rawIntro || derived.atlPedagogicalIntro;
+          const resolvedGuide = rawGuide || derived.atl_skill_guide;
+
+          return `
+            <div style="margin-bottom: 20px; border: 1px solid #c7d2fe; background-color: #f5f3ff; border-left: 4px solid #6366f1; padding: 14px 16px; border-radius: 8px;">
+              <div style="font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: #4338ca; margin-bottom: 4px; font-size: 9.5pt;">
+                Approaches to Learning (ATL) Pedagogical Purpose • Named & Taught on Purpose
+              </div>
+              <div style="font-size: 11pt; font-weight: bold; color: #1e1b4b; margin-bottom: 6px;">
+                Targeted Skill: ${sanitize(resolvedGuide?.skill_name || data.cluster)} (${sanitize(data.category)})
+              </div>
+              <p style="font-size: 10.5pt; color: #312e81; line-height: 1.5; margin: 0 0 10px 0;">
+                ${sanitize(resolvedIntro)}
+              </p>
+              ${
+                resolvedGuide
+                  ? `
+                <table style="width: 100%; border-collapse: collapse; margin-top: 8px;">
+                  <tr>
+                    <td style="padding: 8px 10px; background-color: #ffffff; border: 1px solid #e0e7ff; border-radius: 6px; font-size: 9.5pt; width: 33%; vertical-align: top;">
+                      <strong style="color: #4338ca; display: block; margin-bottom: 2px;">1. What You Are Doing:</strong>
+                      <span style="color: #334155;">${sanitize(resolvedGuide.what_you_are_doing)}</span>
+                    </td>
+                    <td style="padding: 8px 10px; background-color: #ffffff; border: 1px solid #e0e7ff; border-radius: 6px; font-size: 9.5pt; width: 33%; vertical-align: top;">
+                      <strong style="color: #4338ca; display: block; margin-bottom: 2px;">2. How It Is Tested (CER):</strong>
+                      <span style="color: #334155;">${sanitize(resolvedGuide.how_it_is_tested)}</span>
+                    </td>
+                    <td style="padding: 8px 10px; background-color: #ffffff; border: 1px solid #e0e7ff; border-radius: 6px; font-size: 9.5pt; width: 34%; vertical-align: top;">
+                      <strong style="color: #4338ca; display: block; margin-bottom: 2px;">3. What Is Being Developed:</strong>
+                      <span style="color: #334155;">${sanitize(resolvedGuide.what_is_being_developed)}</span>
+                    </td>
+                  </tr>
+                </table>
+              `
+                  : ''
+              }
+            </div>
+          `;
+        })()
       }
 
       ${

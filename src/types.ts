@@ -79,6 +79,17 @@ export interface TeacherEvaluation {
   badgeAwarded?: DigitalBadge;
 }
 
+export interface ATLSkillGuide {
+  skill_name: string; // e.g. "Critical Thinking: Evaluating Empirical Evidence & Formulating Mechanistic Claims"
+  category: string; // e.g. "Thinking"
+  cluster: string; // e.g. "Critical thinking"
+  what_you_are_doing: string; // Explicit explanation of what the student is actively undertaking
+  how_it_is_tested: string; // Step-by-step modelling: how the inquiry prompts deliberately scaffold and test the skill
+  what_is_being_developed: string; // Concrete transferable cognitive ability being strengthened
+  transferable_insight: string; // Why this skill matters beyond this task across disciplines
+  pedagogical_rationale?: string; // Core MYP rationale (testing vs teaching)
+}
+
 export interface TaskPart {
   label: string;
   prompt: string;
@@ -95,6 +106,8 @@ export interface GeneratedTask {
   global_context?: string;
   context: string;
   atl_focus_explainer: string;
+  atlPedagogicalIntro?: string; // Student-facing deliberate pedagogical intro explaining the targeted ATL skill, why it matters, and how it is developed
+  atl_skill_guide?: ATLSkillGuide;
   skill_indicators?: string[];
   scientific_dataset?: ScientificDataset;
   dataset?: {
@@ -132,6 +145,7 @@ export interface TaskMeta {
   dueDate?: string; // YYYY-MM-DD
   assignedTeacherName?: string;
   customInstructions?: string; // Specific instructions for differentiation, age group, or focus
+  cerFramework?: boolean; // Claim, Evidence, Reasoning framework
 }
 
 export type SkillLevel = 'Developing' | 'Applying' | 'Extending';
@@ -150,6 +164,9 @@ export interface StudentResponseItem {
   prompt: string;
   response: string;
   attachments?: TaskImageAttachment[];
+  claim?: string;
+  evidence?: string;
+  reasoning?: string;
 }
 
 export interface ATLTaskLog {
@@ -165,8 +182,8 @@ export interface ATLTaskLog {
   mypYear: string;
   category: ATLCategoryKey;
   cluster: string;
-  level: SkillLevel;
-  formativeScore?: number; // Numerical formative score out of 8 (1-8)
+  level?: SkillLevel;
+  formativeScore?: number; // Numerical formative score out of 8 (1-8). Undefined if awaiting teacher grading
   taskTitle: string;
   skillIndicators?: string[];
   responses: StudentResponseItem[];
@@ -187,7 +204,12 @@ export interface ATLTaskLog {
   studentAttachments?: TaskImageAttachment[];
   teacherEvaluation?: TeacherEvaluation;
   badgeAwarded?: DigitalBadge;
+  atlPedagogicalIntro?: string;
+  atlSkillGuide?: ATLSkillGuide;
+  atl_skill_guide?: ATLSkillGuide;
   status?: 'pending_review' | 'graded';
+  aiSuggestedScore?: number; // AI preliminary score suggestion (1-8), non-official until teacher grades
+  aiSuggestedLevel?: SkillLevel; // AI preliminary level suggestion, non-official until teacher grades
 }
 
 export interface StudentRecord {
@@ -234,6 +256,9 @@ export interface AssignedTask {
   academicYear: string;
   term: string;
   active: boolean;
+  isArchived?: boolean; // When archived, stored cleanly in the Archive Folder
+  archivedAt?: string; // ISO timestamp
+  cerFramework?: boolean; // Whether CER argumentation is strictly enforced
   criteria?: string[];
   strands?: string[];
   dueDate?: string; // YYYY-MM-DD

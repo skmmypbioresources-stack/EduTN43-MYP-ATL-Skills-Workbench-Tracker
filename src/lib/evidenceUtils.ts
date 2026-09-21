@@ -1,5 +1,5 @@
 import { ATLTaskLog, StudentEvidenceRosterItem, StudentRecord, DEFAULT_ACADEMIC_YEAR } from '../types';
-import { resolveFormativeScore } from './scoreUtils';
+import { isTaskLogGraded, getTaskEffectiveScore } from './scoreUtils';
 import { ALL_STUDENTS_ROSTER, DEFAULT_STUDENTS_BY_CLASS } from '../data/atlData';
 
 const TOKEN_CACHE_KEY = 'atl_student_evidence_tokens_v1';
@@ -215,7 +215,7 @@ export function saveCustomStudent(
     customStudentsMemoryCache = custom;
     canonicalStudentMemoryCache.clear();
   } catch (e) {
-    console.error('Failed to save custom student to localStorage:', e);
+    console.warn('Failed to save custom student to localStorage:', e);
   }
 
   // Pre-generate and cache token
@@ -259,7 +259,7 @@ export function deleteCustomStudent(name: string): void {
     customStudentsMemoryCache = custom;
     canonicalStudentMemoryCache.clear();
   } catch (e) {
-    console.error('Failed to delete custom student from localStorage:', e);
+    console.warn('Failed to delete custom student from localStorage:', e);
   }
 }
 
@@ -324,7 +324,7 @@ export function setCachedToken(studentName: string, token: string): void {
   try {
     localStorage.setItem(TOKEN_CACHE_KEY, JSON.stringify(cached));
   } catch (e) {
-    console.error('Failed to save evidence token to localStorage:', e);
+    console.warn('Failed to save evidence token to localStorage:', e);
   }
 }
 
@@ -793,18 +793,19 @@ export function buildStudentEvidenceRoster(
     const clusterCounts: Record<string, number> = {};
 
     studentLogs.forEach((l) => {
-      const score = typeof l.formativeScore === 'number'
-        ? l.formativeScore
-        : (l.feedback && typeof l.feedback.formativeScore === 'number'
-            ? l.feedback.formativeScore
-            : resolveFormativeScore(l));
+      const isGraded = isTaskLogGraded(l);
+      if (isGraded) {
+        const score = getTaskEffectiveScore(l);
+        if (typeof score === 'number') {
+          totalScore += score;
+          scoreCount += 1;
+        }
 
-      totalScore += score;
-      scoreCount += 1;
-
-      if (l.level === 'Extending') levelCounts.extending += 1;
-      else if (l.level === 'Applying') levelCounts.applying += 1;
-      else levelCounts.developing += 1;
+        const lvl = l.level || l.teacherEvaluation?.level;
+        if (lvl === 'Extending') levelCounts.extending += 1;
+        else if (lvl === 'Applying') levelCounts.applying += 1;
+        else if (lvl === 'Developing') levelCounts.developing += 1;
+      }
 
       clusterCounts[l.cluster] = (clusterCounts[l.cluster] || 0) + 1;
     });

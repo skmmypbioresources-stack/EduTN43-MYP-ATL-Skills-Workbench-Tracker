@@ -3,6 +3,9 @@ import {
   determinePrimaryCriterion,
   generateTaskByCriterion,
   validateScientificDataset,
+  getScientificDatasetForTopic,
+  generateStimulusImagesForTopic,
+  buildATLSkillGuideAndIntro,
 } from './scientificDatasetGenerator';
 
 /**
@@ -115,6 +118,7 @@ export async function generateTaskClient(
           criteria: meta.criteria,
           strands: meta.strands,
           customInstructions: meta.customInstructions,
+          cerFramework: meta.cerFramework !== false,
         }),
       });
 
@@ -197,6 +201,22 @@ CRITICAL RULE: THE SELECTED MYP CRITERION DETERMINES THE TASK STYLE. The AI must
 
 ${criterionDirectives}
 
+${meta.cerFramework !== false ? `MANDATORY CER (CLAIM, EVIDENCE, REASONING) FRAMEWORK:
+- Structure questions and placeholders to enforce the Claim, Evidence, and Reasoning (CER) scientific framework.
+- Train students to form a direct Claim, support it with empirical/scenario Evidence, and justify it with biological/scientific Reasoning.
+- You MUST generate EXACTLY TWO (2) questions: Part A (Claim & Evidence from data/graph/scenario) and Part B (Mechanistic Reasoning, Reliability & Evaluation).
+- In each part's "placeholder", provide clear CER prompts (e.g. "Claim: State your answer. Evidence: Cite specific observations or data. Reasoning: Explain the scientific mechanism connecting evidence to claim.").` : ''}
+
+MANDATORY APPROACHES TO LEARNING (ATL) PEDAGOGICAL INTRO & GUIDE:
+- Philosophy: Approaches to Learning are the transferable skills (Organisation, Collaboration, Communication, Information Literacy, Critical Thinking, Transfer, Reflection) that the MYP insists get named and taught on PURPOSE, not assumed as background ability students either have or don't.
+- A skill mentioned on a unit planner and never modelled is a skill you are testing, not teaching. Naming it is only the first half; the task must deliberately model the second half.
+- In your JSON response, you MUST include 'atlPedagogicalIntro': a clear, student-facing paragraph explaining:
+  (1) The specific ATL skill being targeted;
+  (2) Why this skill matters in science and across all disciplines;
+  (3) What the student is actively doing during this task;
+  (4) How this skill is being developed and scaffolded through the 2-part Claim-Evidence-Reasoning (CER) questions.
+- In your JSON response, also include 'atl_skill_guide': { skill_name, category, cluster, what_you_are_doing, how_it_is_tested, what_is_being_developed, transferable_insight, pedagogical_rationale }.
+
 ADDITIONAL MANDATES:
 1. AUTHENTIC GLOBAL CONTEXT: Embed a relevant global context (e.g. Globalisation & sustainability, Scientific & technical innovation, Fairness & development, Food security & biodiversity) that meaningfully influences the scenario.
 2. DIFFICULTY SCALING: Adapt cognitive demand for MYP Year ${meta.year || '4'}.
@@ -210,6 +230,17 @@ Return strictly valid JSON with this structure (no markdown fences, no text outs
   "global_context": "Authentic global context",
   "context": "Authentic real-world scientific scenario framing the investigation.",
   "atl_focus_explainer": "ATL Focus: ${meta.category || 'Thinking'} — ${meta.cluster || 'Critical thinking'}. Skill Indicators: ...",
+  "atlPedagogicalIntro": "Student-facing pedagogical explanation of the targeted ATL skill, why it matters, what the student is actively doing, and how it is developed in this task.",
+  "atl_skill_guide": {
+    "skill_name": "${meta.cluster || 'Critical thinking'}",
+    "category": "${meta.category || 'Thinking'}",
+    "cluster": "${meta.cluster || 'Critical thinking'}",
+    "what_you_are_doing": "What the student is doing...",
+    "how_it_is_tested": "How this task assesses the skill...",
+    "what_is_being_developed": "What cognitive ability is being developed...",
+    "transferable_insight": "How this transfers...",
+    "pedagogical_rationale": "Named and taught on purpose, not assumed..."
+  },
   "skill_indicators": [
     "Indicator 1 starting with action verb",
     "Indicator 2",
@@ -257,16 +288,46 @@ Return strictly valid JSON with this structure (no markdown fences, no text outs
         const parsed = JSON.parse(cleanedText);
         parsed.title = exactTitle;
 
-        if (primaryCriterion === 'Criterion A' || primaryCriterion === 'Criterion B' || primaryCriterion === 'Criterion D') {
-          delete parsed.scientific_dataset;
-        } else if (primaryCriterion === 'Criterion C') {
+        const isCer = meta.cerFramework !== false;
+        if (isCer) {
+          if (parsed.parts && parsed.parts.length > 2) {
+            parsed.parts = parsed.parts.slice(0, 2);
+            if (parsed.parts[0]) parsed.parts[0].label = 'A';
+            if (parsed.parts[1]) parsed.parts[1].label = 'B';
+          }
           if (!validateScientificDataset(parsed.scientific_dataset)) {
-            parsed.scientific_dataset = generateTaskByCriterion('Criterion C', meta.topic, meta.subject, meta.year, meta.cluster, exactTitle).scientific_dataset;
+            parsed.scientific_dataset = getScientificDatasetForTopic(meta.topic, primaryCriterion, meta.subject);
           } else {
             parsed.scientific_dataset.source_label = 'Source: Simulated biological dataset generated for educational purposes.';
           }
+          if (!parsed.stimulusImages || parsed.stimulusImages.length === 0) {
+            parsed.stimulusImages = generateStimulusImagesForTopic(meta.topic, meta.subject);
+          }
+        } else {
+          if (primaryCriterion === 'Criterion A' || primaryCriterion === 'Criterion B' || primaryCriterion === 'Criterion D') {
+            delete parsed.scientific_dataset;
+          } else if (primaryCriterion === 'Criterion C') {
+            if (!validateScientificDataset(parsed.scientific_dataset)) {
+              parsed.scientific_dataset = generateTaskByCriterion('Criterion C', meta.topic, meta.subject, meta.year, meta.cluster, exactTitle, false).scientific_dataset;
+            } else {
+              parsed.scientific_dataset.source_label = 'Source: Simulated biological dataset generated for educational purposes.';
+            }
+          }
         }
 
+        if (!parsed.atlPedagogicalIntro || !parsed.atl_skill_guide) {
+          const fallbackAtl = buildATLSkillGuideAndIntro(
+            parsed.chosen_cluster || meta.cluster || 'Critical thinking',
+            meta.category || 'Thinking',
+            meta.topic,
+            primaryCriterion,
+            meta.subject
+          );
+          if (!parsed.atlPedagogicalIntro) parsed.atlPedagogicalIntro = fallbackAtl.atlPedagogicalIntro;
+          if (!parsed.atl_skill_guide) parsed.atl_skill_guide = fallbackAtl.atl_skill_guide;
+        }
+
+        parsed.cerFramework = isCer;
         return parsed;
       }
     } catch (apiErr: any) {
@@ -283,6 +344,7 @@ Return strictly valid JSON with this structure (no markdown fences, no text outs
     meta.cluster || 'Critical thinking',
     exactTitle
   );
+  (fallback as any).cerFramework = meta.cerFramework !== false;
   if (meta.iduSubject) {
     fallback.idu_note = `Synthesizes core ${meta.subject} mechanisms with analytical frameworks in ${meta.iduSubject}.`;
   }

@@ -16,8 +16,15 @@ import {
   deleteAssignedTaskFromFirestore
 } from './lib/firebase';
 import { generateTaskClient } from './lib/geminiClient';
-import { resolveFormativeScore } from './lib/scoreUtils';
+import { isTaskLogGraded, getTaskEffectiveScore } from './lib/scoreUtils';
 import { getStudentEvidenceToken, findCanonicalStudent, buildStudentEvidenceRoster } from './lib/evidenceUtils';
+import {
+  cacheTaskLogsLocally,
+  cacheAssignedTasksLocally,
+  cleanBloatedLocalStorageIfNecessary,
+  safeGetLocalStorageItem,
+  getFromIndexedDB
+} from './lib/safeStorage';
 import { SAMPLE_LOGS, SAMPLE_ASSIGNED_TASKS } from './data/atlData';
 
 function extractStudentPortalInfoFromUrl() {
@@ -125,18 +132,22 @@ export default function App() {
   // Task Logs Database State (Firestore with local fallback)
   const [logs, setLogs] = useState<ATLTaskLog[]>(() => {
     try {
-      const saved = localStorage.getItem('atl_workbench_logs_v2');
+      const saved = safeGetLocalStorageItem('atl_workbench_logs_v2');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((l: ATLTaskLog) => ({
-            ...l,
-            formativeScore: typeof l.formativeScore === 'number' ? l.formativeScore : resolveFormativeScore(l),
-          }));
+          return parsed.map((l: ATLTaskLog) => {
+            const graded = isTaskLogGraded(l);
+            return {
+              ...l,
+              formativeScore: graded ? getTaskEffectiveScore(l) : undefined,
+              level: graded ? l.level : undefined,
+            };
+          });
         }
       }
-    } catch (e) {
-      console.error('Failed to parse logs from localStorage:', e);
+    } catch {
+      // Graceful fallback
     }
     return SAMPLE_LOGS;
   });
@@ -144,29 +155,59 @@ export default function App() {
   // Assigned Common Tasks State (Firestore with fallback sample tasks and localStorage caching)
   const [assignedTasks, setAssignedTasks] = useState<AssignedTask[]>(() => {
     try {
-      const saved = localStorage.getItem('atl_assigned_tasks_v2');
+      const saved = safeGetLocalStorageItem('atl_assigned_tasks_v2');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
           return parsed;
         }
       }
-    } catch (e) {
-      console.error('Failed to parse assignedTasks from localStorage:', e);
+    } catch {
+      // Graceful fallback
     }
     return SAMPLE_ASSIGNED_TASKS;
   });
+
+  // Prune any oversized previous cache and hydrate full data from IndexedDB if initial state was empty
+  useEffect(() => {
+    cleanBloatedLocalStorageIfNecessary();
+
+    getFromIndexedDB<ATLTaskLog[]>('atl_workbench_logs_v2').then((idbLogs) => {
+      if (idbLogs && Array.isArray(idbLogs) && idbLogs.length > 0) {
+        setLogs((prev) => {
+          if (prev === SAMPLE_LOGS || prev.length === 0) {
+            return idbLogs.map((l: ATLTaskLog) => {
+              const graded = isTaskLogGraded(l);
+              return {
+                ...l,
+                formativeScore: graded ? getTaskEffectiveScore(l) : undefined,
+                level: graded ? l.level : undefined,
+              };
+            });
+          }
+          return prev;
+        });
+      }
+    });
+
+    getFromIndexedDB<AssignedTask[]>('atl_assigned_tasks_v2').then((idbTasks) => {
+      if (idbTasks && Array.isArray(idbTasks) && idbTasks.length > 0) {
+        setAssignedTasks((prev) => {
+          if (prev === SAMPLE_ASSIGNED_TASKS || prev.length === 0) {
+            return idbTasks.filter((t) => t.active !== false);
+          }
+          return prev;
+        });
+      }
+    });
+  }, []);
 
   // Subscribe to real-time Firestore database updates for logs & assigned tasks
   useEffect(() => {
     const unsubscribeLogs = subscribeToTaskLogs((firestoreLogs) => {
       if (firestoreLogs && firestoreLogs.length > 0) {
         setLogs(firestoreLogs);
-        try {
-          localStorage.setItem('atl_workbench_logs_v2', JSON.stringify(firestoreLogs));
-        } catch (e) {
-          console.error('Failed to cache logs in localStorage:', e);
-        }
+        cacheTaskLogsLocally(firestoreLogs);
       } else {
         setLogs((prev) => (prev.length > 0 ? prev : SAMPLE_LOGS));
       }
@@ -176,11 +217,7 @@ export default function App() {
       const active = (tasks || []).filter((t) => t.active !== false);
       if (active.length > 0) {
         setAssignedTasks(active);
-        try {
-          localStorage.setItem('atl_assigned_tasks_v2', JSON.stringify(active));
-        } catch (e) {
-          console.error('Failed to cache assigned tasks in localStorage:', e);
-        }
+        cacheAssignedTasksLocally(active);
       } else {
         setAssignedTasks((prev) => (prev.length > 0 ? prev : SAMPLE_ASSIGNED_TASKS));
       }
@@ -195,7 +232,7 @@ export default function App() {
             setAssignedTasks(parsed);
           }
         } catch (err) {
-          console.error('Failed to sync assigned tasks from storage event:', err);
+          console.warn('Failed to sync assigned tasks from storage event:', err);
         }
       }
       if (e.key === 'atl_workbench_logs_v2' && e.newValue) {
@@ -205,7 +242,7 @@ export default function App() {
             setLogs(parsed);
           }
         } catch (err) {
-          console.error('Failed to sync logs from storage event:', err);
+          console.warn('Failed to sync logs from storage event:', err);
         }
       }
     };
@@ -339,6 +376,7 @@ export default function App() {
     strands?: string[];
     dueDate?: string;
     dueDaysPeriod?: number;
+    cerFramework?: boolean;
     finalTask?: GeneratedTask;
     customInstructions?: string;
     targetStudentNames?: string[];
@@ -390,6 +428,8 @@ export default function App() {
       academicYear: taskData.academicYear || academicYear || DEFAULT_ACADEMIC_YEAR,
       term: 'Term 1',
       active: true,
+      isArchived: false,
+      cerFramework: taskData.cerFramework !== undefined ? taskData.cerFramework : ((taskToAssign as any).cerFramework !== undefined ? (taskToAssign as any).cerFramework : true),
       criteria: taskData.criteria || taskToAssign.target_criteria,
       strands: taskData.strands || taskToAssign.target_strands,
       dueDate: taskData.dueDate,
@@ -399,14 +439,10 @@ export default function App() {
       sourceType: taskToAssign.sourceType || 'manual'
     };
 
-    // Optimistically update React state and localStorage immediately
+    // Optimistically update React state and local storage safely
     setAssignedTasks((prev) => {
       const updated = [newAssignedTask, ...prev.filter((t) => t.id !== newAssignedTask.id)];
-      try {
-        localStorage.setItem('atl_assigned_tasks_v2', JSON.stringify(updated));
-      } catch (e) {
-        console.error('Failed to cache assigned tasks:', e);
-      }
+      cacheAssignedTasksLocally(updated);
       return updated;
     });
 
@@ -421,11 +457,7 @@ export default function App() {
   const handleDeleteAssignedTask = async (taskId: string) => {
     setAssignedTasks((prev) => {
       const updated = prev.filter((t) => t.id !== taskId);
-      try {
-        localStorage.setItem('atl_assigned_tasks_v2', JSON.stringify(updated));
-      } catch (e) {
-        console.error('Failed to update local storage after task deletion:', e);
-      }
+      cacheAssignedTasksLocally(updated);
       return updated;
     });
     try {
@@ -439,11 +471,7 @@ export default function App() {
   const handleUpdateAssignedTask = async (taskId: string, partial: Partial<AssignedTask>) => {
     setAssignedTasks((prev) => {
       const updated = prev.map((t) => (t.id === taskId ? { ...t, ...partial } : t));
-      try {
-        localStorage.setItem('atl_assigned_tasks_v2', JSON.stringify(updated));
-      } catch (e) {
-        console.error('Failed to cache updated task:', e);
-      }
+      cacheAssignedTasksLocally(updated);
       return updated;
     });
     try {

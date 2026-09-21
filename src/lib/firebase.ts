@@ -15,7 +15,7 @@ import {
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { ATLTaskLog, AssignedTask, DEFAULT_ACADEMIC_YEAR } from '../types';
-import { resolveFormativeScore } from './scoreUtils';
+import { isTaskLogGraded, getTaskEffectiveScore } from './scoreUtils';
 import { getStudentEvidenceToken } from './evidenceUtils';
 import { sanitizeAssignedTaskPayload, sanitizeTaskLogPayload } from '../utils/imageOptimizer';
 
@@ -60,11 +60,9 @@ export function subscribeToTaskLogs(
         const logs: ATLTaskLog[] = [];
         snapshot.forEach((docSnap) => {
           const data = docSnap.data();
-          const computedScore = typeof data.formativeScore === 'number'
-            ? data.formativeScore
-            : (data.feedback && typeof data.feedback.formativeScore === 'number'
-                ? data.feedback.formativeScore
-                : resolveFormativeScore(data));
+          const isGraded = isTaskLogGraded(data);
+          const effectiveScore = isGraded ? getTaskEffectiveScore(data) : undefined;
+          const status = data.status || (isGraded ? 'graded' : 'pending_review');
 
           const studentName = data.studentName || 'Anonymous';
           const mypYear = data.mypYear || '1';
@@ -82,18 +80,21 @@ export function subscribeToTaskLogs(
             mypYear,
             category: data.category || 'Thinking',
             cluster: data.cluster || 'Critical thinking',
-            level: data.level || 'Applying',
-            formativeScore: computedScore,
+            level: isGraded ? (data.level || data.teacherEvaluation?.level || 'Applying') : undefined,
+            formativeScore: effectiveScore,
+            status,
+            aiSuggestedScore: data.aiSuggestedScore || (data.status === 'pending_review' ? data.feedback?.formativeScore : undefined),
+            aiSuggestedLevel: data.aiSuggestedLevel || (data.status === 'pending_review' ? data.feedback?.level : undefined),
             taskTitle: data.taskTitle || 'ATL Task',
             evidenceToken,
             responses: data.responses || [],
             feedback: data.feedback ? {
               ...data.feedback,
               level: data.feedback.level || data.level || 'Applying',
-              formativeScore: typeof data.feedback.formativeScore === 'number' ? data.feedback.formativeScore : computedScore,
+              formativeScore: isGraded ? effectiveScore : undefined,
             } : {
-              level: data.level || 'Applying',
-              formativeScore: computedScore,
+              level: 'Applying',
+              formativeScore: undefined,
               summary: '',
               strengths: [],
               next_steps: []

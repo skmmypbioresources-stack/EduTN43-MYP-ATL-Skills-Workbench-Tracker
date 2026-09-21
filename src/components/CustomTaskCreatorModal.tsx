@@ -24,8 +24,11 @@ import {
   Users,
   UserCheck,
   Check,
-  Search
+  Search,
+  ZoomIn,
+  Maximize2
 } from 'lucide-react';
+import { ImageZoomLightbox } from './ImageZoomLightbox';
 import { compressImage, optimizeAttachments } from '../utils/imageOptimizer';
 import { getRosterForClass, SelectableStudent } from '../lib/evidenceUtils';
 
@@ -43,6 +46,7 @@ interface CustomTaskCreatorModalProps {
     criteria: string[];
     dueDate?: string;
     academicYear?: string;
+    cerFramework?: boolean;
     finalTask: GeneratedTask;
     targetStudentNames?: string[];
   }) => Promise<void>;
@@ -57,6 +61,7 @@ interface CustomTaskCreatorModalProps {
     criteria: string[];
     dueDate?: string;
     academicYear?: string;
+    cerFramework?: boolean;
     finalTask: GeneratedTask;
     targetStudentNames?: string[];
   }) => Promise<void>;
@@ -86,6 +91,7 @@ export const CustomTaskCreatorModal: React.FC<CustomTaskCreatorModalProps> = ({
   const [cluster, setCluster] = useState('Critical thinking skills');
   const [criteria, setCriteria] = useState<string[]>(['Criterion A', 'Criterion C']);
   const [dueDate, setDueDate] = useState('');
+  const [cerFramework, setCerFramework] = useState<boolean>(true);
 
   // ChatGPT Question Scenario / Stimulus
   const [stimulusContext, setStimulusContext] = useState('');
@@ -95,6 +101,7 @@ export const CustomTaskCreatorModal: React.FC<CustomTaskCreatorModalProps> = ({
 
   // Images attached to question
   const [stimulusImages, setStimulusImages] = useState<TaskImageAttachment[]>([]);
+  const [lightboxImage, setLightboxImage] = useState<{ url: string; caption?: string } | null>(null);
   const [imageUrlInput, setImageUrlInput] = useState('');
   const [imageCaptionInput, setImageCaptionInput] = useState('');
   const [showUrlInput, setShowUrlInput] = useState(false);
@@ -177,10 +184,10 @@ export const CustomTaskCreatorModal: React.FC<CustomTaskCreatorModalProps> = ({
           setPasteToast('Optimizing pasted infographic...');
           try {
             const dataUrl = await compressImage(file, {
-              maxWidth: 1280,
-              maxHeight: 1280,
-              quality: 0.78,
-              targetMaxBytes: 250 * 1024
+              maxWidth: 2048,
+              maxHeight: 2048,
+              quality: 0.90,
+              targetMaxBytes: 380 * 1024
             });
             setStimulusImages((prev) => [
               ...prev,
@@ -214,10 +221,10 @@ export const CustomTaskCreatorModal: React.FC<CustomTaskCreatorModalProps> = ({
       setPasteToast(`Optimizing "${file.name}"...`);
       try {
         const dataUrl = await compressImage(file, {
-          maxWidth: 1280,
-          maxHeight: 1280,
-          quality: 0.78,
-          targetMaxBytes: 250 * 1024
+          maxWidth: 2048,
+          maxHeight: 2048,
+          quality: 0.90,
+          targetMaxBytes: 380 * 1024
         });
         setStimulusImages((prev) => [
           ...prev,
@@ -246,10 +253,10 @@ export const CustomTaskCreatorModal: React.FC<CustomTaskCreatorModalProps> = ({
       setPasteToast(`Optimizing "${file.name}"...`);
       try {
         const dataUrl = await compressImage(file, {
-          maxWidth: 1280,
-          maxHeight: 1280,
-          quality: 0.78,
-          targetMaxBytes: 250 * 1024
+          maxWidth: 2048,
+          maxHeight: 2048,
+          quality: 0.90,
+          targetMaxBytes: 380 * 1024
         });
         setStimulusImages((prev) => [
           ...prev,
@@ -413,6 +420,7 @@ export const CustomTaskCreatorModal: React.FC<CustomTaskCreatorModalProps> = ({
           criteria,
           dueDate: dueDate || undefined,
           academicYear,
+          cerFramework,
           finalTask: taskObject,
           targetStudentNames: assignMode === 'specific' ? selectedStudentNames : undefined
         });
@@ -908,18 +916,47 @@ export const CustomTaskCreatorModal: React.FC<CustomTaskCreatorModalProps> = ({
                   {stimulusImages.map((img, idx) => (
                     <div
                       key={img.id || idx}
-                      className="group relative rounded-xl border border-slate-200 bg-white p-2 shadow-2xs space-y-2"
+                      className="group relative rounded-xl border border-slate-200 bg-white p-2 shadow-2xs space-y-2 hover:border-indigo-300 transition-colors"
                     >
-                      <div className="relative h-28 w-full rounded-lg overflow-hidden bg-slate-100 flex items-center justify-center">
+                      <div
+                        className="relative h-32 w-full rounded-lg overflow-hidden bg-slate-900/5 flex items-center justify-center cursor-pointer border border-slate-100"
+                        onClick={() => setLightboxImage({ url: img.url, caption: img.caption || img.name })}
+                        title="Click to Zoom In & Fit Full Page"
+                      >
                         <img
                           src={img.url}
                           alt={img.caption || 'Attached image'}
-                          className="w-full h-full object-cover"
+                          className="w-full h-full object-contain group-hover:scale-102 transition-transform"
                         />
+                        {/* Hover Overlay with Zoom Icon */}
+                        <div className="absolute inset-0 bg-slate-950/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900/90 text-white text-[11px] font-bold shadow-md">
+                            <ZoomIn className="w-3.5 h-3.5 text-indigo-400" />
+                            <span>Zoom Full Page</span>
+                          </span>
+                        </div>
+
+                        {/* Always-visible Zoom Icon button on mobile / quick tap */}
                         <button
                           type="button"
-                          onClick={() => handleRemoveImage(idx)}
-                          className="absolute top-1.5 right-1.5 p-1 rounded-md bg-slate-900/80 text-white hover:bg-rose-600 transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setLightboxImage({ url: img.url, caption: img.caption || img.name });
+                          }}
+                          className="absolute bottom-1.5 right-1.5 flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-900/80 hover:bg-indigo-600 text-white text-[10px] font-semibold transition-colors cursor-pointer shadow-xs"
+                          title="Fit Full Page"
+                        >
+                          <ZoomIn className="w-3 h-3" />
+                          <span>Zoom</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRemoveImage(idx);
+                          }}
+                          className="absolute top-1.5 right-1.5 p-1 rounded-md bg-slate-900/80 text-white hover:bg-rose-600 transition-colors z-10"
                           title="Remove image"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -942,6 +979,37 @@ export const CustomTaskCreatorModal: React.FC<CustomTaskCreatorModalProps> = ({
                   <p className="text-[11px] text-slate-400">Copy any diagram or infographic and hit <strong>Ctrl+V</strong> right here to paste it instantly.</p>
                 </div>
               )}
+            </div>
+
+            {/* CER Framework Argumentation Toggle */}
+            <div className="rounded-2xl border border-indigo-200 bg-gradient-to-r from-indigo-50/70 via-white to-purple-50/50 p-4 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center font-black text-xs shadow-xs shrink-0">
+                    CER
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-bold text-indigo-950 flex items-center gap-1.5">
+                      <span>Claim • Evidence • Reasoning (CER) Argumentation Framework</span>
+                      <span className="text-[10px] font-bold bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full">
+                        Recommended
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-indigo-900/70 leading-relaxed mt-0.5">
+                      Provides students with structured Claim, observational/data Evidence, and scientific Reasoning fields to practice scientific argumentation.
+                    </p>
+                  </div>
+                </div>
+                <label className="relative inline-flex cursor-pointer items-center shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={cerFramework}
+                    onChange={(e) => setCerFramework(e.target.checked)}
+                    className="peer sr-only"
+                  />
+                  <div className="peer h-5 w-9 rounded-full bg-slate-200 after:absolute after:top-0.5 after:left-[2px] after:h-4 after:w-4 after:rounded-full after:bg-white after:shadow-xs after:transition-all peer-checked:bg-indigo-600 peer-checked:after:translate-x-full"></div>
+                </label>
+              </div>
             </div>
 
             {/* QUESTION RESPONSE FORMAT: SINGLE OR MULTI-PART */}
@@ -1096,15 +1164,28 @@ export const CustomTaskCreatorModal: React.FC<CustomTaskCreatorModalProps> = ({
                   {stimulusImages.map((img, idx) => (
                     <div
                       key={idx}
-                      className="rounded-2xl border border-slate-200 overflow-hidden bg-slate-50"
+                      onClick={() => setLightboxImage({ url: img.url, caption: img.caption || `Diagram ${idx + 1}` })}
+                      className="group cursor-pointer rounded-2xl border border-slate-200 overflow-hidden bg-slate-50 hover:border-indigo-300 hover:shadow-md transition-all"
                     >
-                      <img
-                        src={img.url}
-                        alt={img.caption || 'Diagram'}
-                        className="w-full h-44 object-cover"
-                      />
-                      <div className="p-2 bg-white text-xs font-semibold text-slate-700">
-                        {img.caption || `Diagram ${idx + 1}`}
+                      <div className="relative w-full h-44 bg-slate-900/5 flex items-center justify-center overflow-hidden">
+                        <img
+                          src={img.url}
+                          alt={img.caption || 'Diagram'}
+                          className="w-full h-full object-contain group-hover:scale-102 transition-transform"
+                        />
+                        <div className="absolute inset-0 bg-slate-950/20 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900/90 text-white text-xs font-bold shadow-lg">
+                            <ZoomIn className="w-4 h-4 text-indigo-400" />
+                            <span>Click to Zoom & Fit Full Page</span>
+                          </span>
+                        </div>
+                      </div>
+                      <div className="p-2.5 bg-white text-xs font-semibold text-slate-700 flex items-center justify-between">
+                        <span className="truncate">{img.caption || `Diagram ${idx + 1}`}</span>
+                        <span className="flex items-center gap-1 text-[11px] text-indigo-600 font-bold shrink-0">
+                          <ZoomIn className="w-3.5 h-3.5" />
+                          <span>Fit Page</span>
+                        </span>
                       </div>
                     </div>
                   ))}
@@ -1179,6 +1260,15 @@ export const CustomTaskCreatorModal: React.FC<CustomTaskCreatorModalProps> = ({
           </div>
         </div>
       </div>
+
+      {/* High-Resolution Zoom Lightbox for ChatGPT Stimulus Images */}
+      <ImageZoomLightbox
+        isOpen={!!lightboxImage}
+        onClose={() => setLightboxImage(null)}
+        imageUrl={lightboxImage?.url || ''}
+        title={title || 'Attached Question Diagram'}
+        caption={lightboxImage?.caption}
+      />
     </div>
   );
 };

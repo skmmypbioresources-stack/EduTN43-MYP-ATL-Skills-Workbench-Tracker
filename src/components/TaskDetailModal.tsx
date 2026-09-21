@@ -12,8 +12,25 @@ import {
   Sparkles,
   Trophy,
   ExternalLink,
-  Printer
+  Printer,
+  ZoomIn,
+  Clock,
+  AlertCircle,
+  MessageSquareQuote,
+  Target,
+  BookOpen,
+  TrendingUp
 } from 'lucide-react';
+import { ImageZoomLightbox } from './ImageZoomLightbox';
+import { ScientificGraphStimulus } from './ScientificGraphStimulus';
+import { isTaskLogGraded, getTaskEffectiveScore } from '../lib/scoreUtils';
+import {
+  getScientificDatasetForTopic,
+  generateStimulusImagesForTopic,
+  determinePrimaryCriterion,
+  getFallbackStimulusImage,
+  buildATLSkillGuideAndIntro
+} from '../lib/scientificDatasetGenerator';
 
 interface TaskDetailModalProps {
   log: ATLTaskLog;
@@ -41,18 +58,42 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   const evaluation = log.teacherEvaluation;
   const badge = evaluation?.badgeAwarded || log.badgeAwarded;
 
+  const effectiveTopic = log.topic || log.originalTask?.topic || 'Cell Biology';
+  const effectiveSubject = log.subject || log.originalTask?.subject || 'Biology';
+  const effectiveCriterion = log.criteria?.[0] || 'Criterion C';
+
   const stimulusImages: TaskImageAttachment[] =
-    log.stimulusImages ||
-    log.originalTask?.stimulusImages ||
-    [];
+    (log.stimulusImages && log.stimulusImages.length > 0)
+      ? log.stimulusImages
+      : (log.originalTask?.stimulusImages && log.originalTask.stimulusImages.length > 0)
+      ? log.originalTask.stimulusImages
+      : generateStimulusImagesForTopic(effectiveTopic, effectiveSubject);
+
+  const scientificDataset =
+    log.originalTask?.scientific_dataset ||
+    (log as any).scientific_dataset ||
+    getScientificDatasetForTopic(effectiveTopic, determinePrimaryCriterion(log.criteria || [effectiveCriterion]), effectiveSubject);
 
   const studentAttachments: TaskImageAttachment[] =
     log.studentAttachments ||
     log.responses?.flatMap((r) => r.attachments || []) ||
     [];
 
-  const score = evaluation?.formativeScore ?? (typeof log.formativeScore === 'number' ? log.formativeScore : 5);
-  const level = evaluation?.level ?? log.level ?? 'Applying';
+  const isGraded = isTaskLogGraded(log);
+  const score = isGraded ? getTaskEffectiveScore(log) : undefined;
+  const level = isGraded ? (evaluation?.level ?? log.level ?? 'Applying') : undefined;
+
+  const rawAtlIntro = log.atlPedagogicalIntro || log.originalTask?.atlPedagogicalIntro;
+  const rawAtlGuide = log.atl_skill_guide || log.originalTask?.atl_skill_guide;
+  const derivedAtl = buildATLSkillGuideAndIntro(
+    log.cluster || 'Critical thinking',
+    log.category || 'Thinking',
+    effectiveTopic,
+    determinePrimaryCriterion(log.criteria || [effectiveCriterion]),
+    effectiveSubject
+  );
+  const resolvedAtlIntro = rawAtlIntro || derivedAtl.atlPedagogicalIntro;
+  const resolvedAtlGuide = rawAtlGuide || derivedAtl.atl_skill_guide;
 
   const handlePrint = () => {
     window.print();
@@ -108,32 +149,53 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
           {/* Assessment & Badge Summary Card */}
           <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/70 via-white to-purple-50/50 p-5 space-y-4">
             <div className="flex items-center justify-between flex-wrap gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-12 h-12 rounded-2xl bg-indigo-600 text-white font-black text-2xl flex items-center justify-center shadow-md">
-                  {score}
-                </div>
-                <div>
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block">
-                    Formative Assessment
-                  </span>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-base font-extrabold text-slate-900">
-                      Criterion Grade {score}/8
+              {isGraded ? (
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-indigo-600 text-white font-black text-2xl flex items-center justify-center shadow-md">
+                    {score}
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block">
+                      Teacher Evaluated Grade
                     </span>
-                    <span
-                      className={`text-xs px-2.5 py-0.5 rounded-full font-bold border ${
-                        level === 'Extending'
-                          ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
-                          : level === 'Applying'
-                          ? 'bg-indigo-50 text-indigo-800 border-indigo-300'
-                          : 'bg-amber-50 text-amber-800 border-amber-300'
-                      }`}
-                    >
-                      {level}
-                    </span>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-base font-extrabold text-slate-900">
+                        Criterion Grade {score}/8
+                      </span>
+                      <span
+                        className={`text-xs px-2.5 py-0.5 rounded-full font-bold border ${
+                          level === 'Extending'
+                            ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                            : level === 'Applying'
+                            ? 'bg-indigo-50 text-indigo-800 border-indigo-300'
+                            : 'bg-amber-50 text-amber-800 border-amber-300'
+                        }`}
+                      >
+                        {level}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-100 border border-amber-300 text-amber-800 flex items-center justify-center shadow-xs">
+                    <Clock className="w-6 h-6 text-amber-600" />
+                  </div>
+                  <div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-amber-700 block">
+                      Formative Assessment
+                    </span>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-base font-extrabold text-slate-900">
+                        Awaiting Teacher Grading
+                      </span>
+                      <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                        Pending Teacher Review
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Digital Badge Awarded if present */}
               {badge && (
@@ -157,6 +219,31 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 </div>
               )}
             </div>
+
+            {/* If work is submitted but pending teacher grading, explain clearly */}
+            {!isGraded && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50/80 p-3.5 text-xs text-amber-900 flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="flex-1 space-y-1">
+                  <p className="font-bold">Student has written and submitted this task for teacher correction.</p>
+                  <p className="text-[11px] text-amber-800 leading-relaxed">
+                    No automatic grade is given. The student portfolio only displays the formative grade and developmental level that the teacher personally awards or selects upon review.
+                  </p>
+                  {gradingHandler && (
+                    <div className="pt-1.5">
+                      <button
+                        type="button"
+                        onClick={gradingHandler}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold transition-colors shadow-xs cursor-pointer"
+                      >
+                        <Award className="w-3.5 h-3.5" />
+                        <span>Award Grade & Level Now</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Teacher Feedback & Corrections */}
             {(evaluation?.feedback || log.feedback?.summary) && (
@@ -225,12 +312,88 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
               </h3>
             </div>
 
+            {/* Approaches to Learning (ATL) Pedagogical Purpose & Explicit Skill Modelling */}
+            <div className="rounded-2xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50/90 via-purple-50/40 to-white p-5 space-y-3.5 shadow-2xs">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-600 text-white shadow-2xs">
+                    <Sparkles className="h-3.5 w-3.5" />
+                  </span>
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600 block">
+                      Approaches to Learning (ATL) Focus • Named & Taught on Purpose
+                    </span>
+                    <h4 className="text-sm font-black text-indigo-950">
+                      Targeted Skill: {resolvedAtlGuide?.skill_name || log.cluster || 'Critical Thinking'} ({log.category || 'Thinking'})
+                    </h4>
+                  </div>
+                </div>
+                <span className="inline-flex items-center gap-1 rounded-full bg-indigo-100/90 text-indigo-900 px-2.5 py-0.5 text-xs font-black">
+                  <Target className="h-3 w-3 text-indigo-700" />
+                  <span>Explicit Skill Modelling</span>
+                </span>
+              </div>
+
+              {/* Student-Facing Pedagogical Intro */}
+              <div className="rounded-xl bg-white border border-indigo-100 p-3.5 text-xs sm:text-sm text-slate-800 leading-relaxed font-medium shadow-2xs">
+                <p className="font-bold text-indigo-950 mb-1 flex items-center gap-1.5">
+                  <MessageSquareQuote className="h-3.5 w-3.5 text-indigo-600 shrink-0" />
+                  <span>Why This ATL Skill Matters & How It Is Developed:</span>
+                </p>
+                <p className="text-slate-700 whitespace-pre-line leading-relaxed">
+                  {resolvedAtlIntro}
+                </p>
+              </div>
+
+              {/* 3 Pillars: What You Are Doing, How It Is Tested, What Is Being Developed */}
+              {resolvedAtlGuide && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 pt-0.5">
+                  <div className="rounded-xl bg-white border border-indigo-100 p-3 space-y-1 shadow-2xs">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700 block flex items-center gap-1">
+                      <BookOpen className="h-3 w-3 text-indigo-600" />
+                      1. What You Are Doing
+                    </span>
+                    <p className="text-xs text-slate-700 leading-snug">
+                      {resolvedAtlGuide.what_you_are_doing}
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl bg-white border border-indigo-100 p-3 space-y-1 shadow-2xs">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700 block flex items-center gap-1">
+                      <Target className="h-3 w-3 text-indigo-600" />
+                      2. How It Is Tested (CER)
+                    </span>
+                    <p className="text-xs text-slate-700 leading-snug">
+                      {resolvedAtlGuide.how_it_is_tested}
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl bg-white border border-indigo-100 p-3 space-y-1 shadow-2xs">
+                    <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700 block flex items-center gap-1">
+                      <TrendingUp className="h-3 w-3 text-indigo-600" />
+                      3. What Is Being Developed
+                    </span>
+                    <p className="text-xs text-slate-700 leading-snug">
+                      {resolvedAtlGuide.what_is_being_developed}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
             {log.originalTask?.context && (
               <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-sm text-slate-800 leading-relaxed whitespace-pre-line">
                 <span className="font-bold text-slate-900 block mb-1 text-xs uppercase tracking-wider">
                   Question Prompt / Scenario:
                 </span>
                 {log.originalTask.context}
+              </div>
+            )}
+
+            {/* Scientific Graph & Dataset Stimulus */}
+            {scientificDataset && (
+              <div className="rounded-2xl border border-indigo-100 overflow-hidden bg-white shadow-xs">
+                <ScientificGraphStimulus dataset={scientificDataset} />
               </div>
             )}
 
@@ -248,17 +411,72 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                       className="group relative rounded-2xl border border-slate-200 overflow-hidden bg-slate-50 shadow-sm hover:shadow-md transition-all cursor-pointer"
                       onClick={() => setPreviewImage(img.url)}
                     >
-                      <img
-                        src={img.url}
-                        alt={img.caption || `Diagram ${idx + 1}`}
-                        className="w-full h-44 object-cover group-hover:scale-105 transition-transform"
-                      />
-                      <div className="p-2 bg-white text-xs text-slate-700 truncate font-medium flex items-center justify-between">
+                      <div className="relative w-full h-44 bg-slate-900/5 flex items-center justify-center overflow-hidden">
+                        <img
+                          src={img.url}
+                          alt={img.caption || `Diagram ${idx + 1}`}
+                          onError={(e) => {
+                            e.currentTarget.src = getFallbackStimulusImage(log.taskTitle || 'Biology', log.subject || 'Biology');
+                          }}
+                          className="w-full h-full object-contain group-hover:scale-102 transition-transform"
+                        />
+                        <div className="absolute inset-0 bg-slate-950/25 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900/90 text-white text-xs font-bold shadow-lg">
+                            <ZoomIn className="w-4 h-4 text-indigo-400" />
+                            <span>Zoom & Fit Full Page</span>
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPreviewImage(img.url);
+                          }}
+                          className="absolute bottom-1.5 right-1.5 flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-900/80 hover:bg-indigo-600 text-white text-[10px] font-semibold shadow-xs transition-colors cursor-pointer"
+                          title="Fit Full Page"
+                        >
+                          <ZoomIn className="w-3 h-3" />
+                          <span>Zoom</span>
+                        </button>
+                      </div>
+                      <div className="p-2 bg-white text-xs text-slate-700 truncate font-medium flex items-center justify-between border-t border-slate-100">
                         <span>{img.caption || img.name || `Diagram ${idx + 1}`}</span>
-                        <ExternalLink className="w-3 h-3 text-slate-400" />
+                        <span className="text-[10px] font-bold text-indigo-600 flex items-center gap-0.5">
+                          <ZoomIn className="w-3 h-3" />
+                          <span>Full Page</span>
+                        </span>
                       </div>
                     </div>
                   ))}
+                </div>
+              </div>
+            )}
+
+            {/* Question Parts & Prompts */}
+            {((log.originalTask?.parts && log.originalTask.parts.length > 0) || (log.responses && log.responses.length > 0)) && (
+              <div className="space-y-2.5 pt-2 border-t border-slate-200">
+                <span className="text-xs font-bold text-slate-700 uppercase tracking-wider block">
+                  Structured Question Prompts:
+                </span>
+                <div className="space-y-2">
+                  {(log.originalTask?.parts || log.responses || []).map((p: any, idx: number) => {
+                    const promptText = p.prompt || (p.label ? `Part ${p.label}` : `Question ${idx + 1}`);
+                    return (
+                      <div key={idx} className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-3 text-xs space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="px-2 py-0.5 rounded bg-indigo-600 text-white font-bold text-[10px]">
+                            Part {p.label || String.fromCharCode(65 + idx)}
+                          </span>
+                          <span className="font-bold text-slate-800">
+                            {idx === 0 ? 'Scientific Claim & Empirical Evidence' : 'Mechanistic Reasoning & Scientific Evaluation'}
+                          </span>
+                        </div>
+                        <p className="text-slate-700 font-medium pl-2 leading-relaxed">
+                          {promptText}
+                        </p>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -290,11 +508,53 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                         </p>
                       )}
                     </div>
-                    <div className="bg-white p-3.5 rounded-xl border border-slate-200 text-sm text-slate-900 whitespace-pre-wrap leading-relaxed">
-                      {resp.response?.trim() ? resp.response : (
-                        <span className="text-slate-400 italic">No response provided.</span>
-                      )}
-                    </div>
+                    {resp.claim || resp.evidence || resp.reasoning ? (
+                      <div className="space-y-2 bg-indigo-50/40 p-3.5 rounded-xl border border-indigo-100">
+                        <div className="text-[11px] font-black text-indigo-900 flex items-center gap-1.5 pb-1 border-b border-indigo-100/80">
+                          <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>CER Scientific Argumentation Breakdown</span>
+                        </div>
+                        {resp.claim && (
+                          <div className="space-y-0.5">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-blue-800 flex items-center gap-1">
+                              <span className="w-3.5 h-3.5 rounded-full bg-blue-600 text-white flex items-center justify-center text-[9px] font-bold">C</span>
+                              <span>Claim:</span>
+                            </span>
+                            <p className="text-xs text-slate-800 font-medium pl-4 bg-white/80 p-2 rounded-lg border border-blue-100">
+                              {resp.claim}
+                            </p>
+                          </div>
+                        )}
+                        {resp.evidence && (
+                          <div className="space-y-0.5">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-emerald-800 flex items-center gap-1">
+                              <span className="w-3.5 h-3.5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[9px] font-bold">E</span>
+                              <span>Evidence:</span>
+                            </span>
+                            <p className="text-xs text-slate-800 font-medium pl-4 bg-white/80 p-2 rounded-lg border border-emerald-100">
+                              {resp.evidence}
+                            </p>
+                          </div>
+                        )}
+                        {resp.reasoning && (
+                          <div className="space-y-0.5">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-purple-800 flex items-center gap-1">
+                              <span className="w-3.5 h-3.5 rounded-full bg-purple-600 text-white flex items-center justify-center text-[9px] font-bold">R</span>
+                              <span>Reasoning:</span>
+                            </span>
+                            <p className="text-xs text-slate-800 font-medium pl-4 bg-white/80 p-2 rounded-lg border border-purple-100">
+                              {resp.reasoning}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="bg-white p-3.5 rounded-xl border border-slate-200 text-sm text-slate-900 whitespace-pre-wrap leading-relaxed">
+                        {resp.response?.trim() ? resp.response : (
+                          <span className="text-slate-400 italic">No response provided.</span>
+                        )}
+                      </div>
+                    )}
 
                     {resp.attachments && resp.attachments.length > 0 && (
                       <div className="pt-1 flex flex-wrap gap-2">
@@ -386,27 +646,14 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
         </div>
       </div>
 
-      {/* Full-size Image Preview Modal */}
-      {previewImage && (
-        <div
-          className="fixed inset-0 z-60 bg-black/80 flex items-center justify-center p-4"
-          onClick={() => setPreviewImage(null)}
-        >
-          <div className="relative max-w-4xl max-h-[90vh] overflow-hidden rounded-2xl bg-white shadow-2xl p-2">
-            <button
-              onClick={() => setPreviewImage(null)}
-              className="absolute top-4 right-4 p-2 rounded-full bg-slate-900/70 text-white hover:bg-slate-900"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <img
-              src={previewImage}
-              alt="Preview"
-              className="max-w-full max-h-[85vh] object-contain rounded-xl"
-            />
-          </div>
-        </div>
-      )}
+      {/* High-Resolution Zoom Lightbox */}
+      <ImageZoomLightbox
+        isOpen={!!previewImage}
+        onClose={() => setPreviewImage(null)}
+        imageUrl={previewImage || ''}
+        title={log.taskTitle || 'Question Diagram & Stimulus'}
+        caption="High-resolution view. Use toolbar to zoom in/out, fit to page, view 100% text, or drag to pan."
+      />
     </div>
   );
 };

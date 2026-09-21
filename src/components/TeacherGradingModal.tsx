@@ -23,8 +23,14 @@ import {
   MessageSquare,
   Trophy,
   Save,
-  Check
+  Check,
+  ZoomIn,
+  RotateCcw,
+  Edit3,
+  CheckCheck
 } from 'lucide-react';
+import { ImageZoomLightbox } from './ImageZoomLightbox';
+import { isTaskLogGraded, getTaskEffectiveScore, getTaskAiSuggestedScore, getTaskAiSuggestedLevel } from '../lib/scoreUtils';
 
 interface TeacherGradingModalProps {
   log: ATLTaskLog;
@@ -53,11 +59,16 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
   if (!isOpen) return null;
 
   const existingEval = log.teacherEvaluation;
-  const initialScore = existingEval?.formativeScore ?? (typeof log.formativeScore === 'number' ? log.formativeScore : 5);
+  const isAlreadyGraded = isTaskLogGraded(log);
+  const initialScore = isAlreadyGraded ? getTaskEffectiveScore(log) : undefined;
   const initialLevel: SkillLevel = existingEval?.level ?? log.level ?? 'Applying';
-  const initialFeedback = existingEval?.feedback ?? log.feedback?.summary ?? '';
+  const initialFeedback = existingEval?.feedback ?? (log.feedback?.summary === 'Work submitted for teacher review and grading.' ? '' : log.feedback?.summary ?? '');
 
-  const [score, setScore] = useState<number>(initialScore);
+  const aiSuggestedScore = getTaskAiSuggestedScore(log);
+  const aiSuggestedLevel = getTaskAiSuggestedLevel(log);
+  const hasAiAssistance = typeof aiSuggestedScore === 'number' || (log.feedback && log.feedback.rubric_matrix && log.feedback.rubric_matrix.length > 0) || (log.feedback?.summary && log.feedback.summary.includes('AI Formative Guidance'));
+
+  const [score, setScore] = useState<number | undefined>(initialScore);
   const [level, setLevel] = useState<SkillLevel>(initialLevel);
   const [feedback, setFeedback] = useState<string>(initialFeedback);
   const [strengthsText, setStrengthsText] = useState<string>(
@@ -66,6 +77,7 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
   const [nextStepsText, setNextStepsText] = useState<string>(
     (existingEval?.nextSteps ?? log.feedback?.next_steps ?? []).join('\n')
   );
+  const [aiAppliedNotice, setAiAppliedNotice] = useState<string | null>(null);
 
   // Selected Badge State
   const initialBadge = existingEval?.badgeAwarded ?? log.badgeAwarded;
@@ -93,7 +105,44 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
     }
   };
 
+  const applyAiSuggestions = () => {
+    if (typeof aiSuggestedScore === 'number') {
+      handleScoreChange(aiSuggestedScore);
+    }
+    if (aiSuggestedLevel) {
+      setLevel(aiSuggestedLevel);
+    }
+    if (log.feedback?.summary && log.feedback.summary !== 'Work submitted for teacher review and grading.') {
+      const cleanSummary = log.feedback.summary
+        .replace(/^Work submitted for teacher review and grading\.\s*\(AI Formative Guidance generated:\s*/, '')
+        .replace(/\)$/, '');
+      setFeedback(cleanSummary);
+    }
+    if (log.feedback?.strengths && log.feedback.strengths.length > 0) {
+      setStrengthsText(log.feedback.strengths.join('\n'));
+    }
+    if (log.feedback?.next_steps && log.feedback.next_steps.length > 0) {
+      setNextStepsText(log.feedback.next_steps.join('\n'));
+    }
+    setAiAppliedNotice('AI suggested grade and commentary loaded. You can now modify any score or feedback.');
+    setTimeout(() => setAiAppliedNotice(null), 4000);
+  };
+
+  const clearToManual = () => {
+    setScore(undefined);
+    setFeedback('');
+    setStrengthsText('');
+    setNextStepsText('');
+    setAiAppliedNotice('Grade and comments cleared. Ready for your manual score.');
+    setTimeout(() => setAiAppliedNotice(null), 3000);
+  };
+
   const handleSave = async () => {
+    if (score === undefined || score === null) {
+      setSaveError('Please select a formative score (1–8) to award to this student before saving.');
+      return;
+    }
+
     setIsSaving(true);
     setSaveError(null);
     try {
@@ -212,25 +261,53 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
         {/* Scrollable Content Body */}
         <div className="p-5 sm:p-7 overflow-y-auto flex-1 space-y-6 divide-y divide-slate-100">
           {/* Top Info Banner */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-600 pb-2">
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-              <span className="text-slate-400 block font-medium">ATL Cluster</span>
-              <span className="font-semibold text-slate-800 text-sm">{log.cluster}</span>
+          <div className="space-y-3 pb-2">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-slate-600">
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <span className="text-slate-400 block font-medium">ATL Cluster</span>
+                <span className="font-semibold text-slate-800 text-sm">{log.cluster}</span>
+              </div>
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <span className="text-slate-400 block font-medium">Academic Year</span>
+                <span className="font-semibold text-slate-800 text-sm">{log.academicYear || '2026-2027'}</span>
+              </div>
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <span className="text-slate-400 block font-medium">Submitted Date</span>
+                <span className="font-semibold text-slate-800 text-sm">{log.date || 'Recent'}</span>
+              </div>
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                <span className="text-slate-400 block font-medium">Criteria Assessed</span>
+                <span className="font-semibold text-indigo-700 text-sm">
+                  {log.criteria?.join(', ') || 'Criterion A / ATL Focus'}
+                </span>
+              </div>
             </div>
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-              <span className="text-slate-400 block font-medium">Academic Year</span>
-              <span className="font-semibold text-slate-800 text-sm">{log.academicYear || '2026-2027'}</span>
-            </div>
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-              <span className="text-slate-400 block font-medium">Submitted Date</span>
-              <span className="font-semibold text-slate-800 text-sm">{log.date || 'Recent'}</span>
-            </div>
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-              <span className="text-slate-400 block font-medium">Criteria Assessed</span>
-              <span className="font-semibold text-indigo-700 text-sm">
-                {log.criteria?.join(', ') || 'Criterion A / ATL Focus'}
-              </span>
-            </div>
+
+            {/* Teacher Review Status Notice */}
+            {!isAlreadyGraded ? (
+              <div className="flex items-center gap-2.5 px-4 py-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-medium">
+                <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+                <div className="flex-1">
+                  <span className="font-bold">Awaiting Teacher Grade:</span> When students submit work for teacher correction, no automated grade is assigned to their portfolio. The student's official grade and ATL level will reflect solely your evaluation below.
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between gap-2.5 px-4 py-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-medium">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <div>
+                    <span className="font-bold">Official Teacher Grade Recorded:</span> Currently awarded <span className="font-extrabold">{initialScore}/8 ({initialLevel})</span> by {existingEval?.gradedBy || 'Teacher'}. You can freely edit or override any values below.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={clearToManual}
+                  className="px-2.5 py-1 rounded-lg bg-white border border-emerald-300 text-emerald-800 hover:bg-emerald-100 text-[11px] font-bold shrink-0 transition-colors"
+                >
+                  Reset / Regrade
+                </button>
+              </div>
+            )}
           </div>
 
           {/* SECTION 1: The Original Question (ChatGPT / Attached Stimulus) */}
@@ -265,13 +342,37 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
                       className="group relative rounded-2xl border border-slate-200 overflow-hidden bg-slate-50 shadow-sm hover:shadow-md transition-all cursor-pointer"
                       onClick={() => setPreviewImage(img.url)}
                     >
-                      <img
-                        src={img.url}
-                        alt={img.caption || `Stimulus ${idx + 1}`}
-                        className="w-full h-44 object-cover group-hover:scale-105 transition-transform"
-                      />
-                      <div className="p-2 bg-white text-xs text-slate-700 truncate font-medium">
-                        {img.caption || img.name || `Diagram / Stimulus ${idx + 1}`}
+                      <div className="relative w-full h-44 bg-slate-900/5 flex items-center justify-center overflow-hidden">
+                        <img
+                          src={img.url}
+                          alt={img.caption || `Stimulus ${idx + 1}`}
+                          className="w-full h-full object-contain group-hover:scale-102 transition-transform"
+                        />
+                        <div className="absolute inset-0 bg-slate-950/25 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900/90 text-white text-xs font-bold shadow-lg">
+                            <ZoomIn className="w-4 h-4 text-indigo-400" />
+                            <span>Zoom & Fit Full Page</span>
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setPreviewImage(img.url);
+                          }}
+                          className="absolute bottom-1.5 right-1.5 flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-900/80 hover:bg-indigo-600 text-white text-[10px] font-semibold shadow-xs transition-colors cursor-pointer"
+                          title="Fit Full Page"
+                        >
+                          <ZoomIn className="w-3 h-3" />
+                          <span>Zoom</span>
+                        </button>
+                      </div>
+                      <div className="p-2 bg-white text-xs text-slate-700 truncate font-medium flex items-center justify-between border-t border-slate-100">
+                        <span>{img.caption || img.name || `Diagram / Stimulus ${idx + 1}`}</span>
+                        <span className="text-[10px] font-bold text-indigo-600 flex items-center gap-0.5">
+                          <ZoomIn className="w-3 h-3" />
+                          <span>Full Page</span>
+                        </span>
                       </div>
                     </div>
                   ))}
@@ -380,33 +481,190 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
             )}
           </div>
 
+          {/* AI Formative Assessment & Draft Recommendations (If available) */}
+          {hasAiAssistance && (
+            <div className="pt-5 space-y-4">
+              <div className="rounded-2xl border border-purple-200 bg-gradient-to-br from-purple-50/70 via-indigo-50/40 to-white p-4 sm:p-5 space-y-3 shadow-2xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-purple-600 text-white flex items-center justify-center shadow-xs">
+                      <Sparkles className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
+                        <span>AI Formative Marking Assessment</span>
+                        <span className="text-[10px] uppercase font-extrabold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 border border-purple-200">
+                          Draft / Non-Official
+                        </span>
+                      </h4>
+                      <p className="text-xs text-slate-500">
+                        Preliminary diagnostic analysis against IB MYP criteria. The teacher retains 100% authority to alter or override.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* AI Suggested Score Badge */}
+                  {typeof aiSuggestedScore === 'number' && (
+                    <div className="flex items-center gap-2 shrink-0 bg-white px-3 py-1.5 rounded-xl border border-purple-200 shadow-2xs">
+                      <span className="text-xs text-slate-500 font-medium">AI Recommendation:</span>
+                      <span className="text-base font-black text-purple-700">{aiSuggestedScore}/8</span>
+                      {aiSuggestedLevel && (
+                        <span className="text-[10px] font-bold text-purple-800 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">
+                          {aiSuggestedLevel}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* AI Summary and Comments */}
+                {log.feedback?.summary && (
+                  <div className="text-xs text-slate-700 bg-white/80 p-3 rounded-xl border border-purple-100/80 leading-relaxed font-medium">
+                    <span className="font-bold text-purple-900 block mb-0.5">AI Diagnostic Summary:</span>
+                    {log.feedback.summary.replace(/^Work submitted for teacher review and grading\.\s*\(AI Formative Guidance generated:\s*/, '').replace(/\)$/, '')}
+                  </div>
+                )}
+
+                {/* AI Strengths & Next Steps */}
+                {((log.feedback?.strengths && log.feedback.strengths.length > 0) || (log.feedback?.next_steps && log.feedback.next_steps.length > 0)) && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                    {log.feedback?.strengths && log.feedback.strengths.length > 0 && (
+                      <div className="p-2.5 bg-white/90 rounded-xl border border-emerald-100 text-slate-700">
+                        <span className="font-bold text-emerald-800 block mb-1">Identified Strengths:</span>
+                        <ul className="list-disc list-inside space-y-0.5 text-slate-600">
+                          {log.feedback.strengths.slice(0, 3).map((st, sIdx) => (
+                            <li key={sIdx} className="truncate">{st}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {log.feedback?.next_steps && log.feedback.next_steps.length > 0 && (
+                      <div className="p-2.5 bg-white/90 rounded-xl border border-blue-100 text-slate-700">
+                        <span className="font-bold text-blue-800 block mb-1">Suggested Next Steps:</span>
+                        <ul className="list-disc list-inside space-y-0.5 text-slate-600">
+                          {log.feedback.next_steps.slice(0, 3).map((ns, nIdx) => (
+                            <li key={nIdx} className="truncate">{ns}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Teacher Action Buttons to Adopt or Override */}
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-purple-100">
+                  <span className="text-[11px] text-purple-900 font-medium">
+                    Quickly adopt AI suggestions as an editable draft, or start completely clean:
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={applyAiSuggestions}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Use AI Suggestion as Baseline</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={clearToManual}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 text-xs font-bold transition-all cursor-pointer"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                      <span>Clear to Manual</span>
+                    </button>
+                  </div>
+                </div>
+
+                {aiAppliedNotice && (
+                  <div className="flex items-center gap-2 p-2 rounded-xl bg-emerald-100 border border-emerald-200 text-emerald-800 text-xs font-medium animate-fadeIn">
+                    <CheckCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>{aiAppliedNotice}</span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* SECTION 3: Teacher Grading, Feedback & Digital Badge */}
           <div className="pt-5 space-y-5">
-            <div className="flex items-center gap-2">
-              <Trophy className="w-5 h-5 text-indigo-600" />
-              <h3 className="font-bold text-slate-900 text-base">
-                3. Teacher Grading, Corrections & Badge Award
-              </h3>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Trophy className="w-5 h-5 text-indigo-600" />
+                <div>
+                  <h3 className="font-bold text-slate-900 text-base">
+                    3. Teacher Grading, Corrections & Badge Award
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    As teacher, your score and feedback override any automated or draft evaluation.
+                  </p>
+                </div>
+              </div>
+              {score !== undefined && (
+                <button
+                  type="button"
+                  onClick={clearToManual}
+                  className="inline-flex items-center gap-1 text-xs text-slate-500 hover:text-rose-600 transition-colors font-medium self-start sm:self-auto cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Clear Score (Mark Ungraded)</span>
+                </button>
+              )}
             </div>
 
             {/* Score & Level Selectors */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2">
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-700 block">
-                  Formative Score (1–8 MYP Criterion Scale)
-                </label>
-                <div className="flex items-center gap-3">
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-700 block">
+                    Teacher Formative Score (1–8 MYP Scale)
+                  </label>
+                  {score === undefined ? (
+                    <span className="text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                      Not Graded Yet
+                    </span>
+                  ) : (
+                    <span className="text-[10px] font-bold text-indigo-700 bg-indigo-100 px-2 py-0.5 rounded-full">
+                      Score Selected: {score}/8
+                    </span>
+                  )}
+                </div>
+
+                {/* Quick 1-8 Select Buttons */}
+                <div className="grid grid-cols-8 gap-1.5">
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => {
+                    const isSelected = score === s;
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => handleScoreChange(s)}
+                        className={`py-2 rounded-xl font-black text-xs sm:text-sm transition-all cursor-pointer ${
+                          isSelected
+                            ? 'bg-indigo-600 text-white shadow-md scale-105 ring-2 ring-indigo-300'
+                            : 'bg-white hover:bg-indigo-50 border border-slate-200 text-slate-700'
+                        }`}
+                      >
+                        {s}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div className="flex items-center gap-3 pt-1">
                   <input
                     type="range"
                     min="1"
                     max="8"
                     step="1"
-                    value={score}
+                    value={score || 4}
                     onChange={(e) => handleScoreChange(Number(e.target.value))}
                     className="flex-1 accent-indigo-600 h-2 bg-slate-200 rounded-lg cursor-pointer"
                   />
-                  <div className="w-12 h-12 rounded-2xl bg-indigo-600 text-white font-extrabold text-xl flex items-center justify-center shadow-md">
-                    {score}
+                  <div className={`w-12 h-12 rounded-2xl text-white font-extrabold text-xl flex items-center justify-center shadow-md ${
+                    score !== undefined ? 'bg-indigo-600' : 'bg-slate-300 text-slate-500'
+                  }`}>
+                    {score !== undefined ? score : '—'}
                   </div>
                 </div>
                 <div className="flex justify-between text-[11px] text-slate-500 font-medium px-1">
@@ -615,11 +873,16 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
 
         {/* Footer Actions */}
         <div className="bg-slate-50 border-t border-slate-200 p-4 sm:p-5 flex items-center justify-between gap-3 shrink-0">
-          <div className="text-xs text-slate-500">
-            {saveError && <span className="text-rose-600 font-bold">{saveError}</span>}
+          <div className="text-xs text-slate-600 font-medium">
+            {saveError && <span className="text-rose-600 font-bold block">{saveError}</span>}
             {saveSuccess && (
               <span className="text-emerald-600 font-bold flex items-center gap-1">
-                <Check className="w-4 h-4" /> Evaluation & Badge recorded successfully!
+                <Check className="w-4 h-4" /> Evaluation & Official Grade recorded!
+              </span>
+            )}
+            {!saveError && !saveSuccess && (
+              <span>
+                Grade to record: <strong className="text-indigo-700">{score !== undefined ? `${score}/8 (${level})` : 'No score selected yet'}</strong> by {teacherName}
               </span>
             )}
           </div>
@@ -645,27 +908,14 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
         </div>
       </div>
 
-      {/* Full-size Image Preview Modal */}
-      {previewImage && (
-        <div
-          className="fixed inset-0 z-60 bg-black/80 flex items-center justify-center p-4"
-          onClick={() => setPreviewImage(null)}
-        >
-          <div className="relative max-w-4xl max-h-[90vh] overflow-hidden rounded-2xl bg-white shadow-2xl p-2">
-            <button
-              onClick={() => setPreviewImage(null)}
-              className="absolute top-4 right-4 p-2 rounded-full bg-slate-900/70 text-white hover:bg-slate-900"
-            >
-              <X className="w-5 h-5" />
-            </button>
-            <img
-              src={previewImage}
-              alt="Preview"
-              className="max-w-full max-h-[85vh] object-contain rounded-xl"
-            />
-          </div>
-        </div>
-      )}
+      {/* High-Resolution Full-Page Zoom Lightbox */}
+      <ImageZoomLightbox
+        isOpen={!!previewImage}
+        onClose={() => setPreviewImage(null)}
+        imageUrl={previewImage || ''}
+        title={log.taskTitle || 'Attached Question Diagram / Stimulus'}
+        caption="High-resolution view. Use toolbar to zoom in/out, fit to page, view 100% text, or drag to pan."
+      />
     </div>
   );
 };

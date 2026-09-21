@@ -84,9 +84,99 @@ export function resolveFormativeScore(
  * Helper to format Score + Level label cleanly (e.g. "6/8 — Applying")
  */
 export function formatScoreAndLevel(score?: number, level?: string): string {
-  const resolvedLevel = level || 'Applying';
   if (typeof score === 'number' && score >= 1 && score <= 8) {
+    const resolvedLevel = level || 'Applying';
     return `${score}/8 — ${resolvedLevel}`;
   }
-  return resolvedLevel;
+  return 'Pending Teacher Review';
+}
+
+/**
+ * Determines whether a student task log has actually been evaluated/graded by a teacher.
+ * If submitted for teacher correction and grade, or status is pending_review, it is NOT graded.
+ */
+export function isTaskLogGraded(log: Partial<ATLTaskLog> | null | undefined): boolean {
+  if (!log) return false;
+
+  // If status is explicitly pending_review, it is awaiting teacher correction and grade
+  if (log.status === 'pending_review') {
+    return false;
+  }
+
+  // 1. If teacher has explicitly awarded a score via evaluation
+  if (
+    log.teacherEvaluation &&
+    (typeof log.teacherEvaluation.formativeScore === 'number' || typeof (log.teacherEvaluation as any).score === 'number')
+  ) {
+    return true;
+  }
+
+  // 2. If status is explicitly marked as graded
+  if (log.status === 'graded' && typeof log.formativeScore === 'number') {
+    return true;
+  }
+
+  // 3. If the feedback summary is pending submission, it is awaiting teacher review
+  if (
+    log.feedback?.summary === 'Work submitted for teacher review and grading.' ||
+    log.feedback?.summary?.includes('submitted for teacher review')
+  ) {
+    return false;
+  }
+
+  // Legacy logs that had an explicit teacher evaluation
+  if (log.teacherEvaluation) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Safely extracts the valid numerical grade (1-8) ONLY if the task has been evaluated by a teacher.
+ * Returns undefined if the task has not been officially graded yet.
+ */
+export function getTaskEffectiveScore(log: Partial<ATLTaskLog> | null | undefined): number | undefined {
+  if (!log || !isTaskLogGraded(log)) {
+    return undefined;
+  }
+
+  if (log.teacherEvaluation) {
+    if (typeof log.teacherEvaluation.formativeScore === 'number') {
+      return log.teacherEvaluation.formativeScore;
+    }
+    if (typeof (log.teacherEvaluation as any).score === 'number') {
+      return (log.teacherEvaluation as any).score;
+    }
+  }
+
+  if (log.status === 'graded' && typeof log.formativeScore === 'number') {
+    return log.formativeScore;
+  }
+
+  return undefined;
+}
+
+/**
+ * Retrieves AI suggested score (if student ran AI formative guidance), distinct from the official teacher grade.
+ */
+export function getTaskAiSuggestedScore(log: Partial<ATLTaskLog> | null | undefined): number | undefined {
+  if (!log) return undefined;
+  if (typeof log.aiSuggestedScore === 'number') return log.aiSuggestedScore;
+  if (log.status === 'pending_review' && typeof log.feedback?.formativeScore === 'number') {
+    return log.feedback.formativeScore;
+  }
+  return undefined;
+}
+
+/**
+ * Retrieves AI suggested level (if student ran AI formative guidance), distinct from the official teacher level.
+ */
+export function getTaskAiSuggestedLevel(log: Partial<ATLTaskLog> | null | undefined): SkillLevel | undefined {
+  if (!log) return undefined;
+  if (log.aiSuggestedLevel) return log.aiSuggestedLevel;
+  if (log.status === 'pending_review' && log.feedback?.level) {
+    return log.feedback.level as SkillLevel;
+  }
+  return undefined;
 }

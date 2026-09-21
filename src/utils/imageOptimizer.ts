@@ -9,7 +9,8 @@ export interface CompressOptions {
   maxWidth?: number;
   maxHeight?: number;
   quality?: number;
-  targetMaxBytes?: number; // Approximate target size in bytes (default: 320 KB)
+  targetMaxBytes?: number; // Target size in bytes (default: 380 KB)
+  preferWebP?: boolean;
 }
 
 export interface ImageAttachmentLike {
@@ -20,26 +21,50 @@ export interface ImageAttachmentLike {
 }
 
 /**
- * Compress an image File, Blob, or Data URL to a lightweight, high-resolution JPEG Data URL.
+ * Check if the browser supports canvas WebP export
+ */
+let isWebPSupportedCache: boolean | null = null;
+function checkWebPSupport(): boolean {
+  if (isWebPSupportedCache !== null) return isWebPSupportedCache;
+  if (typeof document === 'undefined') {
+    isWebPSupportedCache = false;
+    return false;
+  }
+  try {
+    const testCanvas = document.createElement('canvas');
+    testCanvas.width = 1;
+    testCanvas.height = 1;
+    const testUrl = testCanvas.toDataURL('image/webp');
+    isWebPSupportedCache = testUrl.startsWith('data:image/webp');
+  } catch (e) {
+    isWebPSupportedCache = false;
+  }
+  return isWebPSupportedCache;
+}
+
+/**
+ * Compress an image File, Blob, or Data URL to a lightweight, high-resolution Data URL.
+ * Preserves high-DPI text, equation, and diagram crispness for ChatGPT screenshots.
  */
 export async function compressImage(
   input: File | Blob | string,
   options: CompressOptions = {}
 ): Promise<string> {
   const {
-    maxWidth = 1280,
-    maxHeight = 1280,
-    quality = 0.78,
-    targetMaxBytes = 320 * 1024 // ~320 KB target
+    maxWidth = 2048,
+    maxHeight = 2048,
+    quality = 0.90,
+    targetMaxBytes = 380 * 1024, // ~380 KB target (comfortable for 1MB Firestore limit)
+    preferWebP = true,
   } = options;
 
-  // If it's an external web URL (http/https), it's already just a text link, return as-is
+  // If it's an external web URL (http/https), it's already a link, return as-is
   if (typeof input === 'string' && (input.startsWith('http://') || input.startsWith('https://'))) {
     return input;
   }
 
-  // If it's a data URL that is already tiny (< 80KB), return as-is
-  if (typeof input === 'string' && input.startsWith('data:image/') && input.length < 80 * 1024) {
+  // If it's a data URL that is already compact (< 380KB), preserve original crispness!
+  if (typeof input === 'string' && input.startsWith('data:image/') && input.length < 380 * 1024 * 1.33) {
     return input;
   }
 
@@ -69,11 +94,11 @@ export async function compressImage(
 
         let { naturalWidth: width, naturalHeight: height } = img;
         if (!width || !height) {
-          width = img.width || 800;
-          height = img.height || 600;
+          width = img.width || 1200;
+          height = img.height || 900;
         }
 
-        // Calculate aspect-ratio preserving dimensions
+        // Calculate aspect-ratio preserving dimensions without crushing text
         if (width > maxWidth || height > maxHeight) {
           const ratio = Math.min(maxWidth / width, maxHeight / height);
           width = Math.round(width * ratio);
@@ -89,28 +114,33 @@ export async function compressImage(
           return resolve(typeof input === 'string' ? input : src);
         }
 
-        // High quality smoothing
+        // High quality smoothing for maximum legibility of formulas and small text
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
 
-        // Fill background with white to avoid black backgrounds on transparent PNGs converted to JPEG
+        // Fill background with white to avoid black backgrounds on transparent PNGs
         ctx.fillStyle = '#FFFFFF';
         ctx.fillRect(0, 0, width, height);
 
         // Draw image onto canvas
         ctx.drawImage(img, 0, 0, width, height);
 
-        // First pass export at requested quality
-        let resultDataUrl = canvas.toDataURL('image/jpeg', quality);
+        // Choose optimal format: WebP is far sharper for text/screenshots with much smaller size
+        const useWebP = preferWebP && checkWebPSupport();
+        const exportFormat = useWebP ? 'image/webp' : 'image/jpeg';
+
+        let resultDataUrl = canvas.toDataURL(exportFormat, quality);
 
         // Estimate size (Base64 string length * 0.75 gives approx byte size)
         let estimatedBytes = resultDataUrl.length * 0.75;
 
-        // If still exceeds targetMaxBytes, perform an aggressive second pass
+        // If it still exceeds targetMaxBytes, gently adjust quality/dimensions while preserving text readability
         if (estimatedBytes > targetMaxBytes) {
-          const secondaryScale = Math.min(0.85, Math.sqrt(targetMaxBytes / estimatedBytes));
-          const secondWidth = Math.max(480, Math.round(width * secondaryScale));
-          const secondHeight = Math.max(360, Math.round(height * secondaryScale));
+          // Keep width high enough to read text (never drop below 1100px if original was wide)
+          const minReadableWidth = Math.min(1100, img.naturalWidth || width);
+          const secondaryScale = Math.max(minReadableWidth / width, Math.sqrt(targetMaxBytes / estimatedBytes));
+          const secondWidth = Math.max(minReadableWidth, Math.round(width * secondaryScale));
+          const secondHeight = Math.round(height * (secondWidth / width));
 
           canvas.width = secondWidth;
           canvas.height = secondHeight;
@@ -121,14 +151,13 @@ export async function compressImage(
           ctx.fillRect(0, 0, secondWidth, secondHeight);
           ctx.drawImage(img, 0, 0, secondWidth, secondHeight);
 
-          // Use slightly lower quality (0.68) for secondary pass
-          resultDataUrl = canvas.toDataURL('image/jpeg', 0.68);
+          // Use quality 0.82 which retains high contrast on text edges
+          resultDataUrl = canvas.toDataURL(exportFormat, 0.82);
         }
 
         resolve(resultDataUrl);
       } catch (e) {
         console.warn('Image canvas compression fallback:', e);
-        // If anything fails in canvas, fallback to original if string
         resolve(typeof input === 'string' ? input : src);
       }
     };
@@ -155,14 +184,18 @@ export async function optimizeAttachments<T extends ImageAttachmentLike>(
   const optimized = await Promise.all(
     attachments.map(async (att) => {
       if (!att.url) return att;
-      // If it's a large data URL, compress it
+      // If it's a data URL, only compress if it's unusually large (> 450 KB)
       if (att.url.startsWith('data:image/')) {
+        // Skip if already reasonably sized (~450 KB base64 is ~600KB text length)
+        if (att.url.length < 550 * 1024) {
+          return att;
+        }
         try {
           const compressedUrl = await compressImage(att.url, {
-            maxWidth: 1200,
-            maxHeight: 1200,
-            quality: 0.75,
-            targetMaxBytes: 250 * 1024 // ~250 KB each
+            maxWidth: 2048,
+            maxHeight: 2048,
+            quality: 0.88,
+            targetMaxBytes: 380 * 1024 // ~380 KB each
           });
           return {
             ...att,

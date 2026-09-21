@@ -77,11 +77,15 @@ import {
   Edit3,
   HelpCircle,
   Trophy,
+  FolderUp,
+  Undo2,
 } from 'lucide-react';
 import { CustomTaskCreatorModal } from './CustomTaskCreatorModal';
 import { TaskAssignmentModal } from './TaskAssignmentModal';
 import { TaskDetailModal } from './TaskDetailModal';
 import { TeacherGradingModal } from './TeacherGradingModal';
+import { ScientificGraphStimulus } from './ScientificGraphStimulus';
+import { isTaskLogGraded, getTaskEffectiveScore } from '../lib/scoreUtils';
 
 interface DashboardViewProps {
   logs: ATLTaskLog[];
@@ -105,6 +109,7 @@ interface DashboardViewProps {
     strands?: string[];
     dueDate?: string;
     dueDaysPeriod?: number;
+    cerFramework?: boolean;
     finalTask?: GeneratedTask;
     customInstructions?: string;
     targetStudentNames?: string[];
@@ -537,6 +542,86 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [assignedClassFilter, setAssignedClassFilter] = useState<string>('All');
   const [assignedAcademicYearFilter, setAssignedAcademicYearFilter] = useState<string>('All');
 
+  // Archive Folder & CER Framework Management
+  const [assignedTasksViewTab, setAssignedTasksViewTab] = useState<'active' | 'archived'>('active');
+  const [archiveSearchQuery, setArchiveSearchQuery] = useState<string>('');
+  const [archiveToastMessage, setArchiveToastMessage] = useState<string | null>(null);
+  const [taskForSubmissionsModal, setTaskForSubmissionsModal] = useState<AssignedTask | null>(null);
+  const [newCerFramework, setNewCerFramework] = useState<boolean>(true);
+
+  // Helper to retrieve all student logs/submissions associated with a specific assigned task
+  const getSubmissionsForTask = (task: AssignedTask) => {
+    const taskTitle = (task.title || task.task?.title || task.topic || '').trim().toLowerCase();
+    const taskTopic = (task.topic || '').trim().toLowerCase();
+    return logs.filter((l) => {
+      if (l.assignedTaskId && l.assignedTaskId === task.id) return true;
+      if (taskTitle && l.taskTitle && l.taskTitle.trim().toLowerCase() === taskTitle) return true;
+      if (taskTopic && l.topic && l.topic.trim().toLowerCase() === taskTopic && l.subject === task.subject) return true;
+      return false;
+    });
+  };
+
+  const activeTasksCount = useMemo(() => {
+    return assignedTasks.filter((t) => !t.isArchived).length;
+  }, [assignedTasks]);
+
+  const archivedTasksCount = useMemo(() => {
+    return assignedTasks.filter((t) => Boolean(t.isArchived)).length;
+  }, [assignedTasks]);
+
+  const activeCompletedTasks = useMemo(() => {
+    return assignedTasks.filter((t) => {
+      if (t.isArchived) return false;
+      return getSubmissionsForTask(t).length > 0;
+    });
+  }, [assignedTasks, logs]);
+
+  const handleArchiveTask = async (taskId: string, title?: string) => {
+    if (!onUpdateAssignedTask) return;
+    try {
+      await onUpdateAssignedTask(taskId, {
+        isArchived: true,
+        archivedAt: new Date().toISOString(),
+      });
+      setArchiveToastMessage(`"📁 ${title || 'Task'}" moved to Archive Folder.`);
+      setTimeout(() => setArchiveToastMessage(null), 3500);
+    } catch (e: any) {
+      console.error('Failed to archive task:', e);
+    }
+  };
+
+  const handleRestoreTask = async (taskId: string, title?: string) => {
+    if (!onUpdateAssignedTask) return;
+    try {
+      await onUpdateAssignedTask(taskId, {
+        isArchived: false,
+        archivedAt: undefined,
+      });
+      setArchiveToastMessage(`"↩️ ${title || 'Task'}" restored to Active Workbench.`);
+      setTimeout(() => setArchiveToastMessage(null), 3500);
+    } catch (e: any) {
+      console.error('Failed to restore task:', e);
+    }
+  };
+
+  const handleArchiveAllCompletedTasks = async () => {
+    if (!onUpdateAssignedTask || activeCompletedTasks.length === 0) return;
+    try {
+      await Promise.all(
+        activeCompletedTasks.map((t) =>
+          onUpdateAssignedTask(t.id, {
+            isArchived: true,
+            archivedAt: new Date().toISOString(),
+          })
+        )
+      );
+      setArchiveToastMessage(`📁 Successfully moved ${activeCompletedTasks.length} completed task(s) to the Archive Folder.`);
+      setTimeout(() => setArchiveToastMessage(null), 4000);
+    } catch (e: any) {
+      console.error('Failed to archive completed tasks:', e);
+    }
+  };
+
   const distinctAssignedTeachers = useMemo(() => {
     return Array.from(
       new Set(assignedTasks.map((t) => (t.teacherName?.trim() ? t.teacherName.trim() : 'General Teacher')))
@@ -565,6 +650,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const organizedDashboardTasks = useMemo(() => {
     const filtered = assignedTasks.filter((t) => {
+      // Filter by Active vs Archived Tab
+      const isArchived = Boolean(t.isArchived);
+      if (assignedTasksViewTab === 'archived' && !isArchived) return false;
+      if (assignedTasksViewTab === 'active' && isArchived) return false;
+
+      // Filter by Archive Search Query
+      if (assignedTasksViewTab === 'archived' && archiveSearchQuery.trim()) {
+        const query = archiveSearchQuery.toLowerCase().trim();
+        const matchesTitle = (t.title || t.task?.title || t.topic || '').toLowerCase().includes(query);
+        const matchesTopic = (t.topic || '').toLowerCase().includes(query);
+        const matchesSubject = (t.subject || '').toLowerCase().includes(query);
+        const matchesTeacher = (t.teacherName || '').toLowerCase().includes(query);
+        if (!matchesTitle && !matchesTopic && !matchesSubject && !matchesTeacher) return false;
+      }
+
       const teacher = t.teacherName?.trim() || 'General Teacher';
       if (assignedTeacherFilter !== 'All' && teacher !== assignedTeacherFilter) return false;
       if (assignedClassFilter !== 'All' && normalizeMypYear(t.mypYear) !== assignedClassFilter) return false;
@@ -586,7 +686,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       grouped,
       totalMatching: filtered.length,
     };
-  }, [assignedTasks, assignedTeacherFilter, assignedClassFilter, assignedAcademicYearFilter]);
+  }, [assignedTasks, assignedTasksViewTab, archiveSearchQuery, assignedTeacherFilter, assignedClassFilter, assignedAcademicYearFilter]);
 
   const availableMonths = useMemo(() => {
     return getAvailableMonthsFromLogs(logs);
@@ -2031,19 +2131,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           <div className="text-[10px] text-slate-400 font-medium">{log.category}</div>
                         </td>
                         <td className="py-3 px-3 text-center whitespace-nowrap">
-                          <span
-                            className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-bold ${
-                              log.level === 'Extending'
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
-                                : log.level === 'Applying'
-                                ? 'bg-indigo-50 text-indigo-700 border border-indigo-100'
-                                : 'bg-amber-50 text-amber-700 border border-amber-100'
-                            }`}
-                          >
-                            <span className="font-extrabold">{log.formativeScore ? `${log.formativeScore}/8` : (log.feedback?.formativeScore ? `${log.feedback.formativeScore}/8` : '')}</span>
-                            {(log.formativeScore || log.feedback?.formativeScore) && <span className="opacity-40">•</span>}
-                            <span>{log.level}</span>
-                          </span>
+                          {isTaskLogGraded(log) ? (
+                            <span
+                              className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-bold ${
+                                log.level === 'Extending'
+                                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                                  : log.level === 'Applying'
+                                  ? 'bg-indigo-50 text-indigo-700 border border-indigo-100'
+                                  : 'bg-amber-50 text-amber-700 border border-amber-100'
+                              }`}
+                            >
+                              <span className="font-extrabold">{getTaskEffectiveScore(log)}/8</span>
+                              <span className="opacity-40">•</span>
+                              <span>{log.level || 'Applying'}</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-lg bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-800">
+                              <Clock className="h-3 w-3 text-amber-600" />
+                              <span>Awaiting Grade</span>
+                            </span>
+                          )}
                         </td>
                         <td className="py-3 px-3 text-slate-600 max-w-xs leading-snug font-medium">
                           {log.feedback.summary}
@@ -2166,19 +2273,26 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       <div className="text-[10px] text-slate-400 font-medium">{log.category}</div>
                     </td>
                     <td className="py-3 px-3 text-center whitespace-nowrap">
-                      <span
-                        className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-bold ${
-                          log.level === 'Extending'
-                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
-                            : log.level === 'Applying'
-                            ? 'bg-indigo-50 text-indigo-700 border border-indigo-100'
-                            : 'bg-amber-50 text-amber-700 border border-amber-100'
-                        }`}
-                      >
-                        <span className="font-extrabold">{log.formativeScore ? `${log.formativeScore}/8` : (log.feedback?.formativeScore ? `${log.feedback.formativeScore}/8` : '')}</span>
-                        {(log.formativeScore || log.feedback?.formativeScore) && <span className="opacity-40">•</span>}
-                        <span>{log.level}</span>
-                      </span>
+                      {isTaskLogGraded(log) ? (
+                        <span
+                          className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-[11px] font-bold ${
+                            log.level === 'Extending'
+                              ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                              : log.level === 'Applying'
+                              ? 'bg-indigo-50 text-indigo-700 border border-indigo-100'
+                              : 'bg-amber-50 text-amber-700 border border-amber-100'
+                          }`}
+                        >
+                          <span className="font-extrabold">{getTaskEffectiveScore(log)}/8</span>
+                          <span className="opacity-40">•</span>
+                          <span>{log.level || 'Applying'}</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 rounded-lg bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-bold text-amber-800">
+                          <Clock className="h-3 w-3 text-amber-600" />
+                          <span>Awaiting Grade</span>
+                        </span>
+                      )}
 
                       {(log.teacherEvaluation?.badgeAwarded || log.badgeAwarded) && (
                         <div
@@ -2283,12 +2397,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 <div>
                   <strong className="text-slate-500">Formative Score:</strong>{' '}
                   <span className="font-extrabold text-indigo-700">
-                    {selectedLogForModal.formativeScore ? `${selectedLogForModal.formativeScore}/8` : (selectedLogForModal.feedback?.formativeScore ? `${selectedLogForModal.feedback.formativeScore}/8` : 'N/A')}
+                    {isTaskLogGraded(selectedLogForModal) ? `${getTaskEffectiveScore(selectedLogForModal)}/8` : 'Awaiting Teacher Evaluation'}
                   </span>
                 </div>
                 <div>
                   <strong className="text-slate-500">Demonstrated Level:</strong>{' '}
-                  <span className="font-bold text-slate-900">{selectedLogForModal.level}</span>
+                  <span className="font-bold text-slate-900">
+                    {isTaskLogGraded(selectedLogForModal) ? selectedLogForModal.level : 'Pending Review'}
+                  </span>
                 </div>
                 {selectedLogForModal.dueDate && (
                   <div><strong className="text-slate-500">Task Due Date:</strong> {selectedLogForModal.dueDate}</div>
@@ -2373,6 +2489,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       level: selectedLogForModal.level,
                       formativeScore: selectedLogForModal.formativeScore || selectedLogForModal.feedback?.formativeScore,
                       taskTitle: selectedLogForModal.taskTitle,
+                      context: selectedLogForModal.originalTask?.context || (selectedLogForModal as any).context,
+                      atlPedagogicalIntro: selectedLogForModal.atlPedagogicalIntro || selectedLogForModal.originalTask?.atlPedagogicalIntro,
+                      atl_skill_guide: selectedLogForModal.atl_skill_guide || selectedLogForModal.originalTask?.atl_skill_guide,
                       skillIndicators: selectedLogForModal.skillIndicators,
                       responses: selectedLogForModal.responses,
                       feedback: selectedLogForModal.feedback,
@@ -2402,6 +2521,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       level: selectedLogForModal.level,
                       formativeScore: selectedLogForModal.formativeScore || selectedLogForModal.feedback?.formativeScore,
                       taskTitle: selectedLogForModal.taskTitle,
+                      context: selectedLogForModal.originalTask?.context || (selectedLogForModal as any).context,
+                      atlPedagogicalIntro: selectedLogForModal.atlPedagogicalIntro || selectedLogForModal.originalTask?.atlPedagogicalIntro,
+                      atl_skill_guide: selectedLogForModal.atl_skill_guide || selectedLogForModal.originalTask?.atl_skill_guide,
                       skillIndicators: selectedLogForModal.skillIndicators,
                       responses: selectedLogForModal.responses,
                       feedback: selectedLogForModal.feedback,
@@ -3135,6 +3257,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                           className="w-full rounded-xl border border-slate-200 bg-slate-50/60 p-3 text-xs leading-relaxed text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none"
                         />
                       </div>
+
+                      {/* Scientific Graph & Dataset Stimulus */}
+                      {previewTask.scientific_dataset && (
+                        <div className="rounded-2xl border border-sky-200 overflow-hidden bg-white shadow-2xs">
+                          <ScientificGraphStimulus dataset={previewTask.scientific_dataset} />
+                        </div>
+                      )}
 
                       {/* Dataset Display (if present) */}
                       {previewTask.dataset && (

@@ -21,14 +21,23 @@ import {
   isSameStudent
 } from '../lib/evidenceUtils';
 import { evaluateTaskClient, generateTaskClient } from '../lib/geminiClient';
-import { resolveFormativeScore } from '../lib/scoreUtils';
+import { resolveFormativeScore, isTaskLogGraded, getTaskEffectiveScore } from '../lib/scoreUtils';
 import { calculateStudentMilestoneBadges } from '../lib/badgeUtils';
 import { compressImage } from '../utils/imageOptimizer';
 import { TaskDetailModal } from './TaskDetailModal';
 import { TeacherGradingModal } from './TeacherGradingModal';
 import { DigitalBadgesGallery } from './DigitalBadgesGallery';
+import { ScientificGraphStimulus } from './ScientificGraphStimulus';
+import {
+  getScientificDatasetForTopic,
+  generateStimulusImagesForTopic,
+  determinePrimaryCriterion,
+  getFallbackStimulusImage,
+  buildATLSkillGuideAndIntro,
+} from '../lib/scientificDatasetGenerator';
 import {
   Award,
+  BarChart2,
   BookOpen,
   Calendar,
   Check,
@@ -69,8 +78,11 @@ import {
   Trash2,
   Paperclip,
   Eye,
-  X
+  X,
+  ZoomIn,
+  Maximize2
 } from 'lucide-react';
+import { ImageZoomLightbox } from './ImageZoomLightbox';
 import {
   BarChart,
   Bar,
@@ -187,6 +199,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
   const [detailModalLog, setDetailModalLog] = useState<ATLTaskLog | null>(null);
   const [gradingModalLog, setGradingModalLog] = useState<ATLTaskLog | null>(null);
   const [previewModalImage, setPreviewModalImage] = useState<string | null>(null);
+  const [previewAssignedTaskModal, setPreviewAssignedTaskModal] = useState<AssignedTask | null>(null);
 
   // Active Task Solving State & Student Attachments
   const [activeSolvingTask, setActiveSolvingTask] = useState<AssignedTask | null>(null);
@@ -205,6 +218,8 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
   });
   const [isGeneratingPractice, setIsGeneratingPractice] = useState<boolean>(false);
   const [studentResponses, setStudentResponses] = useState<Record<number, string>>({});
+  const [cerResponses, setCerResponses] = useState<Record<number, { claim: string; evidence: string; reasoning: string }>>({});
+  const [responseModePerPart, setResponseModePerPart] = useState<Record<number, 'standard' | 'cer'>>({});
   const [isEvaluating, setIsEvaluating] = useState<boolean>(false);
   const [evaluationFeedback, setEvaluationFeedback] = useState<any | null>(null);
   const [metacognitiveReflection, setMetacognitiveReflection] = useState<string>('');
@@ -412,18 +427,17 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
     const subjectSet = new Set<string>();
 
     studentLogs.forEach((l) => {
-      const score = typeof l.formativeScore === 'number'
-        ? l.formativeScore
-        : (l.feedback && typeof l.feedback.formativeScore === 'number' ? l.feedback.formativeScore : resolveFormativeScore(l));
+      if (isTaskLogGraded(l)) {
+        const score = getTaskEffectiveScore(l);
+        if (typeof score === 'number' && score > 0) {
+          scoreSum += score;
+          validScoreCount += 1;
+        }
 
-      if (score > 0) {
-        scoreSum += score;
-        validScoreCount += 1;
+        if (l.level === 'Extending') levelCounts.Extending += 1;
+        else if (l.level === 'Applying') levelCounts.Applying += 1;
+        else if (l.level === 'Developing') levelCounts.Developing += 1;
       }
-
-      if (l.level === 'Extending') levelCounts.Extending += 1;
-      else if (l.level === 'Applying') levelCounts.Applying += 1;
-      else levelCounts.Developing += 1;
 
       if (l.cluster) clusterSet.add(l.cluster);
       if (l.subject) subjectSet.add(l.subject);
@@ -448,10 +462,8 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
       let sum = 0;
       let count = 0;
       catLogs.forEach((l) => {
-        const score = typeof l.formativeScore === 'number'
-          ? l.formativeScore
-          : (l.feedback && typeof l.feedback.formativeScore === 'number' ? l.feedback.formativeScore : resolveFormativeScore(l));
-        if (score > 0) {
+        const score = getTaskEffectiveScore(l);
+        if (typeof score === 'number' && score > 0) {
           sum += score;
           count += 1;
         }
@@ -468,29 +480,11 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
 
   // Chronological Score Progression Data (filtering evaluated tasks with scores)
   const scoreProgressionData = useMemo(() => {
-    const evaluatedLogs = studentLogs.filter(
-      (log) =>
-        log.status !== 'pending_review' &&
-        (typeof log.formativeScore === 'number' ||
-          (log.feedback && typeof log.feedback.formativeScore === 'number') ||
-          log.teacherEvaluation)
-    );
+    const evaluatedLogs = studentLogs.filter((log) => isTaskLogGraded(log));
     const sorted = [...evaluatedLogs].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
     return sorted.map((log, idx) => {
-      const score =
-        typeof log.formativeScore === 'number'
-          ? log.formativeScore
-          : log.feedback && typeof log.feedback.formativeScore === 'number'
-          ? log.feedback.formativeScore
-          : resolveFormativeScore(log);
-
-      const prevScore =
-        idx > 0
-          ? typeof sorted[idx - 1].formativeScore === 'number'
-            ? sorted[idx - 1].formativeScore!
-            : resolveFormativeScore(sorted[idx - 1])
-          : null;
-
+      const score = getTaskEffectiveScore(log) ?? 5;
+      const prevScore = idx > 0 ? (getTaskEffectiveScore(sorted[idx - 1]) ?? 5) : null;
       const diff = prevScore !== null ? Number((score - prevScore).toFixed(1)) : null;
 
       return {
@@ -552,10 +546,19 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
     setActiveSolvingTask(task);
     setCustomPracticeTask(null);
     setStudentResponses({});
+    setCerResponses({});
     setEvaluationFeedback(null);
     setMetacognitiveReflection('');
     setErrorMessage(null);
     setSavedSuccessMsg(null);
+
+    const initialModes: Record<number, 'standard' | 'cer'> = {};
+    if (task.task?.parts) {
+      task.task.parts.forEach((_, idx) => {
+        initialModes[idx] = task.cerFramework !== false ? 'cer' : 'standard';
+      });
+    }
+    setResponseModePerPart(initialModes);
   };
 
   const handleConfirmStudentNameAndStart = (e?: React.FormEvent) => {
@@ -649,8 +652,11 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
         mypYear: effectiveMypYear,
         category: activeSolvingTask?.category || practiceMeta.category,
         cluster: activeSolvingTask?.cluster || practiceMeta.cluster,
-        level: evaluationFeedback.level,
-        formativeScore: evaluationFeedback.formativeScore || resolveFormativeScore({ feedback: evaluationFeedback, level: evaluationFeedback.level } as any),
+        level: undefined,
+        formativeScore: undefined,
+        status: 'pending_review',
+        aiSuggestedScore: evaluationFeedback.formativeScore,
+        aiSuggestedLevel: evaluationFeedback.level,
         taskTitle: currentTask.title,
         skillIndicators: currentTask.skill_indicators || resolveSkillIndicators({
           studentName: effectiveStudentName,
@@ -670,7 +676,11 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
         originalTask: currentTask,
         stimulusImages: currentTask.stimulusImages || [],
         studentAttachments: allAttachments,
-        feedback: evaluationFeedback,
+        feedback: {
+          ...evaluationFeedback,
+          formativeScore: undefined,
+          summary: `Work submitted for teacher review and grading. (AI Formative Guidance generated: ${evaluationFeedback.summary})`,
+        },
         studentReflection: metacognitiveReflection || undefined,
         assignedTaskId: activeSolvingTask?.id,
         dueDate: activeSolvingTask?.dueDate,
@@ -678,7 +688,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
       };
 
       await onSaveTaskLog(newLog);
-      setSavedSuccessMsg('Task submitted and recorded in your Evidence Portfolio & Teacher Analytics!');
+      setSavedSuccessMsg('Submitted for Teacher Review & Grading! Your official grade will be awarded by your teacher.');
       setTimeout(() => {
         setActiveSolvingTask(null);
         setCustomPracticeTask(null);
@@ -711,12 +721,19 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
     setErrorMessage(null);
 
     try {
-      const responseItems: StudentResponseItem[] = Object.entries(studentResponses).map(([idx, text]) => ({
-        label: currentTask.parts[Number(idx)]?.label || String.fromCharCode(65 + Number(idx)),
-        prompt: currentTask.parts[Number(idx)]?.prompt || '',
-        response: typeof text === 'string' ? text : '',
-        attachments: studentAttachments[Number(idx)] || []
-      }));
+      const responseItems: StudentResponseItem[] = Object.entries(studentResponses).map(([idx, text]) => {
+        const numIdx = Number(idx);
+        const cer = cerResponses[numIdx];
+        return {
+          label: currentTask.parts[numIdx]?.label || String.fromCharCode(65 + numIdx),
+          prompt: currentTask.parts[numIdx]?.prompt || '',
+          response: typeof text === 'string' ? text : '',
+          attachments: studentAttachments[numIdx] || [],
+          claim: cer?.claim?.trim() || undefined,
+          evidence: cer?.evidence?.trim() || undefined,
+          reasoning: cer?.reasoning?.trim() || undefined
+        };
+      });
 
       const allAttachments = Object.values(studentAttachments).flat();
 
@@ -731,8 +748,9 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
         mypYear: effectiveMypYear,
         category: activeSolvingTask?.category || practiceMeta.category,
         cluster: activeSolvingTask?.cluster || practiceMeta.cluster,
-        level: 'Applying',
-        formativeScore: 5,
+        level: undefined,
+        formativeScore: undefined,
+        status: 'pending_review',
         taskTitle: currentTask.title,
         skillIndicators: currentTask.skill_indicators || [
           'Demonstrates understanding of concepts',
@@ -743,11 +761,11 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
         stimulusImages: currentTask.stimulusImages || [],
         studentAttachments: allAttachments,
         feedback: {
-          formativeScore: 5,
-          level: 'Applying',
+          formativeScore: undefined,
+          level: undefined as any,
           summary: 'Work submitted for teacher review and grading.',
-          strengths: ['Submitted on time', 'Provided answers and evidence'],
-          next_steps: ['Awaiting teacher feedback and evaluation.'],
+          strengths: ['Submitted on time', 'Provided completed student work and response'],
+          next_steps: ['Awaiting teacher evaluation and criterion grade.'],
           rubric_matrix: []
         },
         assignedTaskId: activeSolvingTask?.id,
@@ -1034,140 +1052,501 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
       {/* ========================================================================= */}
       {/* ACTIVE TASK SOLVING WORKBENCH (When a student is doing an assigned task or practice) */}
       {/* ========================================================================= */}
-      {(activeSolvingTask || customPracticeTask) ? (
-        <div className="rounded-3xl border border-indigo-200 bg-white p-6 sm:p-8 shadow-md space-y-6">
-          {/* Header of Active Task */}
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-100">
-            <div>
-              <div className="flex flex-wrap items-center gap-2 mb-1">
-                <span className="rounded-full bg-indigo-100 text-indigo-800 px-2.5 py-0.5 text-[11px] font-bold">
-                  {activeSolvingTask?.subject || practiceMeta.subject} • {activeSolvingTask?.topic || practiceMeta.topic}
-                </span>
-                <span className="rounded-full bg-purple-100 text-purple-800 px-2.5 py-0.5 text-[11px] font-bold">
-                  {activeSolvingTask?.category || practiceMeta.category} ({activeSolvingTask?.cluster || practiceMeta.cluster})
-                </span>
-                {activeSolvingTask?.dueDate && (
-                  <span className="rounded-full bg-amber-100 text-amber-800 px-2.5 py-0.5 text-[11px] font-bold flex items-center gap-1">
-                    <Clock className="h-3 w-3 text-amber-600" />
-                    <span>Due: {activeSolvingTask.dueDate}</span>
+      {(activeSolvingTask || customPracticeTask) ? (() => {
+        const activeTaskObj = activeSolvingTask ? (activeSolvingTask.task || activeSolvingTask) : customPracticeTask;
+        const effectiveTopic = activeSolvingTask?.topic || (activeTaskObj as any)?.topic || practiceMeta.topic || 'Cell Biology';
+        const effectiveSubject = activeSolvingTask?.subject || (activeTaskObj as any)?.subject || practiceMeta.subject || 'Biology';
+        const rawCriteria = activeSolvingTask?.criteria || (activeTaskObj as any)?.target_criteria || [(activeTaskObj as any)?.criteria] || ['Criterion C'];
+        const effectiveCriteria = (Array.isArray(rawCriteria) ? rawCriteria.filter(Boolean) : [rawCriteria]) as string[];
+        const effectivePrimaryCrit = determinePrimaryCriterion(effectiveCriteria);
+
+        const effectiveScientificDataset =
+          (activeTaskObj as any)?.scientific_dataset ||
+          (activeSolvingTask as any)?.scientific_dataset ||
+          (activeSolvingTask as any)?.originalTask?.scientific_dataset ||
+          (customPracticeTask as any)?.scientific_dataset ||
+          getScientificDatasetForTopic(effectiveTopic, effectivePrimaryCrit, effectiveSubject);
+
+        const effectiveStimulusImages: TaskImageAttachment[] =
+          ((activeTaskObj as any)?.stimulusImages && (activeTaskObj as any).stimulusImages.length > 0)
+            ? (activeTaskObj as any).stimulusImages
+            : (activeSolvingTask?.stimulusImages && activeSolvingTask.stimulusImages.length > 0)
+            ? activeSolvingTask.stimulusImages
+            : generateStimulusImagesForTopic(effectiveTopic, effectiveSubject);
+
+        const effectiveParts =
+          (activeTaskObj as any)?.parts && (activeTaskObj as any).parts.length > 0
+            ? (activeTaskObj as any).parts
+            : [
+                {
+                  label: 'A',
+                  prompt: `Based on the scientific dataset and graph above, state a supported claim regarding the observed pattern in ${effectiveTopic}, and cite at least two specific quantitative data values with units as empirical evidence.`,
+                  placeholder: 'State your scientific claim and cite specific numerical data points from the graph...'
+                },
+                {
+                  label: 'B',
+                  prompt: `Explain the biological mechanisms and underlying principles that explain the trend in ${effectiveTopic}. Evaluate the validity and limitations of the investigation.`,
+                  placeholder: 'Provide the underlying biochemical/biological reasoning and critique the experimental data...'
+                }
+              ];
+        const isTaskCer = Boolean(activeSolvingTask?.cerFramework !== false && (activeSolvingTask?.task as any)?.cerFramework !== false);
+
+        const effectiveAtlIntro = (activeTaskObj as any)?.atlPedagogicalIntro || (activeSolvingTask as any)?.atlPedagogicalIntro;
+        const effectiveAtlGuide = (activeTaskObj as any)?.atl_skill_guide || (activeSolvingTask as any)?.atl_skill_guide;
+        const activeCluster = (activeTaskObj as any)?.chosen_cluster || (activeSolvingTask as any)?.cluster || practiceMeta.cluster || 'Critical thinking';
+        const activeCategory = (activeSolvingTask as any)?.category || practiceMeta.category || 'Thinking';
+        const derivedAtl = buildATLSkillGuideAndIntro(activeCluster, activeCategory, effectiveTopic, effectivePrimaryCrit, effectiveSubject);
+        const resolvedAtlIntro = effectiveAtlIntro || derivedAtl.atlPedagogicalIntro;
+        const resolvedAtlGuide = effectiveAtlGuide || derivedAtl.atl_skill_guide;
+
+        return (
+          <div className="rounded-3xl border border-indigo-200 bg-white p-6 sm:p-8 shadow-md space-y-7">
+            {/* Header of Active Task */}
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-100">
+              <div>
+                <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                  <span className="rounded-full bg-indigo-100 text-indigo-800 px-3 py-0.5 text-xs font-bold">
+                    {effectiveSubject} • {effectiveTopic}
                   </span>
-                )}
+                  <span className="rounded-full bg-purple-100 text-purple-800 px-3 py-0.5 text-xs font-bold">
+                    {activeSolvingTask?.category || practiceMeta.category} ({activeSolvingTask?.cluster || practiceMeta.cluster})
+                  </span>
+                  <span className="rounded-full bg-sky-100 text-sky-800 px-3 py-0.5 text-xs font-bold">
+                    {effectiveCriteria.join(', ') || 'Criterion C'}
+                  </span>
+                  {activeSolvingTask?.dueDate && (
+                    <span className="rounded-full bg-amber-100 text-amber-800 px-3 py-0.5 text-xs font-bold flex items-center gap-1">
+                      <Clock className="h-3 w-3 text-amber-600" />
+                      <span>Due: {activeSolvingTask.dueDate}</span>
+                    </span>
+                  )}
+                </div>
+                <h2 className="text-xl sm:text-2xl font-black text-slate-900 leading-tight">
+                  {(activeTaskObj as any)?.title || 'Scientific Inquiry & Evaluation Task'}
+                </h2>
               </div>
-              <h2 className="text-xl sm:text-2xl font-black text-slate-900">
-                {(activeSolvingTask ? activeSolvingTask.task : customPracticeTask)?.title}
-              </h2>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveSolvingTask(null);
+                  setCustomPracticeTask(null);
+                  setEvaluationFeedback(null);
+                }}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors shrink-0 cursor-pointer shadow-2xs"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                <span>Back to Tasks</span>
+              </button>
             </div>
 
-            <button
-              type="button"
-              onClick={() => {
-                setActiveSolvingTask(null);
-                setCustomPracticeTask(null);
-                setEvaluationFeedback(null);
-              }}
-              className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50 transition-colors shrink-0 cursor-pointer"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              <span>Back to Tasks</span>
-            </button>
-          </div>
+            {/* ========================================================================= */}
+            {/* SECTION 1: THE COMPLETE INQUIRY QUESTION PAPER & EMPIRICAL STIMULUS */}
+            {/* ========================================================================= */}
+            <div className="rounded-2xl border-2 border-indigo-200/90 bg-gradient-to-b from-indigo-50/40 via-white to-white p-5 sm:p-6 shadow-xs space-y-6">
+              {/* Question Paper Header Banner */}
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-indigo-100 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-2xs">
+                    <FileText className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700">IB MYP Sciences Assessment Paper</span>
+                    <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
+                      Inquiry Task & Scientific Stimulus
+                    </h3>
+                  </div>
+                </div>
 
-          {/* Stimulus / Context */}
-          <div className="rounded-2xl bg-indigo-50/60 border border-indigo-100 p-5 space-y-4">
-            <h3 className="text-xs font-bold uppercase tracking-wider text-indigo-800">
-              Context & Stimulus
-            </h3>
-            <p className="text-xs sm:text-sm text-slate-700 leading-relaxed whitespace-pre-line font-medium">
-              {(activeSolvingTask ? activeSolvingTask.task : customPracticeTask)?.context}
-            </p>
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-100 text-emerald-900 px-2.5 py-1 text-[11px] font-extrabold">
+                    <Sparkles className="h-3 w-3 text-emerald-700" />
+                    <span>CER Inquiry Mode</span>
+                  </span>
+                  <span className="rounded-lg bg-slate-100 text-slate-700 px-2.5 py-1 text-[11px] font-bold">
+                    Est. {(activeTaskObj as any)?.estimated_minutes || 20} Mins
+                  </span>
+                </div>
+              </div>
 
-            {/* Stimulus Images / Question Diagrams (ChatGPT or Teacher generated) */}
-            {((activeSolvingTask ? activeSolvingTask.task : customPracticeTask)?.stimulusImages || []).length > 0 && (
-              <div className="pt-2 border-t border-indigo-100/80 space-y-2">
-                <span className="text-xs font-bold text-indigo-900 uppercase tracking-wider flex items-center gap-1.5">
-                  <ImageIcon className="h-3.5 w-3.5 text-indigo-600" />
-                  Attached Question Diagrams, Charts & Images ({((activeSolvingTask ? activeSolvingTask.task : customPracticeTask)?.stimulusImages || []).length})
-                </span>
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                  {((activeSolvingTask ? activeSolvingTask.task : customPracticeTask)?.stimulusImages || []).map((img, i) => (
-                    <div
-                      key={img.id || i}
-                      onClick={() => setPreviewModalImage(img.url)}
-                      className="group cursor-pointer rounded-xl border border-indigo-200 bg-white overflow-hidden shadow-2xs hover:shadow-md transition-all"
-                    >
-                      <img
-                        src={img.url}
-                        alt={img.caption || `Diagram ${i + 1}`}
-                        className="w-full h-36 object-cover group-hover:scale-105 transition-transform"
-                      />
-                      <div className="p-2 text-xs font-medium text-slate-700 bg-white truncate">
-                        {img.caption || img.name || `Diagram ${i + 1}`}
+              {/* 0. Approaches to Learning (ATL) Pedagogical Purpose & Explicit Skill Modelling */}
+              <div className="space-y-2">
+                <div className="rounded-2xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50/95 via-purple-50/40 to-white p-5 sm:p-6 shadow-2xs space-y-3.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 pb-3">
+                    <div className="flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-2xs">
+                        <Sparkles className="h-4 w-4" />
+                      </span>
+                      <div>
+                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600 block">
+                          Approaches to Learning (ATL) Focus • Named & Taught on Purpose
+                        </span>
+                        <h3 className="text-sm sm:text-base font-black text-indigo-950">
+                          Targeted Skill: {resolvedAtlGuide?.skill_name || activeCluster} ({activeCategory})
+                        </h3>
                       </div>
+                    </div>
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-100/90 text-indigo-900 px-3 py-1 text-xs font-black">
+                      <Target className="h-3.5 w-3.5 text-indigo-700" />
+                      <span>Explicit Skill Modelling</span>
+                    </span>
+                  </div>
+
+                  {/* Student-Facing Pedagogical Intro */}
+                  <div className="rounded-xl bg-white border border-indigo-100 p-4 text-xs sm:text-sm text-slate-800 leading-relaxed font-medium shadow-2xs">
+                    <p className="font-bold text-indigo-950 mb-1.5 flex items-center gap-1.5">
+                      <MessageSquareQuote className="h-4 w-4 text-indigo-600 shrink-0" />
+                      <span>Why This ATL Skill Matters & How It Is Developed:</span>
+                    </p>
+                    <p className="text-slate-700 whitespace-pre-line leading-relaxed">
+                      {resolvedAtlIntro}
+                    </p>
+                  </div>
+
+                  {/* 3 Pillars: What You Are Doing, How It Is Tested, What Is Being Developed */}
+                  {resolvedAtlGuide && (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
+                      <div className="rounded-xl bg-white border border-indigo-100 p-3.5 space-y-1 shadow-2xs">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700 block flex items-center gap-1">
+                          <BookOpen className="h-3 w-3 text-indigo-600" />
+                          1. What You Are Doing
+                        </span>
+                        <p className="text-xs text-slate-700 leading-snug">
+                          {resolvedAtlGuide.what_you_are_doing}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl bg-white border border-indigo-100 p-3.5 space-y-1 shadow-2xs">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700 block flex items-center gap-1">
+                          <Target className="h-3 w-3 text-indigo-600" />
+                          2. How It Is Tested (CER)
+                        </span>
+                        <p className="text-xs text-slate-700 leading-snug">
+                          {resolvedAtlGuide.how_it_is_tested}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl bg-white border border-indigo-100 p-3.5 space-y-1 shadow-2xs">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700 block flex items-center gap-1">
+                          <TrendingUp className="h-3 w-3 text-indigo-600" />
+                          3. What Is Being Developed
+                        </span>
+                        <p className="text-xs text-slate-700 leading-snug">
+                          {resolvedAtlGuide.what_is_being_developed}
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 1. Context / Biological Scenario */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
+                  <BookOpen className="h-3.5 w-3.5 text-indigo-600" />
+                  <span>1. Inquiry Background & Scientific Scenario</span>
+                </h4>
+                <div className="rounded-2xl bg-white border border-indigo-100/90 p-4 sm:p-5 text-xs sm:text-sm text-slate-800 leading-relaxed font-normal whitespace-pre-line shadow-2xs">
+                  {(activeTaskObj as any)?.context || (activeTaskObj as any)?.customQuestionText}
+                </div>
+              </div>
+
+              {/* 2. Scientific Graph & Dataset Stimulus (GUARANTEED VISIBLE) */}
+              <div className="space-y-2">
+                <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
+                  <BarChart2 className="h-3.5 w-3.5 text-sky-600" />
+                  <span>2. Scientific Data Stimulus & Empirical Evidence</span>
+                </h4>
+                <div className="rounded-2xl border border-sky-200 overflow-hidden bg-white shadow-2xs">
+                  <ScientificGraphStimulus dataset={effectiveScientificDataset} />
+                </div>
+              </div>
+
+              {/* 3. Biological Diagrams / Apparatus Stimulus */}
+              {effectiveStimulusImages && effectiveStimulusImages.length > 0 && (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
+                      <ImageIcon className="h-3.5 w-3.5 text-indigo-600" />
+                      <span>3. Attached Biological Diagrams & Stimulus Figures ({effectiveStimulusImages.length})</span>
+                    </h4>
+                    <span className="text-[11px] text-indigo-600 font-semibold flex items-center gap-1">
+                      <ZoomIn className="h-3.5 w-3.5" />
+                      Click image to fit full page & zoom
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                    {effectiveStimulusImages.map((img, i) => (
+                      <div
+                        key={img.id || i}
+                        onClick={() => setPreviewModalImage(img.url)}
+                        className="group cursor-pointer rounded-2xl border border-indigo-200 bg-white overflow-hidden shadow-2xs hover:border-indigo-400 hover:shadow-md transition-all relative"
+                      >
+                        <div className="relative w-full h-44 bg-slate-900/5 flex items-center justify-center overflow-hidden">
+                          <img
+                            src={img.url}
+                            alt={img.caption || `Diagram ${i + 1}`}
+                            onError={(e) => {
+                              e.currentTarget.src = getFallbackStimulusImage(
+                                activeSolvingTask?.title || customPracticeTask?.title || 'Biology',
+                                activeSolvingTask?.subject || 'Biology'
+                              );
+                            }}
+                            className="w-full h-full object-contain group-hover:scale-102 transition-transform"
+                          />
+                          <div className="absolute inset-0 bg-slate-950/25 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <span className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900/90 text-white text-xs font-bold shadow-lg">
+                              <ZoomIn className="w-4 h-4 text-indigo-400" />
+                              <span>Zoom & Fit Full Page</span>
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPreviewModalImage(img.url);
+                            }}
+                            className="absolute bottom-1.5 right-1.5 flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-900/80 hover:bg-indigo-600 text-white text-[10px] font-semibold shadow-xs transition-colors cursor-pointer"
+                            title="Fit Full Page"
+                          >
+                            <ZoomIn className="w-3 h-3" />
+                            <span>Zoom</span>
+                          </button>
+                        </div>
+                        <div className="p-2.5 text-xs font-semibold text-slate-700 bg-white flex items-center justify-between border-t border-slate-100">
+                          <span className="truncate">{img.caption || img.name || `Diagram ${i + 1}`}</span>
+                          <span className="text-[10px] font-bold text-indigo-600 shrink-0 flex items-center gap-1">
+                            <ZoomIn className="w-3 h-3" />
+                            <span>Full Page</span>
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 4. THE COMPLETE STRUCTURED QUESTIONS DISPLAY */}
+              <div className="space-y-3 pt-3 border-t border-indigo-100">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
+                    <Target className="h-4 w-4 text-indigo-600" />
+                    <span>4. Assessment Questions to Answer ({effectiveParts.length} Structured Inquiries)</span>
+                  </h4>
+                  <span className="text-[11px] font-bold text-indigo-800 bg-indigo-100/70 px-2.5 py-0.5 rounded-md">
+                    Synthesise Evidence & Justify Conclusions Below
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 gap-3">
+                  {effectiveParts.map((part: any, pIdx: number) => (
+                    <div
+                      key={pIdx}
+                      className="rounded-2xl border border-indigo-100 bg-white p-4 sm:p-5 shadow-2xs space-y-2 hover:border-indigo-300 transition-colors"
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-600 text-white font-black text-xs shrink-0 shadow-2xs">
+                            {part.label || String.fromCharCode(65 + pIdx)}
+                          </span>
+                          <span className="text-xs font-extrabold uppercase tracking-wider text-indigo-950">
+                            {pIdx === 0
+                              ? 'Question Part A: Scientific Claim & Quantitative Evidence'
+                              : 'Question Part B: Mechanistic Reasoning & Evaluation'}
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                          {pIdx === 0 ? 'Strand i, ii' : 'Strand iii, iv'}
+                        </span>
+                      </div>
+
+                      <p className="text-xs sm:text-sm font-bold text-slate-900 leading-relaxed pl-8">
+                        {part.prompt}
+                      </p>
+
+                      {part.placeholder && (
+                        <p className="text-[11px] text-slate-500 italic pl-8">
+                          💡 Focus: {part.placeholder}
+                        </p>
+                      )}
                     </div>
                   ))}
                 </div>
               </div>
-            )}
 
-            <div className="pt-2 border-t border-indigo-100/80 text-[11px] text-indigo-700 font-semibold flex items-center gap-1.5">
-              <Sparkles className="h-3.5 w-3.5 text-indigo-600" />
-              <span>ATL Focus: {(activeSolvingTask ? activeSolvingTask.task : customPracticeTask)?.atl_focus_explainer}</span>
+              {/* ATL Explainer footer */}
+              <div className="pt-2 border-t border-indigo-100/80 text-[11px] text-indigo-700 font-semibold flex items-center gap-1.5">
+                <Sparkles className="h-3.5 w-3.5 text-indigo-600" />
+                <span>ATL Focus: {(activeTaskObj as any)?.atl_focus_explainer || 'Applying scientific inquiry, pattern evaluation, and defended reasoning.'}</span>
+              </div>
             </div>
-          </div>
 
-          {/* Prompts & Response Inputs */}
-          {!evaluationFeedback && (
-            <div className="space-y-5">
-              <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
-                <FileText className="h-4 w-4 text-indigo-600" />
-                <span>Your Answers & Evidence</span>
-              </h3>
+            {/* ========================================================================= */}
+            {/* SECTION 2: STUDENT ANSWER & EVIDENCE WORKBENCH */}
+            {/* ========================================================================= */}
+            {!evaluationFeedback && (
+              <div className="space-y-5 pt-2">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <FileText className="h-4 w-4 text-indigo-600" />
+                    <span>Your Answers & Evidence Submission</span>
+                  </h3>
+                  <span className="text-xs text-slate-500 font-medium hidden sm:inline">
+                    Reference the data graph and stimulus above
+                  </span>
+                </div>
 
-              {(activeSolvingTask ? activeSolvingTask.task : customPracticeTask)?.parts.map((part, idx) => (
-                <div key={idx} className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <label className="text-xs sm:text-sm font-bold text-slate-800">
-                      <span className="inline-block px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 font-bold mr-2 text-xs">
-                        Part {part.label || String.fromCharCode(65 + idx)}
-                      </span>
-                      {part.prompt}
-                    </label>
-                  </div>
+                {effectiveParts.map((part: any, idx: number) => {
+                const isTaskCer = Boolean(activeSolvingTask?.cerFramework || (activeSolvingTask?.task as any)?.cerFramework);
+                const currentMode = responseModePerPart[idx] || (isTaskCer ? 'cer' : 'standard');
+                const cer = cerResponses[idx] || { claim: '', evidence: '', reasoning: '' };
 
-                  <textarea
-                    rows={4}
-                    value={studentResponses[idx] || ''}
-                    onChange={(e) => setStudentResponses({ ...studentResponses, [idx]: e.target.value })}
-                    placeholder={part.placeholder || 'Type your detailed explanation or answer here...'}
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs sm:text-sm text-slate-800 font-normal focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors"
-                  />
+                const handleModeToggle = (mode: 'standard' | 'cer') => {
+                  setResponseModePerPart((prev) => ({ ...prev, [idx]: mode }));
+                  if (mode === 'standard' && !studentResponses[idx] && (cer.claim || cer.evidence || cer.reasoning)) {
+                    const lines: string[] = [];
+                    if (cer.claim.trim()) lines.push(`Claim: ${cer.claim.trim()}`);
+                    if (cer.evidence.trim()) lines.push(`Evidence: ${cer.evidence.trim()}`);
+                    if (cer.reasoning.trim()) lines.push(`Reasoning: ${cer.reasoning.trim()}`);
+                    setStudentResponses((prev) => ({ ...prev, [idx]: lines.join('\n\n') }));
+                  }
+                };
 
-                  {/* Student Attachments for this Question Part */}
-                  <div className="pt-1 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors cursor-pointer shadow-2xs">
-                        <Upload className="w-3.5 h-3.5 text-indigo-600" />
-                        <span>Attach Photo of Work / Graph</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          className="hidden"
-                          onChange={(e) => {
-                            const f = e.target.files?.[0];
-                            if (f) {
-                              handleStudentAttachmentUpload(idx, f);
-                              e.target.value = '';
-                            }
-                          }}
-                        />
+                const updateCerField = (field: 'claim' | 'evidence' | 'reasoning', val: string) => {
+                  const updated = { ...cer, [field]: val };
+                  setCerResponses((prev) => ({ ...prev, [idx]: updated }));
+                  const lines: string[] = [];
+                  if (updated.claim.trim()) lines.push(`Claim: ${updated.claim.trim()}`);
+                  if (updated.evidence.trim()) lines.push(`Evidence: ${updated.evidence.trim()}`);
+                  if (updated.reasoning.trim()) lines.push(`Reasoning: ${updated.reasoning.trim()}`);
+                  setStudentResponses((prev) => ({ ...prev, [idx]: lines.join('\n\n') }));
+                };
+
+                return (
+                  <div key={idx} className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                      <label className="text-xs sm:text-sm font-bold text-slate-800">
+                        <span className="inline-block px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 font-bold mr-2 text-xs">
+                          Part {part.label || String.fromCharCode(65 + idx)}
+                        </span>
+                        {part.prompt}
                       </label>
-                      <span className="text-[11px] text-slate-400">Upload handwritten work, diagrams, or charts</span>
+
+                      {/* CER Framework Mode Switcher */}
+                      <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl shrink-0 self-start sm:self-auto">
+                        <button
+                          type="button"
+                          onClick={() => handleModeToggle('cer')}
+                          className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all ${
+                            currentMode === 'cer'
+                              ? 'bg-indigo-600 text-white shadow-xs'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          CER Response Mode
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleModeToggle('standard')}
+                          className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-all ${
+                            currentMode === 'standard'
+                              ? 'bg-white text-slate-800 shadow-xs border border-slate-200'
+                              : 'text-slate-600 hover:text-slate-900'
+                          }`}
+                        >
+                          Free Text
+                        </button>
+                      </div>
                     </div>
 
-                    <div className="text-right text-[10px] text-slate-400 font-medium">
-                      Word count: {(studentResponses[idx] || '').trim().split(/\s+/).filter(Boolean).length} words
+                    {currentMode === 'cer' ? (
+                      <div className="space-y-3 bg-indigo-50/40 p-3.5 rounded-2xl border border-indigo-100/80">
+                        <div className="flex items-center justify-between text-xs text-indigo-900 font-bold">
+                          <span>🔬 Scientific Argumentation: Claim • Evidence • Reasoning (CER)</span>
+                          <span className="text-[10px] text-indigo-600 font-medium">Auto-combines for grading</span>
+                        </div>
+
+                        {/* Claim Field */}
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-black uppercase tracking-wider text-blue-800 flex items-center gap-1">
+                            <span className="w-4 h-4 rounded-full bg-blue-600 text-white flex items-center justify-center text-[10px]">C</span>
+                            <span>Claim (Direct Statement / Answer)</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={cer.claim}
+                            onChange={(e) => updateCerField('claim', e.target.value)}
+                            placeholder="State your direct answer or scientific conclusion clearly in 1–2 sentences..."
+                            className="w-full rounded-xl border border-blue-200 bg-white p-2.5 text-xs sm:text-sm text-slate-800 focus:border-blue-600 focus:ring-1 focus:ring-blue-600 focus:outline-none"
+                          />
+                        </div>
+
+                        {/* Evidence Field */}
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-black uppercase tracking-wider text-emerald-800 flex items-center gap-1">
+                            <span className="w-4 h-4 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px]">E</span>
+                            <span>Evidence (Specific Data, Measurements & Observations)</span>
+                          </label>
+                          <textarea
+                            rows={2}
+                            value={cer.evidence}
+                            onChange={(e) => updateCerField('evidence', e.target.value)}
+                            placeholder="Cite specific data values, graph numbers, observations from the scenario, or calculated values..."
+                            className="w-full rounded-xl border border-emerald-200 bg-white p-2.5 text-xs sm:text-sm text-slate-800 focus:border-emerald-600 focus:ring-1 focus:ring-emerald-600 focus:outline-none"
+                          />
+                        </div>
+
+                        {/* Reasoning Field */}
+                        <div className="space-y-1">
+                          <label className="text-[11px] font-black uppercase tracking-wider text-purple-800 flex items-center gap-1">
+                            <span className="w-4 h-4 rounded-full bg-purple-600 text-white flex items-center justify-center text-[10px]">R</span>
+                            <span>Reasoning (Underlying Scientific Principles & Mechanisms)</span>
+                          </label>
+                          <textarea
+                            rows={3}
+                            value={cer.reasoning}
+                            onChange={(e) => updateCerField('reasoning', e.target.value)}
+                            placeholder="Explain WHY the evidence proves your claim using scientific laws, biological mechanisms, and concepts..."
+                            className="w-full rounded-xl border border-purple-200 bg-white p-2.5 text-xs sm:text-sm text-slate-800 focus:border-purple-600 focus:ring-1 focus:ring-purple-600 focus:outline-none"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <textarea
+                        rows={4}
+                        value={studentResponses[idx] || ''}
+                        onChange={(e) => setStudentResponses({ ...studentResponses, [idx]: e.target.value })}
+                        placeholder={part.placeholder || 'Type your detailed explanation, answers, or CER response here...'}
+                        className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs sm:text-sm text-slate-800 font-normal focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors"
+                      />
+                    )}
+
+                    {/* Student Attachments for this Question Part */}
+                    <div className="pt-1 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold transition-colors cursor-pointer shadow-2xs">
+                          <Upload className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>Attach Photo of Work / Graph</span>
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onChange={(e) => {
+                              const f = e.target.files?.[0];
+                              if (f) {
+                                handleStudentAttachmentUpload(idx, f);
+                                e.target.value = '';
+                              }
+                            }}
+                          />
+                        </label>
+                        <span className="text-[11px] text-slate-400">Upload handwritten work, diagrams, or charts</span>
+                      </div>
+
+                      <div className="text-right text-[10px] text-slate-400 font-medium">
+                        Word count: {(studentResponses[idx] || '').trim().split(/\s+/).filter(Boolean).length} words
+                      </div>
                     </div>
-                  </div>
 
                   {/* Thumbnails of attached work */}
                   {(studentAttachments[idx] || []).length > 0 && (
@@ -1204,7 +1583,8 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                     </div>
                   )}
                 </div>
-              ))}
+              );
+            })}
 
               <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3 pt-4">
                 <button
@@ -1350,8 +1730,9 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
             </div>
           )}
         </div>
-      ) : (
-        <>
+      );
+    })() : (
+      <>
           {/* ========================================================================= */}
           {/* TAB 1: ASSIGNED TASKS & TO-DO LIST */}
           {/* ========================================================================= */}
@@ -1516,14 +1897,25 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                             </button>
                           </div>
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleStartAssignedTask(task)}
-                            className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 transition-all shadow-2xs cursor-pointer"
-                          >
-                            <Play className="h-3.5 w-3.5" />
-                            <span>Start Task Now</span>
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setPreviewAssignedTaskModal(task)}
+                              className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50/70 py-2.5 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition-all cursor-pointer shadow-2xs"
+                              title="Preview entire question, data graph, diagrams, and prompts"
+                            >
+                              <FileText className="h-3.5 w-3.5" />
+                              <span>View Question</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleStartAssignedTask(task)}
+                              className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-indigo-600 py-2.5 text-xs font-bold text-white hover:bg-indigo-700 transition-all shadow-2xs cursor-pointer"
+                            >
+                              <Play className="h-3.5 w-3.5" />
+                              <span>Start Task</span>
+                            </button>
+                          </div>
                         )}
                       </div>
                     </div>
@@ -1931,9 +2323,8 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                 <div className="space-y-4">
                   {filteredEvidenceLogs.map((log) => {
                     const isExpanded = expandedLogId === log.id;
-                    const score = typeof log.formativeScore === 'number'
-                      ? log.formativeScore
-                      : (log.feedback?.formativeScore || resolveFormativeScore(log));
+                    const isGraded = isTaskLogGraded(log);
+                    const score = isGraded ? getTaskEffectiveScore(log) : undefined;
 
                     return (
                       <div
@@ -1970,13 +2361,23 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                               </div>
                             )}
 
-                            <div className="flex items-center gap-2 rounded-2xl bg-indigo-50 border border-indigo-100 px-3.5 py-1.5">
-                              <div className="text-xl font-black text-indigo-700">{score}/8</div>
-                              <div className="text-left">
-                                <div className="text-[10px] font-bold text-indigo-800 uppercase">{log.level}</div>
-                                <div className="text-[9px] text-indigo-600">Formative</div>
+                            {isGraded ? (
+                              <div className="flex items-center gap-2 rounded-2xl bg-indigo-50 border border-indigo-100 px-3.5 py-1.5">
+                                <div className="text-xl font-black text-indigo-700">{score}/8</div>
+                                <div className="text-left">
+                                  <div className="text-[10px] font-bold text-indigo-800 uppercase">{log.level || 'Applying'}</div>
+                                  <div className="text-[9px] text-indigo-600">Teacher Graded</div>
+                                </div>
                               </div>
-                            </div>
+                            ) : (
+                              <div className="flex items-center gap-2 rounded-2xl bg-amber-50 border border-amber-200 px-3.5 py-1.5 text-amber-800">
+                                <Clock className="w-4 h-4 text-amber-600 animate-pulse" />
+                                <div className="text-left">
+                                  <div className="text-[10px] font-bold text-amber-900 uppercase">Awaiting Grade</div>
+                                  <div className="text-[9px] text-amber-700">Submitted to Teacher</div>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -2014,9 +2415,32 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                                     <div className="font-bold text-slate-800">
                                       Part {resp.label}: {resp.prompt}
                                     </div>
-                                    <div className="text-slate-700 whitespace-pre-wrap font-normal">
-                                      {resp.response || '(No response provided)'}
-                                    </div>
+                                    {resp.claim || resp.evidence || resp.reasoning ? (
+                                      <div className="space-y-1.5 pt-1">
+                                        {resp.claim && (
+                                          <div className="p-2 rounded-lg bg-blue-50/80 border border-blue-200 text-slate-800">
+                                            <span className="text-[10px] font-black uppercase text-blue-800 block">Claim:</span>
+                                            <span className="text-xs">{resp.claim}</span>
+                                          </div>
+                                        )}
+                                        {resp.evidence && (
+                                          <div className="p-2 rounded-lg bg-emerald-50/80 border border-emerald-200 text-slate-800">
+                                            <span className="text-[10px] font-black uppercase text-emerald-800 block">Evidence:</span>
+                                            <span className="text-xs">{resp.evidence}</span>
+                                          </div>
+                                        )}
+                                        {resp.reasoning && (
+                                          <div className="p-2 rounded-lg bg-purple-50/80 border border-purple-200 text-slate-800">
+                                            <span className="text-[10px] font-black uppercase text-purple-800 block">Reasoning:</span>
+                                            <span className="text-xs">{resp.reasoning}</span>
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <div className="text-slate-700 whitespace-pre-wrap font-normal">
+                                        {resp.response || '(No response provided)'}
+                                      </div>
+                                    )}
                                   </div>
                                 ))}
                               </div>
@@ -2069,6 +2493,11 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                                   level: log.level,
                                   formativeScore: score,
                                   taskTitle: log.taskTitle,
+                                  context: log.originalTask?.context || (log as any).context,
+                                  atlPedagogicalIntro: log.atlPedagogicalIntro || log.originalTask?.atlPedagogicalIntro,
+                                  atl_skill_guide: log.atl_skill_guide || log.originalTask?.atl_skill_guide,
+                                  criteria: log.criteria,
+                                  strands: log.strands,
                                   responses: log.responses,
                                   feedback: log.feedback,
                                   studentReflection: log.studentReflection
@@ -2093,6 +2522,11 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                                   level: log.level,
                                   formativeScore: score,
                                   taskTitle: log.taskTitle,
+                                  context: log.originalTask?.context || (log as any).context,
+                                  atlPedagogicalIntro: log.atlPedagogicalIntro || log.originalTask?.atlPedagogicalIntro,
+                                  atl_skill_guide: log.atl_skill_guide || log.originalTask?.atl_skill_guide,
+                                  criteria: log.criteria,
+                                  strands: log.strands,
                                   responses: log.responses,
                                   feedback: log.feedback,
                                   studentReflection: log.studentReflection
@@ -2252,6 +2686,224 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
       )}
 
       {/* ========================================================================= */}
+      {/* STUDENT TASK PREVIEW MODAL (Entire Question, Data Graph, & Prompts) */}
+      {/* ========================================================================= */}
+      {previewAssignedTaskModal && (() => {
+        const previewTaskObj = previewAssignedTaskModal.task || previewAssignedTaskModal;
+        const previewTopic = previewAssignedTaskModal.topic || (previewTaskObj as any)?.topic || 'Cell Biology';
+        const previewSubject = previewAssignedTaskModal.subject || (previewTaskObj as any)?.subject || 'Biology';
+        const rawCriteria = previewAssignedTaskModal.criteria || (previewTaskObj as any)?.target_criteria || [(previewTaskObj as any)?.criteria] || ['Criterion C'];
+        const previewCriteria = (Array.isArray(rawCriteria) ? rawCriteria.filter(Boolean) : [rawCriteria]) as string[];
+        const previewPrimaryCrit = determinePrimaryCriterion(previewCriteria);
+
+        const previewScientificDataset =
+          (previewTaskObj as any)?.scientific_dataset ||
+          (previewAssignedTaskModal as any)?.scientific_dataset ||
+          (previewAssignedTaskModal as any)?.originalTask?.scientific_dataset ||
+          getScientificDatasetForTopic(previewTopic, previewPrimaryCrit, previewSubject);
+
+        const previewStimulusImages: TaskImageAttachment[] =
+          ((previewTaskObj as any)?.stimulusImages && (previewTaskObj as any).stimulusImages.length > 0)
+            ? (previewTaskObj as any).stimulusImages
+            : (previewAssignedTaskModal.stimulusImages && previewAssignedTaskModal.stimulusImages.length > 0)
+            ? previewAssignedTaskModal.stimulusImages
+            : generateStimulusImagesForTopic(previewTopic, previewSubject);
+
+        const previewParts =
+          (previewTaskObj as any)?.parts && (previewTaskObj as any).parts.length > 0
+            ? (previewTaskObj as any).parts
+            : [
+                {
+                  label: 'A',
+                  prompt: `Based on the scientific dataset and graph above, state a supported claim regarding the observed pattern in ${previewTopic}, and cite at least two specific quantitative data values with units as empirical evidence.`,
+                  placeholder: 'State your scientific claim and cite specific numerical data points from the graph...'
+                },
+                {
+                  label: 'B',
+                  prompt: `Explain the biological mechanisms and underlying principles that explain the trend in ${previewTopic}. Evaluate the validity and limitations of the investigation.`,
+                  placeholder: 'Provide the underlying biochemical/biological reasoning and critique the experimental data...'
+                }
+              ];
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-3 sm:p-6 backdrop-blur-xs">
+            <div className="flex max-h-[92vh] w-full max-w-4xl flex-col overflow-hidden rounded-3xl bg-white shadow-2xl border border-indigo-200 animate-in fade-in zoom-in-95 duration-150">
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-slate-100 bg-gradient-to-r from-indigo-50/70 via-white to-white px-6 py-4">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2 mb-1">
+                    <span className="rounded-full bg-indigo-100 text-indigo-800 px-2.5 py-0.5 text-[11px] font-bold">
+                      {previewSubject} • {previewTopic}
+                    </span>
+                    <span className="rounded-full bg-sky-100 text-sky-800 px-2.5 py-0.5 text-[11px] font-bold">
+                      {previewCriteria.join(', ') || 'Criterion C'}
+                    </span>
+                    {previewAssignedTaskModal.dueDate && (
+                      <span className="rounded-full bg-amber-100 text-amber-800 px-2.5 py-0.5 text-[11px] font-bold flex items-center gap-1">
+                        <Clock className="h-3 w-3 text-amber-600" />
+                        <span>Due: {previewAssignedTaskModal.dueDate}</span>
+                      </span>
+                    )}
+                  </div>
+                  <h3 className="text-lg sm:text-xl font-black text-slate-900 leading-tight">
+                    {previewAssignedTaskModal.title}
+                  </h3>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => setPreviewAssignedTaskModal(null)}
+                  className="rounded-2xl border border-slate-200 bg-white p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer shadow-2xs"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {/* Scrollable Question Body */}
+              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                {/* Context / Scenario */}
+                <div className="space-y-2">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
+                    <BookOpen className="h-3.5 w-3.5 text-indigo-600" />
+                    <span>Inquiry Background & Scientific Scenario</span>
+                  </h4>
+                  <div className="rounded-2xl bg-indigo-50/50 border border-indigo-100 p-4 sm:p-5 text-xs sm:text-sm text-slate-800 leading-relaxed font-medium whitespace-pre-line shadow-2xs">
+                    {(previewTaskObj as any)?.context || (previewTaskObj as any)?.customQuestionText}
+                  </div>
+                </div>
+
+                {/* Scientific Graph & Dataset */}
+                <div className="space-y-2">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
+                    <BarChart2 className="h-3.5 w-3.5 text-sky-600" />
+                    <span>Scientific Data Stimulus & Empirical Evidence</span>
+                  </h4>
+                  <div className="rounded-2xl border border-sky-200 overflow-hidden bg-white shadow-2xs">
+                    <ScientificGraphStimulus dataset={previewScientificDataset} />
+                  </div>
+                </div>
+
+                {/* Biological Diagrams */}
+                {previewStimulusImages && previewStimulusImages.length > 0 && (
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
+                        <ImageIcon className="h-3.5 w-3.5 text-indigo-600" />
+                        <span>Attached Biological Diagrams & Figures ({previewStimulusImages.length})</span>
+                      </h4>
+                      <span className="text-[11px] text-indigo-600 font-semibold flex items-center gap-1">
+                        <ZoomIn className="h-3.5 w-3.5" />
+                        Click image to zoom
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                      {previewStimulusImages.map((img, i) => (
+                        <div
+                          key={img.id || i}
+                          onClick={() => setPreviewModalImage(img.url)}
+                          className="group cursor-pointer rounded-2xl border border-indigo-200 bg-white overflow-hidden shadow-2xs hover:border-indigo-400 hover:shadow-md transition-all relative"
+                        >
+                          <div className="relative w-full h-40 bg-slate-900/5 flex items-center justify-center overflow-hidden">
+                            <img
+                              src={img.url}
+                              alt={img.caption || `Diagram ${i + 1}`}
+                              onError={(e) => {
+                                e.currentTarget.src = getFallbackStimulusImage(
+                                  previewAssignedTaskModal?.title || 'Biology',
+                                  previewSubject || 'Biology'
+                                );
+                              }}
+                              className="w-full h-full object-contain group-hover:scale-102 transition-transform"
+                            />
+                            <div className="absolute inset-0 bg-slate-950/25 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                              <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900/90 text-white text-[11px] font-bold shadow-lg">
+                                <ZoomIn className="w-3.5 h-3.5 text-indigo-400" />
+                                <span>Zoom</span>
+                              </span>
+                            </div>
+                          </div>
+                          <div className="p-2 text-xs font-semibold text-slate-700 bg-white border-t border-slate-100 truncate">
+                            {img.caption || img.name || `Diagram ${i + 1}`}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Question Parts */}
+                <div className="space-y-3 pt-2 border-t border-slate-200">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
+                    <Target className="h-4 w-4 text-indigo-600" />
+                    <span>Inquiry Questions ({previewParts.length} Structured Prompts)</span>
+                  </h4>
+
+                  <div className="grid grid-cols-1 gap-3">
+                    {previewParts.map((part: any, pIdx: number) => (
+                      <div
+                        key={pIdx}
+                        className="rounded-2xl border border-indigo-100 bg-white p-4 sm:p-5 shadow-2xs space-y-2 hover:border-indigo-300 transition-colors"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-600 text-white font-black text-xs shrink-0 shadow-2xs">
+                              {part.label || String.fromCharCode(65 + pIdx)}
+                            </span>
+                            <span className="text-xs font-extrabold uppercase tracking-wider text-indigo-950">
+                              {pIdx === 0
+                                ? 'Question Part A: Scientific Claim & Quantitative Evidence'
+                                : 'Question Part B: Mechanistic Reasoning & Evaluation'}
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                            {pIdx === 0 ? 'Strand i, ii' : 'Strand iii, iv'}
+                          </span>
+                        </div>
+
+                        <p className="text-xs sm:text-sm font-bold text-slate-900 leading-relaxed pl-8">
+                          {part.prompt}
+                        </p>
+
+                        {part.placeholder && (
+                          <p className="text-[11px] text-slate-500 italic pl-8">
+                            💡 {part.placeholder}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Footer CTA */}
+              <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50/80 px-6 py-4">
+                <button
+                  type="button"
+                  onClick={() => setPreviewAssignedTaskModal(null)}
+                  className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                >
+                  Close Preview
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const t = previewAssignedTaskModal;
+                    setPreviewAssignedTaskModal(null);
+                    handleStartAssignedTask(t);
+                  }}
+                  className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-5 py-2.5 text-xs sm:text-sm font-bold text-white hover:bg-indigo-700 shadow-md transition-all cursor-pointer"
+                >
+                  <Play className="h-4 w-4" />
+                  <span>Start Solving Task Now</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ========================================================================= */}
       {/* FULL TASK DETAIL MODAL (Questions, Context, Attached Images, Work, Grade) */}
       {/* ========================================================================= */}
       {detailModalLog && (
@@ -2281,19 +2933,22 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
           log={gradingModalLog}
           onSaveGrade={async (evalData, badge) => {
             if (gradingModalLog && onUpdateTaskLog) {
+              const finalScore = evalData.formativeScore ?? (evalData as any).score ?? 5;
               await onUpdateTaskLog(gradingModalLog.id, {
-                formativeScore: evalData.score,
+                formativeScore: finalScore,
                 level: evalData.level,
+                status: 'graded',
                 feedback: {
-                  formativeScore: evalData.score,
+                  formativeScore: finalScore,
                   level: evalData.level,
-                  summary: evalData.overallFeedback,
-                  strengths: evalData.strengths,
-                  next_steps: evalData.nextSteps,
-                  rubric_matrix: evalData.rubricMatrix
+                  summary: evalData.feedback || (evalData as any).overallFeedback || 'Teacher evaluation completed.',
+                  strengths: evalData.strengths || [],
+                  next_steps: evalData.nextSteps || [],
+                  rubric_matrix: (evalData as any).rubricMatrix || []
                 },
                 teacherEvaluation: {
                   ...evalData,
+                  formativeScore: finalScore,
                   badgeAwarded: badge
                 },
                 badgeAwarded: badge || gradingModalLog.badgeAwarded
@@ -2305,32 +2960,15 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
       )}
 
       {/* ========================================================================= */}
-      {/* IMAGE PREVIEW LIGHTBOX */}
+      {/* HIGH RESOLUTION FULL-PAGE IMAGE ZOOM LIGHTBOX */}
       {/* ========================================================================= */}
-      {previewModalImage && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-xs animate-in fade-in"
-          onClick={() => setPreviewModalImage(null)}
-        >
-          <div
-            className="relative max-w-4xl max-h-[90vh] bg-white rounded-2xl overflow-hidden shadow-2xl p-2"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              onClick={() => setPreviewModalImage(null)}
-              className="absolute top-4 right-4 z-10 rounded-full bg-slate-900/70 p-2 text-white hover:bg-slate-900 transition-colors cursor-pointer"
-            >
-              <X className="h-5 w-5" />
-            </button>
-            <img
-              src={previewModalImage}
-              alt="Preview"
-              className="w-auto h-auto max-h-[82vh] max-w-full mx-auto object-contain rounded-xl"
-            />
-          </div>
-        </div>
-      )}
+      <ImageZoomLightbox
+        isOpen={!!previewModalImage}
+        onClose={() => setPreviewModalImage(null)}
+        imageUrl={previewModalImage || ''}
+        title="Question Diagram & Stimulus"
+        caption="High-resolution view. Use toolbar to zoom in/out, fit to page, view 100% crisp text, or drag to pan."
+      />
     </div>
   );
 };

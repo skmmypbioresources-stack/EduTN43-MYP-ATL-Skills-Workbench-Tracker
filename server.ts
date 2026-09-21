@@ -6,6 +6,9 @@ import {
   determinePrimaryCriterion,
   generateTaskByCriterion,
   validateScientificDataset,
+  getScientificDatasetForTopic,
+  generateStimulusImagesForTopic,
+  buildATLSkillGuideAndIntro,
 } from './src/lib/scientificDatasetGenerator';
 
 const app = express();
@@ -43,7 +46,7 @@ async function generateContentWithRetry(
   },
   maxRetriesPerModel = 2
 ) {
-  const models = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-2.5-flash', 'gemini-3.1-flash-lite'];
+  const models = ['gemini-3.6-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite', 'gemini-2.5-flash'];
   let lastErr: any = null;
 
   for (const modelName of models) {
@@ -102,7 +105,7 @@ app.get('/api/health', (req, res) => {
 // Task Generator API
 app.post('/api/generate-task', async (req, res) => {
   try {
-    const { subject, topic, year, category, cluster, autoCluster, iduSubject, criteria, strands, title, taskTitle, customInstructions, apiKey: bodyApiKey } = req.body;
+    const { subject, topic, year, category, cluster, autoCluster, iduSubject, criteria, strands, title, taskTitle, customInstructions, cerFramework, apiKey: bodyApiKey } = req.body;
     const customApiKey = (req.headers['x-gemini-api-key'] as string) || bodyApiKey;
 
     if (!subject || !topic) {
@@ -113,62 +116,72 @@ app.post('/api/generate-task', async (req, res) => {
     const primaryCriterion = determinePrimaryCriterion(criteria, strands);
     const ai = getGenAIClient(customApiKey);
 
+    const isCerEnabled = cerFramework === true || cerFramework === 'true' || cerFramework === undefined;
+    const cerDirectives = isCerEnabled ? `
+MANDATORY CER (CLAIM, EVIDENCE, REASONING) 2-QUESTION TASK SPECIFICATION:
+- You MUST create EXACTLY TWO (2) questions (Part A and Part B). Do NOT create 3, 4, or 5 parts.
+- Rather than superficial length or many questions, focus purely on 2 DEPTH-RICH questions directly assessing ${primaryCriterion}:
+  * Part A: Quantitative Evidence & Scientific Claim. Direct prompt requiring students to make a clear scientific assertion and cite specific quantitative measurements/trends from the attached graph, data table, or experimental data.
+  * Part B: Deep Mechanistic Reasoning & Evaluation / Extended Critique. Rigorous prompt requiring students to explain the underlying cellular, physiological, ecological, or physical mechanisms connecting their evidence to their claim, evaluate limitations, or propose targeted solutions.
+- MANDATORY SCIENTIFIC DATASET & GRAPH:
+  * You MUST ALWAYS provide a rich, authentic simulated biological dataset inside "scientific_dataset" with graph data (graph_type, axes, units, 5-10 rows) so students have empirical graphs and data tables to extract evidence from.
+- In each part's "placeholder", provide clear CER sentence scaffolding (e.g. "Claim: ... Evidence: ... Reasoning: ...").` : '';
+
     // Build strict Criterion-governed System Instruction
     let criterionDirectives = '';
     if (primaryCriterion === 'Criterion A') {
       criterionDirectives = `
 CORE MANDATE — CRITERION A (Knowing & Understanding):
 - Task Type: Conceptual biology, scientific explanations, compare and contrast, scientific reasoning, and application of knowledge.
-- ABSOLUTE PROHIBITION: You MUST NOT generate any graphs, numerical datasets, data tables, or experimental results tables. The "scientific_dataset" field MUST be omitted / null.
+${isCerEnabled ? '- CER Format: Focus on 2 depth-rich questions. Provide scientific dataset and graphs as empirical stimulus for students to explain.' : `- ABSOLUTE PROHIBITION: You MUST NOT generate any graphs, numerical datasets, data tables, or experimental results tables. The "scientific_dataset" field MUST be omitted / null.
 - Inquiry Structure (Scaffolded 4 Parts):
-  * Part A: Explain & Define (Foundational Scientific Knowledge — explicit structure-function relationships).
-  * Part B: Compare & Contrast (Mechanistic Analysis — compare biological systems, energy demands, and pathways).
-  * Part C: Apply Knowledge (Unfamiliar Situation — predict cellular/organ-system impacts of a mutation, drug, or stressor).
-  * Part D: Scientist's Challenge (Model Critique & Synthesis — evaluate strengths and limitations of biological models/analogies).
-- Measurable ATL Skill Indicators (3-5): Begin with observable action verbs (e.g. Explain, Compare, Apply, Synthesise, Evaluate). Focus on conceptual mastery.`;
+  * Part A: Explain & Define.
+  * Part B: Compare & Contrast.
+  * Part C: Apply Knowledge.
+  * Part D: Scientist's Challenge.`}
+- Measurable ATL Skill Indicators (3-5): Begin with observable action verbs (e.g. Explain, Compare, Apply, Synthesise, Evaluate).`;
     } else if (primaryCriterion === 'Criterion B') {
       criterionDirectives = `
 CORE MANDATE — CRITERION B (Inquiring & Designing):
-- Task Type: Authentic scientific investigation design (students design the investigation rather than analyse outcomes).
-- ABSOLUTE PROHIBITION: You MUST NOT generate results, experimental data tables, outcome numbers, graphs, or data analysis questions. The "scientific_dataset" field MUST be omitted / null.
+- Task Type: Authentic scientific investigation design (students design the investigation and formulate hypotheses/methods).
+${isCerEnabled ? '- CER Format: Focus on 2 depth-rich questions. Include a scientific dataset representing pilot investigation data or preliminary trial results for students to critique and design from.' : `- ABSOLUTE PROHIBITION: You MUST NOT generate results, experimental data tables, outcome numbers, graphs, or data analysis questions. The "scientific_dataset" field MUST be omitted / null.
 - Inquiry Structure (Scaffolded 4 Parts):
-  * Part A: Research Question & Hypothesis (Formulate a focused, testable question and a testable hypothesis with scientific rationale).
-  * Part B: Variable Manipulation & Operationalization (Explicitly define IV with 5 intervals & units, DV with measurement protocol & units, and 3+ strictly Controlled Variables with specific control methods).
-  * Part C: Apparatus & Step-by-Step Methodology (Detailed, numbered, replicable procedure, precise apparatus selection, and repeat trials).
-  * Part D: Safety, Ethics & Validity Improvement (Scientist's Challenge — 2 specific hazards with mitigation precautions, and prevention of confounding variables/systematic errors).
-- Measurable ATL Skill Indicators (3-5): Begin with observable action verbs (e.g. Formulate, Operationalize, Design, Evaluate). Focus on experimental design.`;
+  * Part A: Research Question & Hypothesis.
+  * Part B: Variable Manipulation & Operationalization.
+  * Part C: Apparatus & Step-by-Step Methodology.
+  * Part D: Safety, Ethics & Validity Improvement.`}
+- Measurable ATL Skill Indicators (3-5): Begin with observable action verbs (e.g. Formulate, Operationalize, Design, Evaluate).`;
     } else if (primaryCriterion === 'Criterion C') {
       criterionDirectives = `
-CORE MANDATE — CRITERION C (Processing & Evaluating — Data Questions Only):
+CORE MANDATE — CRITERION C (Processing & Evaluating — Data Questions):
 - Task Type: Quantitative data analysis, mathematical transformations, graph interpretation, and methodological evaluation.
-- THIS IS THE ONLY CRITERION PERMITTED TO GENERATE GRAPHS OR DATA.
 - MANDATORY SCIENTIFIC DATASET & GRAPH:
-  * Generate a realistic simulated biological dataset inside "scientific_dataset" with authentic biological fluctuations (never flat/linear).
+  * Generate a realistic simulated biological dataset inside "scientific_dataset" with authentic biological fluctuations.
   * Plotted graph points MUST EXACTLY MATCH every row in the data table.
   * Clearly labelled axes (x_axis_label, y_axis_label) and unit labels (unit_x, unit_y).
-  * Publication-quality title (e.g. "Figure 1. Effect of Ambient Temperature on Mean Pollen Tube Growth Rate and Seed Set in Prunus avium").
+  * Publication-quality title.
   * Source label must strictly be: "Source: Simulated biological dataset generated for educational purposes.".
   * Provide 5 to 10 authentic data rows inside "data".
-- Inquiry Structure (Scaffolded 5 Parts progressing in difficulty):
-  * Part A: Identify a Trend (Pattern recognition citing initial, peak/inflection, and final values from the dataset).
-  * Part B: Process Numerical Evidence (Scientific calculation — calculate rate of change, % difference, or mean value showing formula and units).
-  * Part C: Explain Biological Relationship (Mechanistic cellular, physiological, or molecular explanation of the observed data).
-  * Part D: Evaluate Reliability & Limitations (Evaluate sample size, anomalies, repeatability, and confounding variables).
-  * Part E: Draw Justified Conclusion & Suggest Improvement (Scientist's Challenge — data-justified conclusion + targeted methodological improvement).
-- Measurable ATL Skill Indicators (3-5): Begin with observable action verbs (e.g. Analyse, Calculate, Interpret, Evaluate, Justify). Focus on data literacy.`;
+${isCerEnabled ? '- CER Format: Focus on 2 depth-rich questions (Part A: Trend analysis & calculated evidence; Part B: Biological mechanisms, reliability & justified evaluation).' : `- Inquiry Structure (Scaffolded 5 Parts):
+  * Part A: Identify a Trend.
+  * Part B: Process Numerical Evidence.
+  * Part C: Explain Biological Relationship.
+  * Part D: Evaluate Reliability & Limitations.
+  * Part E: Draw Justified Conclusion & Suggest Improvement.`}
+- Measurable ATL Skill Indicators (3-5): Begin with observable action verbs (e.g. Analyse, Calculate, Interpret, Evaluate, Justify).`;
     } else {
       // Criterion D
       criterionDirectives = `
 CORE MANDATE — CRITERION D (Reflecting on the Impacts of Science):
-- Task Type: Authentic real-world scenarios involving ethics, sustainability, global context, scientific innovation, environmental decision-making, and societal implications.
-- Embedded Global Context: Automatically embed one meaningful global context (e.g. Globalisation & sustainability, Scientific & technical innovation, Fairness & development, Identities & relationships) directly shaping the narrative scenario.
-- ABSOLUTE PROHIBITION: You MUST NOT generate experimental datasets, data tables, or numerical graphs. The "scientific_dataset" field MUST be omitted / null. Students evaluate impacts using biological knowledge.
+- Task Type: Authentic real-world scenarios involving ethics, sustainability, global context, scientific innovation, and societal implications.
+- Embedded Global Context: Automatically embed one meaningful global context directly shaping the narrative scenario.
+${isCerEnabled ? '- CER Format: Focus on 2 depth-rich questions (Part A: Scientific application, quantitative impact data, and evidence; Part B: Multidimensional ethical evaluation and justified resolution).' : `- ABSOLUTE PROHIBITION: You MUST NOT generate experimental datasets, data tables, or numerical graphs. The "scientific_dataset" field MUST be omitted / null.
 - Inquiry Structure (Scaffolded 4 Parts):
-  * Part A: Scientific Application & Context (Explain how biological science/technology in ${topic} is applied to solve a real-world problem).
-  * Part B: Multi-Perspective Implications (Evaluate at least 2 distinct implications: moral, ethical, social, economic, or environmental — weighing benefits vs risks).
-  * Part C: Scientific Communication & Stakeholder Literacy (Evaluate how scientific language and evidence are used to communicate with diverse stakeholders and resolve conflicting interests).
-  * Part D: Justified Ethical Decision (Scientist's Challenge — defend a policy, regulation, or ethical stance balancing scientific efficacy with global responsibilities).
-- Measurable ATL Skill Indicators (3-5): Begin with observable action verbs (e.g. Explain, Discuss, Evaluate, Justify). Focus on scientific literacy and bioethics.`;
+  * Part A: Scientific Application & Context.
+  * Part B: Multi-Perspective Implications.
+  * Part C: Scientific Communication & Stakeholder Literacy.
+  * Part D: Justified Ethical Decision.`}
+- Measurable ATL Skill Indicators (3-5): Begin with observable action verbs (e.g. Explain, Discuss, Evaluate, Justify).`;
     }
 
     const systemInstruction = `You are a distinguished International Baccalaureate (IB) MYP and DP Sciences / Biology Senior Examiner and Curriculum Specialist.
@@ -177,6 +190,21 @@ Your mission is to generate intellectually rigorous, higher-order thinking learn
 CRITICAL RULE: THE SELECTED MYP CRITERION DETERMINES THE TASK STYLE. The AI must never generate the wrong assessment style.
 
 ${criterionDirectives}
+
+${cerDirectives}
+
+MANDATORY APPROACHES TO LEARNING (ATL) PEDAGOGICAL SPECIFICATION:
+- Fundamental MYP Principle: Approaches to Learning are the transferable skills (Organisation, Collaboration, Communication, Information Literacy, Critical Thinking, Transfer, Reflection) that the MYP insists get named and taught on PURPOSE, not assumed as background ability students either have or don't.
+- Core Teaching Imperative: A skill mentioned on a unit planner and never modelled is a skill you are testing, not teaching. Naming the skill is only the first half; this task must deliberately explain and model the second half.
+- REQUIRED FIELD 'atlPedagogicalIntro':
+  You MUST write a comprehensive, inspiring, student-facing paragraph explaining:
+  (1) The specific ATL skill being targeted (${category || 'Thinking'} — ${cluster || 'Critical thinking'});
+  (2) Why this skill matters in science and across all disciplines;
+  (3) What the student is actively doing during this task;
+  (4) How this skill is being developed and scaffolded through the 2-part Claim-Evidence-Reasoning (CER) questions.
+  This text MUST be written directly to the student in an empowering, rigorous, accessible tone.
+- REQUIRED FIELD 'atl_skill_guide':
+  Provide a structured object containing: skill_name, category, cluster, what_you_are_doing, how_it_is_tested, what_is_being_developed, transferable_insight, pedagogical_rationale.
 
 ADDITIONAL MANDATES:
 1. AUTHENTIC GLOBAL CONTEXT: Embed a relevant global context (e.g. Globalisation & sustainability, Scientific & technical innovation, Fairness & development, Food security & biodiversity) that meaningfully influences the scenario.
@@ -218,6 +246,24 @@ ${customInstructions ? `TEACHER DIFFERENTIATION / INSTRUCTIONS:\n${customInstruc
               global_context: { type: Type.STRING, description: 'Authentic global context' },
               context: { type: Type.STRING, description: 'Authentic real-world scientific scenario framing the investigation' },
               atl_focus_explainer: { type: Type.STRING, description: 'Skill statement with 3-4 measurable action-verb indicators' },
+              atlPedagogicalIntro: {
+                type: Type.STRING,
+                description: 'Student-facing explanatory intro: why this ATL skill is targeted, how it matters, what the student is actively doing, and how it is developed in this task'
+              },
+              atl_skill_guide: {
+                type: Type.OBJECT,
+                description: 'Comprehensive ATL guide breaking down what the student is doing, how it is tested, and what is developed',
+                properties: {
+                  skill_name: { type: Type.STRING },
+                  category: { type: Type.STRING },
+                  cluster: { type: Type.STRING },
+                  what_you_are_doing: { type: Type.STRING },
+                  how_it_is_tested: { type: Type.STRING },
+                  what_is_being_developed: { type: Type.STRING },
+                  transferable_insight: { type: Type.STRING },
+                  pedagogical_rationale: { type: Type.STRING }
+                }
+              },
               skill_indicators: {
                 type: Type.ARRAY,
                 items: { type: Type.STRING },
@@ -278,15 +324,34 @@ ${customInstructions ? `TEACHER DIFFERENTIATION / INSTRUCTIONS:\n${customInstruc
           const parsed = JSON.parse(cleanedText);
           parsed.title = exactTitle || parsed.title;
 
-          // Enforce strict Criterion constraints on generated output
-          if (primaryCriterion === 'Criterion A' || primaryCriterion === 'Criterion B' || primaryCriterion === 'Criterion D') {
-            delete parsed.scientific_dataset;
-          } else if (primaryCriterion === 'Criterion C') {
+          // Enforce strict constraints on generated output
+          if (isCerEnabled) {
+            // CER tasks must have EXACTLY 2 questions
+            if (parsed.parts && parsed.parts.length > 2) {
+              parsed.parts = parsed.parts.slice(0, 2);
+              if (parsed.parts[0]) parsed.parts[0].label = 'A';
+              if (parsed.parts[1]) parsed.parts[1].label = 'B';
+            }
+            // Ensure valid publication-quality scientific dataset exists for CER empirical stimulus
             if (!validateScientificDataset(parsed.scientific_dataset)) {
-              // Ensure Criterion C always has a valid publication-quality dataset
-              parsed.scientific_dataset = generateTaskByCriterion('Criterion C', topic, subject, year, cluster, exactTitle).scientific_dataset;
+              parsed.scientific_dataset = getScientificDatasetForTopic(topic, primaryCriterion, subject);
             } else {
               parsed.scientific_dataset.source_label = 'Source: Simulated biological dataset generated for educational purposes.';
+            }
+            // Ensure stimulus images are attached if none were provided
+            if (!parsed.stimulusImages || parsed.stimulusImages.length === 0) {
+              parsed.stimulusImages = generateStimulusImagesForTopic(topic, subject);
+            }
+          } else {
+            // Non-CER tasks
+            if (primaryCriterion === 'Criterion A' || primaryCriterion === 'Criterion B' || primaryCriterion === 'Criterion D') {
+              delete parsed.scientific_dataset;
+            } else if (primaryCriterion === 'Criterion C') {
+              if (!validateScientificDataset(parsed.scientific_dataset)) {
+                parsed.scientific_dataset = generateTaskByCriterion('Criterion C', topic, subject, year, cluster, exactTitle, false).scientific_dataset;
+              } else {
+                parsed.scientific_dataset.source_label = 'Source: Simulated biological dataset generated for educational purposes.';
+              }
             }
           }
 
@@ -296,6 +361,18 @@ ${customInstructions ? `TEACHER DIFFERENTIATION / INSTRUCTIONS:\n${customInstruc
           if (strands && strands.length > 0 && !parsed.target_strands) {
             parsed.target_strands = strands;
           }
+          if (!parsed.atlPedagogicalIntro || !parsed.atl_skill_guide) {
+            const fallbackAtl = buildATLSkillGuideAndIntro(
+              parsed.chosen_cluster || cluster || 'Critical thinking',
+              category || 'Thinking',
+              topic,
+              primaryCriterion,
+              subject
+            );
+            if (!parsed.atlPedagogicalIntro) parsed.atlPedagogicalIntro = fallbackAtl.atlPedagogicalIntro;
+            if (!parsed.atl_skill_guide) parsed.atl_skill_guide = fallbackAtl.atl_skill_guide;
+          }
+          parsed.cerFramework = isCerEnabled;
           return res.json(parsed);
         }
       } catch (geminiError: any) {
@@ -310,8 +387,10 @@ ${customInstructions ? `TEACHER DIFFERENTIATION / INSTRUCTIONS:\n${customInstruc
       subject,
       year || '4',
       cluster || 'Critical thinking',
-      exactTitle
+      exactTitle,
+      isCerEnabled
     );
+    (fallbackTask as any).cerFramework = isCerEnabled;
     if (iduSubject) {
       fallbackTask.idu_note = `Synthesizes core ${subject} mechanisms with analytical frameworks in ${iduSubject}.`;
     }
