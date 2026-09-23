@@ -178,7 +178,7 @@ export async function updateTaskLogReflectionInFirestore(logId: string, reflecti
 export async function updateTaskLogInFirestore(logId: string, partial: Partial<ATLTaskLog>): Promise<void> {
   try {
     const docRef = doc(db, COLLECTION_NAME, logId);
-    await updateDoc(docRef, removeUndefinedFields(partial));
+    await setDoc(docRef, removeUndefinedFields(partial), { merge: true });
   } catch (err) {
     console.error('Failed to update task log in Firestore:', err);
     throw err;
@@ -274,7 +274,7 @@ export async function updateAssignedTaskInFirestore(taskId: string, partial: Par
   try {
     const docRef = doc(db, ASSIGNED_COLLECTION_NAME, taskId);
     const dataToUpdate = removeUndefinedFields(partial);
-    await updateDoc(docRef, dataToUpdate);
+    await setDoc(docRef, dataToUpdate, { merge: true });
   } catch (err) {
     console.error('Failed to update assigned task in Firestore:', err);
     throw err;

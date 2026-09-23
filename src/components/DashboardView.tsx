@@ -84,6 +84,8 @@ import { CustomTaskCreatorModal } from './CustomTaskCreatorModal';
 import { TaskAssignmentModal } from './TaskAssignmentModal';
 import { TaskDetailModal } from './TaskDetailModal';
 import { TeacherGradingModal } from './TeacherGradingModal';
+import { EditAssignedTaskModal } from './EditAssignedTaskModal';
+import { TaskSubmissionsModal } from './TaskSubmissionsModal';
 import { ScientificGraphStimulus } from './ScientificGraphStimulus';
 import { isTaskLogGraded, getTaskEffectiveScore } from '../lib/scoreUtils';
 
@@ -303,6 +305,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       return;
     }
 
+    // Explicitly reset existing cached preview task to ensure clean regeneration from scratch
+    setPreviewTask(null);
     setIsGeneratingPreview(true);
     setPublishError(null);
     setPublishSuccess(null);
@@ -547,6 +551,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [archiveSearchQuery, setArchiveSearchQuery] = useState<string>('');
   const [archiveToastMessage, setArchiveToastMessage] = useState<string | null>(null);
   const [taskForSubmissionsModal, setTaskForSubmissionsModal] = useState<AssignedTask | null>(null);
+  const [taskToEdit, setTaskToEdit] = useState<AssignedTask | null>(null);
   const [newCerFramework, setNewCerFramework] = useState<boolean>(true);
 
   // Helper to retrieve all student logs/submissions associated with a specific assigned task
@@ -745,6 +750,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         setSelectedLogForModal(null);
       }
     } else if (deleteActionType === 'assignedTask' && itemToDelete && onDeleteAssignedTask) {
+      // Find all student submissions for this assigned task and cascade delete them
+      const targetTask = assignedTasks.find((t) => t.id === itemToDelete.id);
+      if (targetTask) {
+        const associatedLogs = getSubmissionsForTask(targetTask);
+        for (const log of associatedLogs) {
+          onDeleteLog(log.id);
+        }
+      }
       onDeleteAssignedTask(itemToDelete.id);
     } else if (deleteActionType === 'resetLogs') {
       onResetSampleLogs();
@@ -1394,11 +1407,31 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                                     )}
                                   </span>
 
-                                  <div className="flex items-center gap-2">
+                                  <div className="flex items-center gap-2.5 flex-wrap">
+                                    <button
+                                      type="button"
+                                      onClick={() => setTaskToEdit(at)}
+                                      className="text-slate-700 hover:text-indigo-600 font-bold hover:underline cursor-pointer flex items-center gap-1"
+                                      title="Edit task criteria, questions, and delete unwanted questions"
+                                    >
+                                      <Edit3 className="h-3 w-3 text-indigo-600" />
+                                      <span>Edit Questions</span>
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => setTaskForSubmissionsModal(at)}
+                                      className="text-indigo-600 hover:text-indigo-800 font-bold hover:underline cursor-pointer flex items-center gap-1"
+                                      title="View student submissions for this task"
+                                    >
+                                      <FileText className="h-3 w-3" />
+                                      <span>Submissions ({getSubmissionsForTask(at).length})</span>
+                                    </button>
+
                                     <button
                                       type="button"
                                       onClick={() => setTaskToReassign(at)}
-                                      className="text-indigo-600 hover:text-indigo-800 font-bold hover:underline cursor-pointer flex items-center gap-1"
+                                      className="text-slate-600 hover:text-slate-800 font-bold hover:underline cursor-pointer flex items-center gap-1"
                                       title="Reassign to specific students or change class"
                                     >
                                       <Users className="h-3 w-3" />
@@ -2252,12 +2285,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         {formatShortClassTag(log.mypYear)}
                       </span>
                     </td>
-                    <td className="py-3 px-3 font-bold text-slate-900">
+                    <td
+                      onClick={() => setTaskDetailLog(log)}
+                      className="py-3 px-3 font-bold text-slate-900 cursor-pointer hover:text-indigo-600 transition-colors"
+                      title="Open full student work view"
+                    >
                       {log.studentName}
                     </td>
-                    <td className="py-3 px-3">
-                      <div className="font-bold text-slate-900">{log.subject}</div>
-                      <div className="text-slate-500 font-medium">{log.topic}</div>
+                    <td
+                      onClick={() => setTaskDetailLog(log)}
+                      className="py-3 px-3 cursor-pointer group"
+                      title="Open full student work view"
+                    >
+                      <div className="font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">{log.subject}</div>
+                      <div className="text-slate-500 font-medium group-hover:text-indigo-500 transition-colors">{log.topic}</div>
                       {log.criteria && log.criteria.length > 0 && (
                         <div className="mt-1 flex flex-wrap gap-1">
                           {log.criteria.map((c, i) => (
@@ -3735,16 +3776,47 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         />
       )}
 
+      {/* Edit Assigned Task & Manage Questions Modal */}
+      {taskToEdit && (
+        <EditAssignedTaskModal
+          isOpen={!!taskToEdit}
+          onClose={() => setTaskToEdit(null)}
+          task={taskToEdit}
+          studentLogs={logs}
+          onSaveTask={async (taskId, updates) => {
+            if (onUpdateAssignedTask) {
+              await onUpdateAssignedTask(taskId, updates);
+            }
+          }}
+          onUpdateTaskLog={onUpdateTaskLog}
+        />
+      )}
+
+      {/* View Task Submissions Modal */}
+      {taskForSubmissionsModal && (
+        <TaskSubmissionsModal
+          isOpen={!!taskForSubmissionsModal}
+          onClose={() => setTaskForSubmissionsModal(null)}
+          task={taskForSubmissionsModal}
+          studentLogs={logs}
+          onOpenTaskDetail={(log) => setTaskDetailLog(log)}
+          onDeleteLog={onDeleteLog}
+          onUpdateTaskLog={onUpdateTaskLog}
+        />
+      )}
+
       {/* Full Task Detail Viewer Modal */}
       {taskDetailLog && (
         <TaskDetailModal
           isOpen={!!taskDetailLog}
           onClose={() => setTaskDetailLog(null)}
-          log={taskDetailLog}
+          log={logs.find((l) => l.id === taskDetailLog.id) || taskDetailLog}
+          isTeacherView={true}
+          onUpdateLog={onUpdateTaskLog}
           onGradeClick={
             onUpdateTaskLog
               ? () => {
-                  const targetLog = taskDetailLog;
+                  const targetLog = logs.find((l) => l.id === taskDetailLog.id) || taskDetailLog;
                   setTaskDetailLog(null);
                   setTeacherGradingLog(targetLog);
                 }

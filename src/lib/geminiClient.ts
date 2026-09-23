@@ -207,14 +207,8 @@ ${meta.cerFramework !== false ? `MANDATORY CER (CLAIM, EVIDENCE, REASONING) FRAM
 - You MUST generate EXACTLY TWO (2) questions: Part A (Claim & Evidence from data/graph/scenario) and Part B (Mechanistic Reasoning, Reliability & Evaluation).
 - In each part's "placeholder", provide clear CER prompts (e.g. "Claim: State your answer. Evidence: Cite specific observations or data. Reasoning: Explain the scientific mechanism connecting evidence to claim.").` : ''}
 
-MANDATORY APPROACHES TO LEARNING (ATL) PEDAGOGICAL INTRO & GUIDE:
-- Philosophy: Approaches to Learning are the transferable skills (Organisation, Collaboration, Communication, Information Literacy, Critical Thinking, Transfer, Reflection) that the MYP insists get named and taught on PURPOSE, not assumed as background ability students either have or don't.
-- A skill mentioned on a unit planner and never modelled is a skill you are testing, not teaching. Naming it is only the first half; the task must deliberately model the second half.
-- In your JSON response, you MUST include 'atlPedagogicalIntro': a clear, student-facing paragraph explaining:
-  (1) The specific ATL skill being targeted;
-  (2) Why this skill matters in science and across all disciplines;
-  (3) What the student is actively doing during this task;
-  (4) How this skill is being developed and scaffolded through the 2-part Claim-Evidence-Reasoning (CER) questions.
+MANDATORY APPROACHES TO LEARNING (ATL) FOCUS:
+- Keep 'atlPedagogicalIntro' brief (1-2 sentences). Describe ONLY the task being assigned and what specific ATL skill it focuses on (category and cluster). Do NOT include generic essays or definitions of what ATL skills are in the MYP.
 - In your JSON response, also include 'atl_skill_guide': { skill_name, category, cluster, what_you_are_doing, how_it_is_tested, what_is_being_developed, transferable_insight, pedagogical_rationale }.
 
 ADDITIONAL MANDATES:

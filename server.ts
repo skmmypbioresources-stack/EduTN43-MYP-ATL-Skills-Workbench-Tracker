@@ -121,10 +121,10 @@ app.post('/api/generate-task', async (req, res) => {
 MANDATORY CER (CLAIM, EVIDENCE, REASONING) 2-QUESTION TASK SPECIFICATION:
 - You MUST create EXACTLY TWO (2) questions (Part A and Part B). Do NOT create 3, 4, or 5 parts.
 - Rather than superficial length or many questions, focus purely on 2 DEPTH-RICH questions directly assessing ${primaryCriterion}:
-  * Part A: Quantitative Evidence & Scientific Claim. Direct prompt requiring students to make a clear scientific assertion and cite specific quantitative measurements/trends from the attached graph, data table, or experimental data.
+  * Part A: Scientific Claim & Evidence. Direct prompt requiring students to make a clear scientific assertion and cite specific evidence, principles, or observations relevant to ${primaryCriterion}.
   * Part B: Deep Mechanistic Reasoning & Evaluation / Extended Critique. Rigorous prompt requiring students to explain the underlying cellular, physiological, ecological, or physical mechanisms connecting their evidence to their claim, evaluate limitations, or propose targeted solutions.
-- MANDATORY SCIENTIFIC DATASET & GRAPH:
-  * You MUST ALWAYS provide a rich, authentic simulated biological dataset inside "scientific_dataset" with graph data (graph_type, axes, units, 5-10 rows) so students have empirical graphs and data tables to extract evidence from.
+${primaryCriterion === 'Criterion C' ? `- MANDATORY SCIENTIFIC DATASET & GRAPH:
+  * You MUST provide a rich, authentic simulated biological dataset inside "scientific_dataset" with graph data (graph_type, axes, units, 5-10 rows) so students have empirical graphs and data tables to extract evidence from.` : `- SCIENTIFIC DATASET: The "scientific_dataset" field MUST be omitted / null as this task assesses ${primaryCriterion} (not numerical data evaluation).`}
 - In each part's "placeholder", provide clear CER sentence scaffolding (e.g. "Claim: ... Evidence: ... Reasoning: ...").` : '';
 
     // Build strict Criterion-governed System Instruction
@@ -332,11 +332,15 @@ ${customInstructions ? `TEACHER DIFFERENTIATION / INSTRUCTIONS:\n${customInstruc
               if (parsed.parts[0]) parsed.parts[0].label = 'A';
               if (parsed.parts[1]) parsed.parts[1].label = 'B';
             }
-            // Ensure valid publication-quality scientific dataset exists for CER empirical stimulus
-            if (!validateScientificDataset(parsed.scientific_dataset)) {
-              parsed.scientific_dataset = getScientificDatasetForTopic(topic, primaryCriterion, subject);
+            // Ensure valid publication-quality scientific dataset exists only when Criterion C is assessed
+            if (primaryCriterion === 'Criterion C') {
+              if (!validateScientificDataset(parsed.scientific_dataset)) {
+                parsed.scientific_dataset = getScientificDatasetForTopic(topic, primaryCriterion, subject);
+              } else {
+                parsed.scientific_dataset.source_label = 'Source: Simulated biological dataset generated for educational purposes.';
+              }
             } else {
-              parsed.scientific_dataset.source_label = 'Source: Simulated biological dataset generated for educational purposes.';
+              delete parsed.scientific_dataset;
             }
             // Ensure stimulus images are attached if none were provided
             if (!parsed.stimulusImages || parsed.stimulusImages.length === 0) {
@@ -344,14 +348,14 @@ ${customInstructions ? `TEACHER DIFFERENTIATION / INSTRUCTIONS:\n${customInstruc
             }
           } else {
             // Non-CER tasks
-            if (primaryCriterion === 'Criterion A' || primaryCriterion === 'Criterion B' || primaryCriterion === 'Criterion D') {
-              delete parsed.scientific_dataset;
-            } else if (primaryCriterion === 'Criterion C') {
+            if (primaryCriterion === 'Criterion C') {
               if (!validateScientificDataset(parsed.scientific_dataset)) {
                 parsed.scientific_dataset = generateTaskByCriterion('Criterion C', topic, subject, year, cluster, exactTitle, false).scientific_dataset;
               } else {
                 parsed.scientific_dataset.source_label = 'Source: Simulated biological dataset generated for educational purposes.';
               }
+            } else {
+              delete parsed.scientific_dataset;
             }
           }
 

@@ -965,6 +965,30 @@ export function getScientificDatasetForTopic(
 // and never modelled is a skill you are testing, not teaching. Naming it is only the first half;
 // this generator explicitly models and explains the second half to students.
 // -----------------------------------------------------------------------------------------
+export function getTaskBriefATLDescription(
+  topic?: string,
+  subject?: string,
+  category?: string,
+  cluster?: string,
+  rawIntro?: string
+): string {
+  if (
+    rawIntro &&
+    !rawIntro.includes('Approaches to Learning (ATL) are the transferable skills') &&
+    !rawIntro.includes('A skill mentioned on a unit planner') &&
+    rawIntro.length < 320
+  ) {
+    return rawIntro.trim();
+  }
+
+  const normTopic = topic || 'Science';
+  const normSubject = subject || 'Sciences';
+  const normCategory = category || 'Thinking';
+  const normCluster = cluster || 'Critical thinking';
+
+  return `This task on "${normTopic}" in ${normSubject} focuses on developing ${normCategory} — ${normCluster} skills. Students apply scientific understanding and empirical analysis to construct structured, evidence-supported arguments using the Claim, Evidence, and Reasoning (CER) framework.`;
+}
+
 export function buildATLSkillGuideAndIntro(
   cluster: string,
   category: string,
@@ -975,7 +999,7 @@ export function buildATLSkillGuideAndIntro(
   const normCluster = (cluster || 'Critical thinking').trim();
   const normCategory = (category || 'Thinking').trim();
 
-  const pedagogicalIntro = `Approaches to Learning (ATL) are the transferable skills that the MYP insists get named and taught on purpose, not assumed as background ability you either have or don't. A skill mentioned on a unit planner and never modelled is a skill being tested, not taught. Naming the skill is only the first half; this task is designed to model and teach the second half. In this task on "${topic}" in ${subject}, your deliberate ATL skill focus is ${normCategory} — ${normCluster}. You are not merely answering questions; you are deliberately developing and demonstrating how to think like a scientist using the Claim, Evidence, and Reasoning (CER) framework. In Part A, you will identify empirical patterns and cite specific quantitative or observational evidence to substantiate a testable claim. In Part B, you will articulate deep mechanistic scientific reasoning and evaluate validity and implications. This cognitive skill transfers directly across all scientific investigations, academic disciplines, and real-world decision-making.`;
+  const pedagogicalIntro = `This task on "${topic}" in ${subject} focuses on developing ${normCategory} — ${normCluster} skills. Students apply scientific understanding and empirical analysis to construct structured, evidence-supported arguments using the Claim, Evidence, and Reasoning (CER) framework.`;
 
   const skillGuide: ATLSkillGuide = {
     skill_name: `${normCluster}: Empirical Inquiry & Mechanistic Reasoning in ${topic}`,

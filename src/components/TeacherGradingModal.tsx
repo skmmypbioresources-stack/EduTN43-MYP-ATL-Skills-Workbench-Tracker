@@ -4,8 +4,12 @@ import {
   TeacherEvaluation,
   DigitalBadge,
   SkillLevel,
-  TaskImageAttachment
+  TaskImageAttachment,
+  GeneratedTask,
+  TaskFeedback,
+  StudentResponseItem
 } from '../types';
+import { evaluateTaskClient } from '../lib/geminiClient';
 import { TEACHER_PRESET_BADGES } from '../lib/badgeUtils';
 import {
   X,
@@ -66,7 +70,29 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
 
   const aiSuggestedScore = getTaskAiSuggestedScore(log);
   const aiSuggestedLevel = getTaskAiSuggestedLevel(log);
-  const hasAiAssistance = typeof aiSuggestedScore === 'number' || (log.feedback && log.feedback.rubric_matrix && log.feedback.rubric_matrix.length > 0) || (log.feedback?.summary && log.feedback.summary.includes('AI Formative Guidance'));
+
+  const [isGeneratingAi, setIsGeneratingAi] = useState<boolean>(false);
+  const [aiGenError, setAiGenError] = useState<string | null>(null);
+  const [activeAiFeedback, setActiveAiFeedback] = useState<TaskFeedback | null>(
+    log.feedback && log.feedback.rubric_matrix && log.feedback.rubric_matrix.length > 0
+      ? (log.feedback as TaskFeedback)
+      : null
+  );
+
+  const hasAiAssistance = Boolean(
+    activeAiFeedback ||
+    typeof aiSuggestedScore === 'number' ||
+    (log.feedback && log.feedback.rubric_matrix && log.feedback.rubric_matrix.length > 0) ||
+    (log.feedback?.summary && log.feedback.summary.includes('AI Formative Guidance'))
+  );
+
+  const effectiveAiSuggestedScore =
+    typeof activeAiFeedback?.formativeScore === 'number'
+      ? activeAiFeedback.formativeScore
+      : aiSuggestedScore;
+
+  const effectiveAiSuggestedLevel =
+    activeAiFeedback?.level || aiSuggestedLevel;
 
   const [score, setScore] = useState<number | undefined>(initialScore);
   const [level, setLevel] = useState<SkillLevel>(initialLevel);
@@ -105,24 +131,99 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
     }
   };
 
+  const handleGenerateAiRecommendation = async () => {
+    setIsGeneratingAi(true);
+    setAiGenError(null);
+    try {
+      const effectiveResponses: StudentResponseItem[] =
+        log.responses && log.responses.length > 0
+          ? log.responses
+          : (log.originalTask?.parts || []).map((p, i) => ({
+              label: p.label || String.fromCharCode(65 + i),
+              prompt: p.prompt,
+              response: ''
+            }));
+
+      const taskForEval: GeneratedTask = log.originalTask || {
+        title: log.taskTitle || 'Scientific Inquiry Task',
+        context: log.originalTask?.context || '',
+        chosen_cluster: log.cluster || 'Critical thinking',
+        atl_focus_explainer: 'Formative ATL Inquiry Task',
+        estimated_minutes: 30,
+        parts:
+          log.originalTask?.parts && log.originalTask.parts.length > 0
+            ? log.originalTask.parts
+            : effectiveResponses.map((r, i) => ({
+                label: r.label || String.fromCharCode(65 + i),
+                prompt: r.prompt || `Part ${r.label || String.fromCharCode(65 + i)}`,
+                placeholder: ''
+              })),
+        target_criteria: log.criteria || ['Criterion A'],
+        target_strands: log.originalTask?.target_strands || []
+      };
+
+      const meta = {
+        title: log.taskTitle || 'Scientific Inquiry Task',
+        taskTitle: log.taskTitle || 'Scientific Inquiry Task',
+        subject: log.subject || 'Sciences',
+        topic: log.topic || 'Science',
+        year: log.mypYear || '4',
+        category: log.category || 'Thinking',
+        cluster: log.cluster || 'Critical thinking',
+        criteria: log.criteria || ['Criterion A']
+      };
+
+      const generated = await evaluateTaskClient(taskForEval, meta, effectiveResponses);
+      setActiveAiFeedback(generated);
+
+      if (typeof generated.formativeScore === 'number') {
+        handleScoreChange(generated.formativeScore);
+      }
+      if (generated.level) {
+        setLevel(generated.level as SkillLevel);
+      }
+      if (generated.summary) {
+        setFeedback(generated.summary);
+      }
+      if (generated.strengths && generated.strengths.length > 0) {
+        setStrengthsText(generated.strengths.join('\n'));
+      }
+      if (generated.next_steps && generated.next_steps.length > 0) {
+        setNextStepsText(generated.next_steps.join('\n'));
+      }
+
+      setAiAppliedNotice('AI assessment recommendation generated. Review, edit, and adjust the score and feedback below before saving.');
+      setTimeout(() => setAiAppliedNotice(null), 5000);
+    } catch (err: any) {
+      console.error('Failed to generate AI grading recommendation:', err);
+      setAiGenError(err.message || 'Failed to generate AI recommendation. You can still grade manually below.');
+    } finally {
+      setIsGeneratingAi(false);
+    }
+  };
+
   const applyAiSuggestions = () => {
-    if (typeof aiSuggestedScore === 'number') {
-      handleScoreChange(aiSuggestedScore);
+    const feedbackToUse = activeAiFeedback || log.feedback;
+    const scoreToUse = typeof activeAiFeedback?.formativeScore === 'number' ? activeAiFeedback.formativeScore : aiSuggestedScore;
+    const levelToUse = activeAiFeedback?.level || aiSuggestedLevel;
+
+    if (typeof scoreToUse === 'number') {
+      handleScoreChange(scoreToUse);
     }
-    if (aiSuggestedLevel) {
-      setLevel(aiSuggestedLevel);
+    if (levelToUse) {
+      setLevel(levelToUse as SkillLevel);
     }
-    if (log.feedback?.summary && log.feedback.summary !== 'Work submitted for teacher review and grading.') {
-      const cleanSummary = log.feedback.summary
+    if (feedbackToUse?.summary && feedbackToUse.summary !== 'Work submitted for teacher review and grading.') {
+      const cleanSummary = feedbackToUse.summary
         .replace(/^Work submitted for teacher review and grading\.\s*\(AI Formative Guidance generated:\s*/, '')
         .replace(/\)$/, '');
       setFeedback(cleanSummary);
     }
-    if (log.feedback?.strengths && log.feedback.strengths.length > 0) {
-      setStrengthsText(log.feedback.strengths.join('\n'));
+    if (feedbackToUse?.strengths && feedbackToUse.strengths.length > 0) {
+      setStrengthsText(feedbackToUse.strengths.join('\n'));
     }
-    if (log.feedback?.next_steps && log.feedback.next_steps.length > 0) {
-      setNextStepsText(log.feedback.next_steps.join('\n'));
+    if (feedbackToUse?.next_steps && feedbackToUse.next_steps.length > 0) {
+      setNextStepsText(feedbackToUse.next_steps.join('\n'));
     }
     setAiAppliedNotice('AI suggested grade and commentary loaded. You can now modify any score or feedback.');
     setTimeout(() => setAiAppliedNotice(null), 4000);
@@ -193,7 +294,8 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
         nextSteps,
         gradedBy: teacherName,
         gradedAt: new Date().toISOString().split('T')[0],
-        badgeAwarded: badgeToAward
+        badgeAwarded: badgeToAward,
+        rubricMatrix: activeAiFeedback?.rubric_matrix || existingEval?.rubricMatrix || log.feedback?.rubric_matrix
       };
 
       if (onSaveEvaluation) {
@@ -481,110 +583,169 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
             )}
           </div>
 
-          {/* AI Formative Assessment & Draft Recommendations (If available) */}
-          {hasAiAssistance && (
-            <div className="pt-5 space-y-4">
-              <div className="rounded-2xl border border-purple-200 bg-gradient-to-br from-purple-50/70 via-indigo-50/40 to-white p-4 sm:p-5 space-y-3 shadow-2xs">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-xl bg-purple-600 text-white flex items-center justify-center shadow-xs">
-                      <Sparkles className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                        <span>AI Formative Marking Assessment</span>
-                        <span className="text-[10px] uppercase font-extrabold px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 border border-purple-200">
-                          Draft / Non-Official
-                        </span>
-                      </h4>
-                      <p className="text-xs text-slate-500">
-                        Preliminary diagnostic analysis against IB MYP criteria. The teacher retains 100% authority to alter or override.
-                      </p>
-                    </div>
+          {/* SECTION 2: AI Grading Assistant (Teacher Advisory Tool) */}
+          <div className="pt-5 space-y-4">
+            <div className="rounded-2xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50/70 via-purple-50/30 to-white p-5 space-y-4 shadow-2xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-xs shrink-0">
+                    <Sparkles className="w-5 h-5 text-amber-300" />
                   </div>
+                  <div>
+                    <h4 className="font-extrabold text-slate-900 text-sm sm:text-base flex items-center gap-2">
+                      <span>2. AI Grading Assistant</span>
+                      <span className="text-[10px] uppercase font-extrabold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">
+                        Teacher Advisory Tool
+                      </span>
+                    </h4>
+                    <p className="text-xs text-slate-600 mt-0.5">
+                      Generate an advisory IB criteria evaluation for this student's submission. The final grade and marks are strictly determined by you.
+                    </p>
+                  </div>
+                </div>
 
-                  {/* AI Suggested Score Badge */}
-                  {typeof aiSuggestedScore === 'number' && (
-                    <div className="flex items-center gap-2 shrink-0 bg-white px-3 py-1.5 rounded-xl border border-purple-200 shadow-2xs">
-                      <span className="text-xs text-slate-500 font-medium">AI Recommendation:</span>
-                      <span className="text-base font-black text-purple-700">{aiSuggestedScore}/8</span>
-                      {aiSuggestedLevel && (
-                        <span className="text-[10px] font-bold text-purple-800 bg-purple-50 px-1.5 py-0.5 rounded border border-purple-200">
-                          {aiSuggestedLevel}
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={handleGenerateAiRecommendation}
+                    disabled={isGeneratingAi}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs sm:text-sm font-bold transition-all shadow-sm hover:shadow disabled:opacity-50 cursor-pointer"
+                  >
+                    {isGeneratingAi ? (
+                      <>
+                        <RotateCcw className="w-4 h-4 animate-spin text-white" />
+                        <span>Analyzing Responses...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4 text-amber-300" />
+                        <span>
+                          {hasAiAssistance ? 'Re-Generate AI Recommendation' : 'Generate AI Recommendation'}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {aiGenError && (
+                <div className="flex items-center gap-2 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-medium">
+                  <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{aiGenError}</span>
+                </div>
+              )}
+
+              {/* Display AI recommendations if available */}
+              {hasAiAssistance && (
+                <div className="space-y-3 pt-2 border-t border-indigo-100">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-700">AI Suggested Formative Level:</span>
+                      {typeof effectiveAiSuggestedScore === 'number' && (
+                        <span className="text-sm font-black text-indigo-700 bg-white px-2.5 py-0.5 rounded-lg border border-indigo-200 shadow-2xs">
+                          {effectiveAiSuggestedScore} / 8
+                        </span>
+                      )}
+                      {effectiveAiSuggestedLevel && (
+                        <span className="text-xs font-bold text-indigo-800 bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-200">
+                          {effectiveAiSuggestedLevel}
                         </span>
                       )}
                     </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={applyAiSuggestions}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-all shadow-2xs cursor-pointer"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Apply AI Draft to Fields</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={clearToManual}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 text-xs font-bold transition-all cursor-pointer"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
+                        <span>Clear Fields</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* AI Summary and Comments */}
+                  {(activeAiFeedback?.summary || log.feedback?.summary) && (
+                    <div className="text-xs text-slate-700 bg-white/90 p-3.5 rounded-xl border border-indigo-100 leading-relaxed font-medium shadow-2xs">
+                      <span className="font-bold text-indigo-900 block mb-1">AI Diagnostic Commentary:</span>
+                      {(activeAiFeedback?.summary || log.feedback?.summary || '')
+                        .replace(/^Work submitted for teacher review and grading\.\s*\(AI Formative Guidance generated:\s*/, '')
+                        .replace(/\)$/, '')}
+                    </div>
                   )}
-                </div>
 
-                {/* AI Summary and Comments */}
-                {log.feedback?.summary && (
-                  <div className="text-xs text-slate-700 bg-white/80 p-3 rounded-xl border border-purple-100/80 leading-relaxed font-medium">
-                    <span className="font-bold text-purple-900 block mb-0.5">AI Diagnostic Summary:</span>
-                    {log.feedback.summary.replace(/^Work submitted for teacher review and grading\.\s*\(AI Formative Guidance generated:\s*/, '').replace(/\)$/, '')}
-                  </div>
-                )}
+                  {/* AI Strengths & Next Steps */}
+                  {((activeAiFeedback?.strengths && activeAiFeedback.strengths.length > 0) ||
+                    (log.feedback?.strengths && log.feedback.strengths.length > 0) ||
+                    (activeAiFeedback?.next_steps && activeAiFeedback.next_steps.length > 0) ||
+                    (log.feedback?.next_steps && log.feedback.next_steps.length > 0)) && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                      {((activeAiFeedback?.strengths && activeAiFeedback.strengths.length > 0) ||
+                        (log.feedback?.strengths && log.feedback.strengths.length > 0)) && (
+                        <div className="p-3 bg-white/90 rounded-xl border border-emerald-100 text-slate-700 shadow-2xs">
+                          <span className="font-bold text-emerald-800 block mb-1">Identified Strengths:</span>
+                          <ul className="list-disc list-inside space-y-0.5 text-slate-600">
+                            {(activeAiFeedback?.strengths || log.feedback?.strengths || []).slice(0, 3).map((st, sIdx) => (
+                              <li key={sIdx} className="truncate">{st}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {((activeAiFeedback?.next_steps && activeAiFeedback.next_steps.length > 0) ||
+                        (log.feedback?.next_steps && log.feedback.next_steps.length > 0)) && (
+                        <div className="p-3 bg-white/90 rounded-xl border border-blue-100 text-slate-700 shadow-2xs">
+                          <span className="font-bold text-blue-800 block mb-1">Suggested Next Steps:</span>
+                          <ul className="list-disc list-inside space-y-0.5 text-slate-600">
+                            {(activeAiFeedback?.next_steps || log.feedback?.next_steps || []).slice(0, 3).map((ns, nIdx) => (
+                              <li key={nIdx} className="truncate">{ns}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
-                {/* AI Strengths & Next Steps */}
-                {((log.feedback?.strengths && log.feedback.strengths.length > 0) || (log.feedback?.next_steps && log.feedback.next_steps.length > 0)) && (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
-                    {log.feedback?.strengths && log.feedback.strengths.length > 0 && (
-                      <div className="p-2.5 bg-white/90 rounded-xl border border-emerald-100 text-slate-700">
-                        <span className="font-bold text-emerald-800 block mb-1">Identified Strengths:</span>
-                        <ul className="list-disc list-inside space-y-0.5 text-slate-600">
-                          {log.feedback.strengths.slice(0, 3).map((st, sIdx) => (
-                            <li key={sIdx} className="truncate">{st}</li>
-                          ))}
-                        </ul>
+                  {/* Rubric Matrix breakdown if available */}
+                  {(activeAiFeedback?.rubric_matrix || log.feedback?.rubric_matrix) && (activeAiFeedback?.rubric_matrix || log.feedback?.rubric_matrix)!.length > 0 && (
+                    <div className="rounded-xl border border-indigo-100 bg-white p-3 space-y-1.5 shadow-2xs">
+                      <span className="text-[11px] font-bold text-indigo-900 block">Formative Criteria Rubric Matrix:</span>
+                      <div className="space-y-1">
+                        {(activeAiFeedback?.rubric_matrix || log.feedback?.rubric_matrix)!.map((rm, rIdx) => (
+                          <div key={rIdx} className="text-[11px] flex items-start justify-between gap-2 p-1.5 rounded-lg bg-slate-50 border border-slate-100">
+                            <span className="font-bold text-indigo-900 shrink-0">{rm.criterion}:</span>
+                            <span className="text-slate-600 flex-1">{rm.descriptor}</span>
+                            <span className="font-bold text-slate-800 shrink-0 bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                              {rm.score_range}
+                            </span>
+                          </div>
+                        ))}
                       </div>
-                    )}
-                    {log.feedback?.next_steps && log.feedback.next_steps.length > 0 && (
-                      <div className="p-2.5 bg-white/90 rounded-xl border border-blue-100 text-slate-700">
-                        <span className="font-bold text-blue-800 block mb-1">Suggested Next Steps:</span>
-                        <ul className="list-disc list-inside space-y-0.5 text-slate-600">
-                          {log.feedback.next_steps.slice(0, 3).map((ns, nIdx) => (
-                            <li key={nIdx} className="truncate">{ns}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                  </div>
-                )}
+                    </div>
+                  )}
 
-                {/* Teacher Action Buttons to Adopt or Override */}
-                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-purple-100">
-                  <span className="text-[11px] text-purple-900 font-medium">
-                    Quickly adopt AI suggestions as an editable draft, or start completely clean:
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={applyAiSuggestions}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-all shadow-xs cursor-pointer"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Use AI Suggestion as Baseline</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={clearToManual}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 text-xs font-bold transition-all cursor-pointer"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
-                      <span>Clear to Manual</span>
-                    </button>
+                  <div className="text-[11px] text-slate-500 font-medium italic pt-1">
+                    * The above AI evaluation is an advisory draft. Review, edit, and finalize your score and comments in Section 3 below.
                   </div>
                 </div>
+              )}
 
-                {aiAppliedNotice && (
-                  <div className="flex items-center gap-2 p-2 rounded-xl bg-emerald-100 border border-emerald-200 text-emerald-800 text-xs font-medium animate-fadeIn">
-                    <CheckCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span>{aiAppliedNotice}</span>
-                  </div>
-                )}
-              </div>
+              {aiAppliedNotice && (
+                <div className="flex items-center gap-2 p-2 rounded-xl bg-emerald-100 border border-emerald-200 text-emerald-800 text-xs font-medium animate-fadeIn">
+                  <CheckCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>{aiAppliedNotice}</span>
+                </div>
+              )}
             </div>
-          )}
+          </div>
 
           {/* SECTION 3: Teacher Grading, Feedback & Digital Badge */}
           <div className="pt-5 space-y-5">

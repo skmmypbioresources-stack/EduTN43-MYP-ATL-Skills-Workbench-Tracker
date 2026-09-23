@@ -34,6 +34,7 @@ import {
   determinePrimaryCriterion,
   getFallbackStimulusImage,
   buildATLSkillGuideAndIntro,
+  getTaskBriefATLDescription,
 } from '../lib/scientificDatasetGenerator';
 import {
   Award,
@@ -768,6 +769,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
           next_steps: ['Awaiting teacher evaluation and criterion grade.'],
           rubric_matrix: []
         },
+        studentReflection: metacognitiveReflection?.trim() || undefined,
         assignedTaskId: activeSolvingTask?.id,
         dueDate: activeSolvingTask?.dueDate,
         evidenceToken: effectiveToken
@@ -1096,7 +1098,13 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
         const activeCluster = (activeTaskObj as any)?.chosen_cluster || (activeSolvingTask as any)?.cluster || practiceMeta.cluster || 'Critical thinking';
         const activeCategory = (activeSolvingTask as any)?.category || practiceMeta.category || 'Thinking';
         const derivedAtl = buildATLSkillGuideAndIntro(activeCluster, activeCategory, effectiveTopic, effectivePrimaryCrit, effectiveSubject);
-        const resolvedAtlIntro = effectiveAtlIntro || derivedAtl.atlPedagogicalIntro;
+        const resolvedAtlIntro = getTaskBriefATLDescription(
+          effectiveTopic,
+          effectiveSubject,
+          activeCategory,
+          activeCluster,
+          effectiveAtlIntro
+        );
         const resolvedAtlGuide = effectiveAtlGuide || derivedAtl.atl_skill_guide;
 
         return (
@@ -1171,72 +1179,33 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
 
               {/* 0. Approaches to Learning (ATL) Pedagogical Purpose & Explicit Skill Modelling */}
               <div className="space-y-2">
-                <div className="rounded-2xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50/95 via-purple-50/40 to-white p-5 sm:p-6 shadow-2xs space-y-3.5">
-                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-indigo-100 pb-3">
+                <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50/95 via-purple-50/30 to-white p-4 sm:p-5 shadow-2xs space-y-2.5">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       <span className="flex h-7 w-7 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-2xs">
                         <Sparkles className="h-4 w-4" />
                       </span>
                       <div>
                         <span className="text-[10px] font-black uppercase tracking-wider text-indigo-600 block">
-                          Approaches to Learning (ATL) Focus • Named & Taught on Purpose
+                          Targeted ATL Skill Focus
                         </span>
                         <h3 className="text-sm sm:text-base font-black text-indigo-950">
-                          Targeted Skill: {resolvedAtlGuide?.skill_name || activeCluster} ({activeCategory})
+                          {activeCategory} — {activeCluster}
                         </h3>
                       </div>
                     </div>
-                    <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-100/90 text-indigo-900 px-3 py-1 text-xs font-black">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-indigo-100/90 text-indigo-900 px-3 py-1 text-xs font-bold">
                       <Target className="h-3.5 w-3.5 text-indigo-700" />
-                      <span>Explicit Skill Modelling</span>
+                      <span>{effectiveTopic}</span>
                     </span>
                   </div>
 
-                  {/* Student-Facing Pedagogical Intro */}
-                  <div className="rounded-xl bg-white border border-indigo-100 p-4 text-xs sm:text-sm text-slate-800 leading-relaxed font-medium shadow-2xs">
-                    <p className="font-bold text-indigo-950 mb-1.5 flex items-center gap-1.5">
-                      <MessageSquareQuote className="h-4 w-4 text-indigo-600 shrink-0" />
-                      <span>Why This ATL Skill Matters & How It Is Developed:</span>
-                    </p>
-                    <p className="text-slate-700 whitespace-pre-line leading-relaxed">
+                  {/* Concise Task-Focused Description */}
+                  <div className="rounded-xl bg-white border border-indigo-100 p-3.5 text-xs sm:text-sm text-slate-800 leading-relaxed font-medium shadow-2xs">
+                    <p className="text-slate-700 leading-relaxed">
                       {resolvedAtlIntro}
                     </p>
                   </div>
-
-                  {/* 3 Pillars: What You Are Doing, How It Is Tested, What Is Being Developed */}
-                  {resolvedAtlGuide && (
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
-                      <div className="rounded-xl bg-white border border-indigo-100 p-3.5 space-y-1 shadow-2xs">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700 block flex items-center gap-1">
-                          <BookOpen className="h-3 w-3 text-indigo-600" />
-                          1. What You Are Doing
-                        </span>
-                        <p className="text-xs text-slate-700 leading-snug">
-                          {resolvedAtlGuide.what_you_are_doing}
-                        </p>
-                      </div>
-
-                      <div className="rounded-xl bg-white border border-indigo-100 p-3.5 space-y-1 shadow-2xs">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700 block flex items-center gap-1">
-                          <Target className="h-3 w-3 text-indigo-600" />
-                          2. How It Is Tested (CER)
-                        </span>
-                        <p className="text-xs text-slate-700 leading-snug">
-                          {resolvedAtlGuide.how_it_is_tested}
-                        </p>
-                      </div>
-
-                      <div className="rounded-xl bg-white border border-indigo-100 p-3.5 space-y-1 shadow-2xs">
-                        <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700 block flex items-center gap-1">
-                          <TrendingUp className="h-3 w-3 text-indigo-600" />
-                          3. What Is Being Developed
-                        </span>
-                        <p className="text-xs text-slate-700 leading-snug">
-                          {resolvedAtlGuide.what_is_being_developed}
-                        </p>
-                      </div>
-                    </div>
-                  )}
                 </div>
               </div>
 
@@ -1586,143 +1555,46 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
               );
             })}
 
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-3 pt-4">
-                <button
-                  type="button"
-                  onClick={handleSubmitDirectToTeacher}
-                  disabled={isSavingLog}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl border border-indigo-200 bg-white px-5 py-3 text-xs sm:text-sm font-bold text-indigo-700 shadow-2xs hover:bg-indigo-50 transition-all disabled:opacity-50 cursor-pointer"
-                >
-                  <Send className="h-4 w-4 text-indigo-600" />
-                  <span>Submit Directly to Teacher</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleSubmitTaskForEvaluation}
-                  disabled={isEvaluating}
-                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-6 py-3 text-xs sm:text-sm font-bold text-white shadow-md hover:bg-indigo-700 transition-all disabled:opacity-50 cursor-pointer"
-                >
-                  {isEvaluating ? (
-                    <>
-                      <RotateCcw className="h-4 w-4 animate-spin text-white" />
-                      <span>Evaluating with Formative AI Rubric...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="h-4 w-4 text-amber-300" />
-                      <span>Submit & Evaluate with AI Rubric</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Evaluation Results & Metacognitive Reflection */}
-          {evaluationFeedback && (
-            <div className="space-y-6 pt-4 border-t border-slate-200 animate-in fade-in">
-              <div className="rounded-2xl border border-indigo-200 bg-indigo-50/70 p-6 space-y-4">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-indigo-600 text-white font-black text-xl shadow-xs">
-                      {evaluationFeedback.formativeScore || 7}/8
-                    </div>
-                    <div>
-                      <span className="text-[10px] uppercase font-bold text-indigo-700 tracking-wider">Formative Attainment</span>
-                      <h3 className="text-lg font-black text-slate-900">
-                        {evaluationFeedback.level} Level
-                      </h3>
-                    </div>
-                  </div>
-
-                  <span className="rounded-full bg-emerald-100 border border-emerald-200 px-3 py-1 text-xs font-bold text-emerald-800 flex items-center gap-1">
-                    <CheckCircle className="h-3.5 w-3.5 text-emerald-600" />
-                    <span>AI Formative Evaluation Complete</span>
-                  </span>
-                </div>
-
-                <p className="text-xs sm:text-sm text-slate-700 font-medium leading-relaxed">
-                  {evaluationFeedback.summary}
-                </p>
-
-                {/* Strengths & Next Steps */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
-                  <div className="rounded-xl bg-white p-4 border border-indigo-100 space-y-2">
-                    <h4 className="text-xs font-bold text-emerald-700 flex items-center gap-1.5">
-                      <Check className="h-4 w-4 text-emerald-600" />
-                      <span>Key Demonstrated Strengths</span>
-                    </h4>
-                    <ul className="space-y-1.5 text-xs text-slate-600">
-                      {evaluationFeedback.strengths?.map((s: string, i: number) => (
-                        <li key={i} className="flex items-start gap-1.5">
-                          <span className="text-emerald-500 font-bold">•</span>
-                          <span>{s}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div className="rounded-xl bg-white p-4 border border-indigo-100 space-y-2">
-                    <h4 className="text-xs font-bold text-amber-700 flex items-center gap-1.5">
-                      <Target className="h-4 w-4 text-amber-600" />
-                      <span>Actionable Next Steps for Growth</span>
-                    </h4>
-                    <ul className="space-y-1.5 text-xs text-slate-600">
-                      {evaluationFeedback.next_steps?.map((s: string, i: number) => (
-                        <li key={i} className="flex items-start gap-1.5">
-                          <span className="text-amber-500 font-bold">•</span>
-                          <span>{s}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-              </div>
-
-              {/* Metacognitive Reflection Box */}
-              <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
-                <label className="text-xs sm:text-sm font-bold text-slate-800 flex items-center gap-2">
+              {/* Student Metacognitive Reflection Box */}
+              <div className="rounded-2xl border border-indigo-100 bg-indigo-50/40 p-5 space-y-2.5">
+                <label className="text-xs sm:text-sm font-bold text-slate-900 flex items-center gap-2">
                   <MessageSquareQuote className="h-4 w-4 text-indigo-600" />
-                  <span>Student Metacognitive Reflection</span>
+                  <span>Student Metacognitive Reflection (Optional)</span>
                 </label>
                 <p className="text-xs text-slate-500">
-                  How did you apply this ATL skill during this task? What strategy will you use to improve next time?
+                  How did you apply this ATL skill during this task? What scientific strategy, reasoning, or evidence helped you formulate your responses?
                 </p>
                 <textarea
                   rows={3}
                   value={metacognitiveReflection}
                   onChange={(e) => setMetacognitiveReflection(e.target.value)}
-                  placeholder="I applied critical thinking by analyzing the evidence before concluding..."
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs sm:text-sm text-slate-800 focus:border-indigo-600 focus:bg-white focus:outline-none transition-colors"
+                  placeholder="I applied critical thinking by analyzing the trend in data before justifying my conclusion..."
+                  className="w-full rounded-xl border border-indigo-200 bg-white p-3.5 text-xs sm:text-sm text-slate-800 placeholder:text-slate-400 focus:border-indigo-600 focus:outline-none transition-colors shadow-2xs"
                 />
               </div>
 
-              {/* Action Buttons */}
-              <div className="flex items-center justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={() => setEvaluationFeedback(null)}
-                  className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
-                >
-                  Edit Answers
-                </button>
+              {/* Submit to Teacher Bar */}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4 pt-4 border-t border-slate-200">
+                <div className="text-xs text-slate-500 flex items-center gap-1.5">
+                  <Clock className="w-4 h-4 text-indigo-600 shrink-0" />
+                  <span>Your work will be submitted directly to your teacher for review and official formative grading.</span>
+                </div>
 
                 <button
                   type="button"
-                  onClick={handleSaveEvaluatedTask}
+                  onClick={handleSubmitDirectToTeacher}
                   disabled={isSavingLog}
-                  className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 px-6 py-2.5 text-xs sm:text-sm font-bold text-white shadow-md hover:bg-emerald-700 transition-all disabled:opacity-50 cursor-pointer"
+                  className="inline-flex items-center justify-center gap-2 rounded-2xl bg-indigo-600 hover:bg-indigo-700 px-7 py-3 text-sm font-bold text-white shadow-md hover:shadow-lg transition-all disabled:opacity-50 cursor-pointer shrink-0"
                 >
                   {isSavingLog ? (
                     <>
-                      <RotateCcw className="h-4 w-4 animate-spin" />
-                      <span>Saving to Portfolio...</span>
+                      <RotateCcw className="h-4 w-4 animate-spin text-white" />
+                      <span>Submitting Work to Teacher...</span>
                     </>
                   ) : (
                     <>
-                      <Check className="h-4 w-4" />
-                      <span>Save to My Evidence Portfolio</span>
+                      <Send className="h-4 w-4 text-white" />
+                      <span>Submit to Teacher</span>
                     </>
                   )}
                 </button>
@@ -2911,6 +2783,8 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
           isOpen={!!detailModalLog}
           onClose={() => setDetailModalLog(null)}
           log={detailModalLog}
+          isTeacherView={true}
+          onUpdateLog={onUpdateTaskLog}
           onGradeClick={
             onUpdateTaskLog
               ? () => {
