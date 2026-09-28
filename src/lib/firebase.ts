@@ -43,6 +43,23 @@ export const db = firestoreInstance;
 
 const COLLECTION_NAME = 'task_logs';
 
+export function isQuotaExceededError(err: any): boolean {
+  if (!err) return false;
+  const msg = typeof err === 'string' ? err : (err.message || err.code || '');
+  return (
+    msg.includes('Quota limit exceeded') ||
+    msg.includes('Quota exceeded') ||
+    msg.includes('resource-exhausted') ||
+    msg.includes('Free daily read units per project')
+  );
+}
+
+export function getFirestoreUpgradeUrl(): string {
+  const projectId = firebaseConfig.projectId || 'poised-axon-c0bnn';
+  const dbId = firebaseConfig.firestoreDatabaseId || 'ai-studio-mypatlskillswork-597f7718-46a5-47f5-9f37-c4eacfdeccd9';
+  return `https://console.firebase.google.com/project/${projectId}/firestore/databases/${dbId}/data?openUpgradeDialog=true`;
+}
+
 /**
  * Subscribe to real-time updates for all task logs from Firestore
  */
@@ -104,12 +121,20 @@ export function subscribeToTaskLogs(
         onUpdate(logs);
       },
       (err) => {
-        console.error('Firestore subscription error:', err);
+        if (isQuotaExceededError(err)) {
+          console.warn('[Firestore] Daily free read quota reached. Running with offline cached data.');
+        } else {
+          console.error('Firestore subscription error:', err);
+        }
         if (onError) onError(err);
       }
     );
   } catch (err) {
-    console.error('Failed to set up Firestore listener:', err);
+    if (isQuotaExceededError(err)) {
+      console.warn('[Firestore] Failed to set up Firestore listener due to quota limit.');
+    } else {
+      console.error('Failed to set up Firestore listener:', err);
+    }
     if (onError) onError(err as Error);
     return () => {};
   }
@@ -152,6 +177,10 @@ export async function saveTaskLogToFirestore(log: ATLTaskLog): Promise<void> {
     });
     await setDoc(docRef, dataToSave);
   } catch (err) {
+    if (isQuotaExceededError(err)) {
+      console.warn('[Firestore] Task log saved to local cache due to daily quota limit.');
+      return;
+    }
     console.error('Failed to save log to Firestore:', err);
     throw err;
   }
@@ -167,6 +196,10 @@ export async function updateTaskLogReflectionInFirestore(logId: string, reflecti
       studentReflection: reflection
     }));
   } catch (err) {
+    if (isQuotaExceededError(err)) {
+      console.warn('[Firestore] Task log reflection updated in local cache due to daily quota limit.');
+      return;
+    }
     console.error('Failed to update student reflection in Firestore:', err);
     throw err;
   }
@@ -180,6 +213,10 @@ export async function updateTaskLogInFirestore(logId: string, partial: Partial<A
     const docRef = doc(db, COLLECTION_NAME, logId);
     await setDoc(docRef, removeUndefinedFields(partial), { merge: true });
   } catch (err) {
+    if (isQuotaExceededError(err)) {
+      console.warn('[Firestore] Task log updated in local cache due to daily quota limit.');
+      return;
+    }
     console.error('Failed to update task log in Firestore:', err);
     throw err;
   }
@@ -193,6 +230,10 @@ export async function deleteTaskLogFromFirestore(logId: string): Promise<void> {
     const docRef = doc(db, COLLECTION_NAME, logId);
     await deleteDoc(docRef);
   } catch (err) {
+    if (isQuotaExceededError(err)) {
+      console.warn('[Firestore] Task log deleted from local cache due to daily quota limit.');
+      return;
+    }
     console.error('Failed to delete log from Firestore:', err);
     throw err;
   }
@@ -238,12 +279,20 @@ export function subscribeToAssignedTasks(
         onUpdate(tasks);
       },
       (err) => {
-        console.error('Firestore assigned tasks subscription error:', err);
+        if (isQuotaExceededError(err)) {
+          console.warn('[Firestore] Daily free read quota reached for assigned tasks. Running with offline cached data.');
+        } else {
+          console.error('Firestore assigned tasks subscription error:', err);
+        }
         if (onError) onError(err);
       }
     );
   } catch (err) {
-    console.error('Failed to set up assigned tasks listener:', err);
+    if (isQuotaExceededError(err)) {
+      console.warn('[Firestore] Failed to set up assigned tasks listener due to quota limit.');
+    } else {
+      console.error('Failed to set up assigned tasks listener:', err);
+    }
     if (onError) onError(err as Error);
     return () => {};
   }
@@ -262,6 +311,10 @@ export async function saveAssignedTaskToFirestore(assignedTask: AssignedTask): P
     });
     await setDoc(docRef, dataToSave);
   } catch (err) {
+    if (isQuotaExceededError(err)) {
+      console.warn('[Firestore] Assigned task saved to local offline cache due to daily quota limit.');
+      return;
+    }
     console.error('Failed to save assigned task to Firestore:', err);
     throw err;
   }
@@ -276,6 +329,10 @@ export async function updateAssignedTaskInFirestore(taskId: string, partial: Par
     const dataToUpdate = removeUndefinedFields(partial);
     await setDoc(docRef, dataToUpdate, { merge: true });
   } catch (err) {
+    if (isQuotaExceededError(err)) {
+      console.warn('[Firestore] Assigned task updated in local cache due to daily quota limit.');
+      return;
+    }
     console.error('Failed to update assigned task in Firestore:', err);
     throw err;
   }
@@ -289,6 +346,10 @@ export async function deleteAssignedTaskFromFirestore(taskId: string): Promise<v
     const docRef = doc(db, ASSIGNED_COLLECTION_NAME, taskId);
     await deleteDoc(docRef);
   } catch (err) {
+    if (isQuotaExceededError(err)) {
+      console.warn('[Firestore] Assigned task deleted from local cache due to daily quota limit.');
+      return;
+    }
     console.error('Failed to delete assigned task from Firestore:', err);
     throw err;
   }

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { AlertCircle, ExternalLink, X } from 'lucide-react';
 import { Header } from './components/Header';
 import { DashboardView } from './components/DashboardView';
 import { StudentEvidenceView } from './components/StudentEvidenceView';
@@ -13,7 +14,9 @@ import {
   subscribeToAssignedTasks,
   saveAssignedTaskToFirestore,
   updateAssignedTaskInFirestore,
-  deleteAssignedTaskFromFirestore
+  deleteAssignedTaskFromFirestore,
+  isQuotaExceededError,
+  getFirestoreUpgradeUrl
 } from './lib/firebase';
 import { generateTaskClient } from './lib/geminiClient';
 import { isTaskLogGraded, getTaskEffectiveScore } from './lib/scoreUtils';
@@ -23,9 +26,19 @@ import {
   cacheAssignedTasksLocally,
   cleanBloatedLocalStorageIfNecessary,
   safeGetLocalStorageItem,
+  safeSetLocalStorageItem,
+  saveToIndexedDB,
   getFromIndexedDB
 } from './lib/safeStorage';
 import { SAMPLE_LOGS, SAMPLE_ASSIGNED_TASKS } from './data/atlData';
+
+export const isSampleDataCleared = (): boolean => {
+  try {
+    return safeGetLocalStorageItem('atl_sample_data_cleared') === 'true';
+  } catch {
+    return false;
+  }
+};
 
 function extractStudentPortalInfoFromUrl() {
   if (typeof window === 'undefined') return { isStudentMode: false, name: '', year: '3', token: '' };
@@ -87,6 +100,10 @@ export default function App() {
   // Global Toddle Manager Modal State
   const [showGlobalToddleModal, setShowGlobalToddleModal] = useState<boolean>(false);
 
+  // Firestore Daily Free Read Quota Exceeded State
+  const [isQuotaExceeded, setIsQuotaExceeded] = useState<boolean>(false);
+  const [dismissQuotaBanner, setDismissQuotaBanner] = useState<boolean>(false);
+
   // Global Academic Year State - Defaults to 2026-2027
   const [academicYear, setAcademicYearState] = useState<string>(() => {
     try {
@@ -129,27 +146,32 @@ export default function App() {
     }
   };
 
+  const [isCleanMode, setIsCleanMode] = useState<boolean>(() => isSampleDataCleared());
+
   // Task Logs Database State (Firestore with local fallback)
   const [logs, setLogs] = useState<ATLTaskLog[]>(() => {
     try {
       const saved = safeGetLocalStorageItem('atl_workbench_logs_v2');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((l: ATLTaskLog) => {
-            const graded = isTaskLogGraded(l);
-            return {
-              ...l,
-              formativeScore: graded ? getTaskEffectiveScore(l) : undefined,
-              level: graded ? l.level : undefined,
-            };
-          });
+        if (Array.isArray(parsed)) {
+          if (parsed.length > 0) {
+            return parsed.map((l: ATLTaskLog) => {
+              const graded = isTaskLogGraded(l);
+              return {
+                ...l,
+                formativeScore: graded ? getTaskEffectiveScore(l) : undefined,
+                level: graded ? l.level : undefined,
+              };
+            });
+          }
+          if (isSampleDataCleared()) return [];
         }
       }
     } catch {
       // Graceful fallback
     }
-    return SAMPLE_LOGS;
+    return isSampleDataCleared() ? [] : SAMPLE_LOGS;
   });
 
   // Assigned Common Tasks State (Firestore with fallback sample tasks and localStorage caching)
@@ -158,14 +180,17 @@ export default function App() {
       const saved = safeGetLocalStorageItem('atl_assigned_tasks_v2');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+        if (Array.isArray(parsed)) {
+          if (parsed.length > 0) {
+            return parsed.filter((t) => t.active !== false);
+          }
+          if (isSampleDataCleared()) return [];
         }
       }
     } catch {
       // Graceful fallback
     }
-    return SAMPLE_ASSIGNED_TASKS;
+    return isSampleDataCleared() ? [] : SAMPLE_ASSIGNED_TASKS;
   });
 
   // Prune any oversized previous cache and hydrate full data from IndexedDB if initial state was empty
@@ -204,24 +229,60 @@ export default function App() {
 
   // Subscribe to real-time Firestore database updates for logs & assigned tasks
   useEffect(() => {
-    const unsubscribeLogs = subscribeToTaskLogs((firestoreLogs) => {
-      if (firestoreLogs && firestoreLogs.length > 0) {
-        setLogs(firestoreLogs);
-        cacheTaskLogsLocally(firestoreLogs);
-      } else {
-        setLogs((prev) => (prev.length > 0 ? prev : SAMPLE_LOGS));
+    const unsubscribeLogs = subscribeToTaskLogs(
+      (firestoreLogs) => {
+        if (firestoreLogs && firestoreLogs.length > 0) {
+          setLogs(firestoreLogs);
+          cacheTaskLogsLocally(firestoreLogs);
+        } else {
+          setLogs((prev) => {
+            if (isSampleDataCleared()) {
+              return prev === SAMPLE_LOGS ? [] : prev;
+            }
+            return prev.length > 0 ? prev : SAMPLE_LOGS;
+          });
+        }
+      },
+      (err) => {
+        if (isQuotaExceededError(err)) {
+          setIsQuotaExceeded(true);
+        }
+        // Seamlessly hydrate from IndexedDB offline storage
+        getFromIndexedDB<ATLTaskLog[]>('atl_workbench_logs_v2').then((idbLogs) => {
+          if (idbLogs && Array.isArray(idbLogs)) {
+            setLogs(idbLogs);
+          }
+        });
       }
-    });
+    );
 
-    const unsubscribeAssigned = subscribeToAssignedTasks((tasks) => {
-      const active = (tasks || []).filter((t) => t.active !== false);
-      if (active.length > 0) {
-        setAssignedTasks(active);
-        cacheAssignedTasksLocally(active);
-      } else {
-        setAssignedTasks((prev) => (prev.length > 0 ? prev : SAMPLE_ASSIGNED_TASKS));
+    const unsubscribeAssigned = subscribeToAssignedTasks(
+      (tasks) => {
+        const active = (tasks || []).filter((t) => t.active !== false);
+        if (active.length > 0) {
+          setAssignedTasks(active);
+          cacheAssignedTasksLocally(active);
+        } else {
+          setAssignedTasks((prev) => {
+            if (isSampleDataCleared()) {
+              return prev === SAMPLE_ASSIGNED_TASKS ? [] : prev;
+            }
+            return prev.length > 0 ? prev : SAMPLE_ASSIGNED_TASKS;
+          });
+        }
+      },
+      (err) => {
+        if (isQuotaExceededError(err)) {
+          setIsQuotaExceeded(true);
+        }
+        // Seamlessly hydrate assigned tasks from IndexedDB offline storage
+        getFromIndexedDB<AssignedTask[]>('atl_assigned_tasks_v2').then((idbTasks) => {
+          if (idbTasks && Array.isArray(idbTasks)) {
+            setAssignedTasks(idbTasks.filter((t) => t.active !== false));
+          }
+        });
       }
-    });
+    );
 
     // Cross-tab synchronization via storage event
     const handleStorageChange = (e: StorageEvent) => {
@@ -455,9 +516,12 @@ export default function App() {
 
   // Handle Deleting an Assigned Task
   const handleDeleteAssignedTask = async (taskId: string) => {
+    safeSetLocalStorageItem('atl_sample_data_cleared', 'true');
+    setIsCleanMode(true);
     setAssignedTasks((prev) => {
       const updated = prev.filter((t) => t.id !== taskId);
       cacheAssignedTasksLocally(updated);
+      saveToIndexedDB('atl_assigned_tasks_v2', updated);
       return updated;
     });
     try {
@@ -472,6 +536,7 @@ export default function App() {
     setAssignedTasks((prev) => {
       const updated = prev.map((t) => (t.id === taskId ? { ...t, ...partial } : t));
       cacheAssignedTasksLocally(updated);
+      saveToIndexedDB('atl_assigned_tasks_v2', updated);
       return updated;
     });
     try {
@@ -485,9 +550,12 @@ export default function App() {
   const handleSaveReflection = async (logId: string, reflectionText: string) => {
     try {
       await updateTaskLogReflectionInFirestore(logId, reflectionText);
-      setLogs((prev) =>
-        prev.map((log) => (log.id === logId ? { ...log, studentReflection: reflectionText } : log))
-      );
+      setLogs((prev) => {
+        const updated = prev.map((log) => (log.id === logId ? { ...log, studentReflection: reflectionText } : log));
+        cacheTaskLogsLocally(updated);
+        saveToIndexedDB('atl_workbench_logs_v2', updated);
+        return updated;
+      });
     } catch (e) {
       console.error('Failed to update reflection in Firestore:', e);
       throw e;
@@ -496,7 +564,14 @@ export default function App() {
 
   // Delete Log
   const handleDeleteLog = async (id: string) => {
-    setLogs((prev) => prev.filter((l) => l.id !== id));
+    safeSetLocalStorageItem('atl_sample_data_cleared', 'true');
+    setIsCleanMode(true);
+    setLogs((prev) => {
+      const updated = prev.filter((l) => l.id !== id);
+      cacheTaskLogsLocally(updated);
+      saveToIndexedDB('atl_workbench_logs_v2', updated);
+      return updated;
+    });
     try {
       await deleteTaskLogFromFirestore(id);
     } catch (e) {
@@ -504,11 +579,64 @@ export default function App() {
     }
   };
 
+  // Clear All Prefilled / Sample Data (Clean Mode)
+  const handleClearSampleData = async () => {
+    safeSetLocalStorageItem('atl_sample_data_cleared', 'true');
+    setIsCleanMode(true);
+
+    const userTasks = assignedTasks.filter((t) => !t.id.startsWith('sample-assigned-'));
+    setAssignedTasks(userTasks);
+    cacheAssignedTasksLocally(userTasks);
+    await saveToIndexedDB('atl_assigned_tasks_v2', userTasks);
+
+    const userLogs = logs.filter((l) => !l.id.startsWith('log-'));
+    setLogs(userLogs);
+    cacheTaskLogsLocally(userLogs);
+    await saveToIndexedDB('atl_workbench_logs_v2', userLogs);
+
+    for (const t of assignedTasks) {
+      if (t.id.startsWith('sample-assigned-')) {
+        try {
+          await deleteAssignedTaskFromFirestore(t.id);
+        } catch {}
+      }
+    }
+    for (const l of logs) {
+      if (l.id.startsWith('log-')) {
+        try {
+          await deleteTaskLogFromFirestore(l.id);
+        } catch {}
+      }
+    }
+  };
+
+  // Optional: Restore Sample Demo Data
+  const handleRestoreSampleData = async () => {
+    try {
+      localStorage.removeItem('atl_sample_data_cleared');
+      setIsCleanMode(false);
+
+      setLogs(SAMPLE_LOGS);
+      cacheTaskLogsLocally(SAMPLE_LOGS);
+      await saveToIndexedDB('atl_workbench_logs_v2', SAMPLE_LOGS);
+
+      setAssignedTasks(SAMPLE_ASSIGNED_TASKS);
+      cacheAssignedTasksLocally(SAMPLE_ASSIGNED_TASKS);
+      await saveToIndexedDB('atl_assigned_tasks_v2', SAMPLE_ASSIGNED_TASKS);
+    } catch (e) {
+      console.error('Failed to restore sample data:', e);
+    }
+  };
+
   // Clear All Logs
   const handleResetSampleLogs = async () => {
     if (window.confirm('Are you sure you want to clear all recorded task analytics logs?')) {
+      safeSetLocalStorageItem('atl_sample_data_cleared', 'true');
+      setIsCleanMode(true);
       const currentLogs = [...logs];
       setLogs([]);
+      cacheTaskLogsLocally([]);
+      await saveToIndexedDB('atl_workbench_logs_v2', []);
       for (const log of currentLogs) {
         try {
           await deleteTaskLogFromFirestore(log.id);
@@ -561,6 +689,36 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#f8fafc] text-slate-900 font-sans antialiased">
+      {/* Firestore Daily Free Quota Exceeded Notification Banner */}
+      {isQuotaExceeded && !dismissQuotaBanner && (
+        <div className="bg-amber-500/10 border-b border-amber-500/30 px-4 py-2.5 text-xs text-amber-950 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              <strong>Firestore Daily Free Quota Limit Reached:</strong> The workbench has seamlessly switched to high-speed offline/local cache mode. All student tasks, reflections, submissions, and teacher evaluations are safely preserved locally. Free tier read quota resets daily at 00:00 PST.
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <a
+              href={getFirestoreUpgradeUrl()}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-lg font-bold text-[11px] shadow-2xs transition-colors"
+            >
+              <span>View Quota / Upgrade</span>
+              <ExternalLink className="w-3 h-3" />
+            </a>
+            <button
+              onClick={() => setDismissQuotaBanner(true)}
+              className="p-1 text-amber-700 hover:text-amber-950 rounded-md hover:bg-amber-500/20 transition-colors"
+              title="Dismiss notice"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* If in standalone evidence portal mode, show dedicated StudentEvidenceView */}
       {isEvidenceMode ? (
         <div className="mx-auto max-w-7xl px-4 py-8 sm:px-8">
@@ -578,6 +736,7 @@ export default function App() {
             onUpdateTaskLog={handleUpdateTaskLog}
             onSaveReflection={handleSaveReflection}
             customApiKey={customApiKey}
+            onDeleteLog={handleDeleteLog}
           />
         </div>
       ) : (
@@ -612,6 +771,7 @@ export default function App() {
                 onUpdateTaskLog={handleUpdateTaskLog}
                 onSaveReflection={handleSaveReflection}
                 customApiKey={customApiKey}
+                onDeleteLog={handleDeleteLog}
               />
             )}
 
@@ -631,6 +791,9 @@ export default function App() {
                 onOpenStudentPortal={handleOpenStudentEvidencePortal}
                 onUpdateTaskLog={handleUpdateTaskLog}
                 customApiKey={customApiKey}
+                isCleanMode={isCleanMode}
+                onClearSampleData={handleClearSampleData}
+                onRestoreSampleData={handleRestoreSampleData}
               />
             )}
           </main>

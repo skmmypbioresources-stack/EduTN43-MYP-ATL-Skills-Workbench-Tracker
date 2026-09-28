@@ -184,7 +184,7 @@ ${isCerEnabled ? '- CER Format: Focus on 2 depth-rich questions (Part A: Scienti
 - Measurable ATL Skill Indicators (3-5): Begin with observable action verbs (e.g. Explain, Discuss, Evaluate, Justify).`;
     }
 
-    const systemInstruction = `You are a distinguished International Baccalaureate (IB) MYP and DP Sciences / Biology Senior Examiner and Curriculum Specialist.
+    const systemInstruction = `You are a distinguished International Baccalaureate (IB) MYP and DP Sciences / Biology Lead Educator and Curriculum Specialist.
 Your mission is to generate intellectually rigorous, higher-order thinking learning tasks that train students to think and reason like real scientists.
 
 CRITICAL RULE: THE SELECTED MYP CRITERION DETERMINES THE TASK STYLE. The AI must never generate the wrong assessment style.
@@ -492,7 +492,7 @@ Return ONLY valid JSON matching:
 
     // 2. Full Task Difficulty Calibration or General Revision
     const fullPrompt = `
-You are a distinguished International Baccalaureate (IB) MYP Sciences Senior Examiner.
+You are a distinguished International Baccalaureate (IB) MYP Sciences Lead Educator.
 The teacher is reviewing an AI-generated assessment task and has requested revisions before publishing to students.
 
 CURRENT TASK:
@@ -605,15 +605,16 @@ app.post('/api/evaluate-task', async (req, res) => {
       criterionMarkingFocus = 'Focus: Assess evaluation of scientific applications, multi-perspective implications (moral, ethical, social, economic, environmental), use of scientific language, and justified decision-making within the global context.';
     }
 
-    const systemInstruction = `You are an exceptionally strict, uncompromising IB MYP & DP Biology Chief Examiner.
+    const systemInstruction = `You are an exceptionally rigorous IB MYP & DP Biology Curriculum Specialist and Lead Sciences Teacher.
 Evaluate student submissions with rigorous academic standards, meticulous precision, and strict objectivity.
 
 TARGET ASSESSMENT CRITERION: ${primaryCriterion}
 ${criterionMarkingFocus}
 
-CRITICAL EXAMINER MARKING PRINCIPLES:
+CRITICAL TEACHER ASSESSMENT PRINCIPLES:
 1. UNCOMPROMISING RIGOR & OBJECTIVITY:
-   - Mark with high skepticism and strict adherence to scientific accuracy.
+   - Assess with high precision and strict adherence to scientific accuracy.
+   - Refer to yourself as the teacher (e.g. "the teacher identified", "the teacher diagnostic", "the teacher observed").
    - NEVER award marks for effort, attempt, politeness, length of text, or enthusiasm.
    - NEVER infer missing knowledge, assume implicit understanding, or give the benefit of the doubt.
    - Assess strictly what is explicitly stated in the student's text.
@@ -622,11 +623,11 @@ CRITICAL EXAMINER MARKING PRINCIPLES:
 2. MANDATORY REQUIREMENT — DIRECT CITATION OF STUDENT PHRASING:
    - ZERO TOLERANCE FOR GENERIC OR BOILERPLATE FEEDBACK: You are strictly forbidden from writing vague, formulaic comments (such as "The student demonstrated good understanding", "Well done on this task", or "Add more detail").
    - MUST PICK AND USE WORDS FROM STUDENT ANSWERS: You must actively extract, quote verbatim in quotation marks ("..."), and evaluate specific words, claims, numerical figures, and phrases written by the student.
-   - In "summary": You must directly quote at least 1-2 exact phrases from the student's responses to anchor your evaluation in their specific words (e.g., 'When stating "[quote]", the response correctly captured...').
+   - In "summary": You must directly quote at least 1-2 exact phrases from the student's responses to anchor your evaluation in their specific words (e.g., 'When the student states "[quote]", the teacher identified that...').
    - In "strengths": Every single strength MUST quote exact student words in double quotes ("...") and explain why that exact vocabulary or reasoning was scientifically valid.
-   - In "next_steps": Every single next step MUST cite specific words, phrases, or omissions from the student's answer in double quotes ("...") and specify the precise scientific vocabulary upgrade (e.g., 'Replace your phrase "[student quote]" with precise terminology such as...').
+   - In "next_steps": Every single next step MUST cite specific words, phrases, or omissions from the student's answer in double quotes ("...") and specify the precise scientific vocabulary upgrade (e.g., 'Replace the phrase "[student quote]" with precise terminology such as...').
    - In "studentQuotesUsed": Provide an array of 2 to 4 verbatim phrases picked from the student's answer that were evaluated.
-   - In "evaluatedPhrases": Provide structured items showing the exact studentQuote, your diagnostic evaluation of that phrasing, and status ('accurate' | 'partial' | 'needs_improvement').
+   - In "evaluatedPhrases": Provide structured items showing the exact studentQuote, the teacher diagnostic evaluation of that phrasing, and status ('accurate' | 'partial' | 'needs_improvement').
 
 3. STRICT 8-POINT RESTRICTION & SCORE BOUNDARIES:
    - 8 / 8 (Exceptional / Flawless Mastery): EXTREMELY RARE. DO NOT award 8 points unless the student's work is virtually flawless, demonstrating exceptional depth, exhaustive molecular/cellular mechanistic explanations, rigorous scientific vocabulary, and zero misconceptions or omissions. If there is ANY minor omission, informal term, or lack of complete mechanistic explanation, the score MUST NOT be 8.
@@ -660,7 +661,7 @@ STUDENT RESPONSES TO EVALUATE:
 ${responses.map((r: any) => `Part ${r.label} (${r.prompt}):
 Student Written Answer: ${r.response || (r.claim ? `Claim: ${r.claim}\nEvidence: ${r.evidence}\nReasoning: ${r.reasoning}` : '(left blank)')}`).join('\n\n')}
 
-INSTRUCTION: Carefully read the student's exact text above. Extract verbatim quotes/words written by the student and use them throughout your feedback. Do NOT provide generic comments.
+INSTRUCTION: Carefully read the student's exact text above. Extract verbatim quotes/words written by the student and use them throughout your feedback. Do NOT provide generic comments. Always write from the teacher perspective (e.g. "the teacher identified", "the teacher diagnostic").
     `;
 
     if (ai) {
@@ -676,7 +677,7 @@ INSTRUCTION: Carefully read the student's exact text above. Extract verbatim quo
               level: {
                 type: Type.STRING,
                 enum: ['Developing', 'Applying', 'Extending'],
-                description: 'The overall performance level according to strict MYP examiner standards'
+                description: 'The overall performance level according to strict MYP teacher assessment standards'
               },
               formativeScore: {
                 type: Type.INTEGER,
@@ -684,7 +685,7 @@ INSTRUCTION: Carefully read the student's exact text above. Extract verbatim quo
               },
               summary: {
                 type: Type.STRING,
-                description: 'Objective, evidence-based examiner synthesis that explicitly quotes and references the student\'s exact words'
+                description: 'Objective, evidence-based teacher diagnostic synthesis that explicitly quotes and references the student\'s exact words'
               },
               strengths: {
                 type: Type.ARRAY,
@@ -707,12 +708,12 @@ INSTRUCTION: Carefully read the student's exact text above. Extract verbatim quo
                   type: Type.OBJECT,
                   properties: {
                     studentQuote: { type: Type.STRING, description: 'Exact quote or phrase from student answer' },
-                    evaluation: { type: Type.STRING, description: 'Examiner evaluation of this specific phrasing' },
+                    evaluation: { type: Type.STRING, description: 'Teacher diagnostic evaluation of this specific phrasing' },
                     status: { type: Type.STRING, enum: ['accurate', 'partial', 'needs_improvement'] }
                   },
                   required: ['studentQuote', 'evaluation', 'status']
                 },
-                description: 'Structured breakdown of student phrasing picked and evaluated by the AI'
+                description: 'Structured breakdown of student phrasing picked and evaluated by the teacher'
               }
             },
             required: ['level', 'formativeScore', 'summary', 'strengths', 'next_steps']

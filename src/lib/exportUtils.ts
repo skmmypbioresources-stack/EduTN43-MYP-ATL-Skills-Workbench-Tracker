@@ -271,6 +271,15 @@ function renderStudentAnswersHtml(responses: StudentResponseItem[], studentAttac
   return partsHtml + attachmentsHtml;
 }
 
+export function replaceExaminerWithTeacher(text?: string | null): string {
+  if (!text) return '';
+  return String(text)
+    .replace(/\bexaminer's\b/gi, (m) => m[0] === 'E' ? "Teacher's" : "teacher's")
+    .replace(/\bexaminers'\b/gi, (m) => m[0] === 'E' ? "Teachers'" : "teachers'")
+    .replace(/\bexaminers\b/gi, (m) => m[0] === 'E' ? "Teachers" : "teachers")
+    .replace(/\bexaminer\b/gi, (m) => m[0] === 'E' ? "Teacher" : "teacher");
+}
+
 function renderEvaluatedWordsHtml(feedback: TaskFeedback, sanitize: (t: string) => string): string {
   const evaluatedPhrases = feedback.evaluatedPhrases || [];
   const quotesUsed = feedback.studentQuotesUsed || [];
@@ -279,7 +288,7 @@ function renderEvaluatedWordsHtml(feedback: TaskFeedback, sanitize: (t: string) 
   if (evaluatedPhrases.length > 0) {
     quoteItems = evaluatedPhrases.map((ep) => ({
       quote: ep.studentQuote,
-      evaluation: ep.evaluation ? ep.evaluation.replace(/\bexaminer('?s)?\b/gi, (m) => m.toLowerCase().startsWith("examiner's") ? (m[0] === 'E' ? "Teacher's" : "teacher's") : (m[0] === 'E' ? 'Teacher' : 'teacher')) : ep.evaluation,
+      evaluation: ep.evaluation ? replaceExaminerWithTeacher(ep.evaluation) : ep.evaluation,
       status: ep.status
     }));
   } else if (quotesUsed.length > 0) {
@@ -331,7 +340,7 @@ function renderEvaluatedWordsHtml(feedback: TaskFeedback, sanitize: (t: string) 
 }
 
 function generateReportHtml(data: ReportData): string {
-  const sanitize = (text: string) => text ? text.replace(/</g, '&lt;').replace(/>/g, '&gt;') : '';
+  const sanitize = (text: string) => text ? replaceExaminerWithTeacher(text).replace(/</g, '&lt;').replace(/>/g, '&gt;') : '';
 
   const indicators = resolveSkillIndicators(data);
   const skillIndicatorsHtml = indicators.length > 0
@@ -932,7 +941,7 @@ export interface StudentProgressReportParams {
  */
 export function generateStudentProgressReportHtml(params: StudentProgressReportParams): string {
   const sanitize = (text?: string | null) =>
-    text ? String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') : '';
+    text ? replaceExaminerWithTeacher(String(text)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') : '';
 
   const sortedLogs = [...params.logs].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   const totalTasks = sortedLogs.length;

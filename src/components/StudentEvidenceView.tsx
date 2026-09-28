@@ -24,6 +24,7 @@ import { evaluateTaskClient, generateTaskClient } from '../lib/geminiClient';
 import { resolveFormativeScore, isTaskLogGraded, getTaskEffectiveScore } from '../lib/scoreUtils';
 import { calculateStudentMilestoneBadges } from '../lib/badgeUtils';
 import { compressImage } from '../utils/imageOptimizer';
+import { safeGetLocalStorageItem } from '../lib/safeStorage';
 import { TaskDetailModal } from './TaskDetailModal';
 import { TeacherGradingModal } from './TeacherGradingModal';
 import { DigitalBadgesGallery } from './DigitalBadgesGallery';
@@ -116,6 +117,7 @@ interface StudentEvidenceViewProps {
   onUpdateTaskLog?: (logId: string, partial: Partial<ATLTaskLog>) => Promise<void>;
   onSaveReflection?: (logId: string, reflection: string) => Promise<void>;
   customApiKey?: string;
+  onDeleteLog?: (logId: string) => Promise<void> | void;
 }
 
 const normalizeMypYear = (year?: string): string => {
@@ -161,7 +163,8 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
   onSaveTaskLog,
   onUpdateTaskLog,
   onSaveReflection,
-  customApiKey
+  customApiKey,
+  onDeleteLog
 }) => {
   // Navigation within student folder: 'assigned' | 'analytics' | 'portfolio' | 'badges'
   const [activeTab, setActiveTab] = useState<'assigned' | 'analytics' | 'portfolio' | 'badges'>('assigned');
@@ -311,8 +314,11 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
 
   // Relevant Assigned Tasks for this student - Class matching with whole school, targeted student & custom task support
   const relevantAssignedTasks = useMemo(() => {
+    const isClean = safeGetLocalStorageItem('atl_sample_data_cleared') === 'true';
     const cleanStudentYear = normalizeMypYear(effectiveMypYear);
-    const pool = (assignedTasks && assignedTasks.length > 0) ? assignedTasks : SAMPLE_ASSIGNED_TASKS;
+    const pool = (assignedTasks !== undefined && assignedTasks !== null)
+      ? (isClean ? assignedTasks : (assignedTasks.length > 0 ? assignedTasks : SAMPLE_ASSIGNED_TASKS))
+      : (isClean ? [] : SAMPLE_ASSIGNED_TASKS);
 
     // If student/teacher chose to view all school tasks across all cohorts:
     if (showAllSchoolTasks) {
@@ -354,7 +360,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
       if (generalTasks.length > 0) {
         return generalTasks;
       }
-      return SAMPLE_ASSIGNED_TASKS.filter((st) => st.active !== false);
+      return isClean ? [] : SAMPLE_ASSIGNED_TASKS.filter((st) => st.active !== false);
     }
 
     return matched;
@@ -1062,23 +1068,37 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
         const effectiveCriteria = (Array.isArray(rawCriteria) ? rawCriteria.filter(Boolean) : [rawCriteria]) as string[];
         const effectivePrimaryCrit = determinePrimaryCriterion(effectiveCriteria);
 
-        const effectiveScientificDataset =
-          (activeTaskObj as any)?.scientific_dataset ||
-          (activeSolvingTask as any)?.scientific_dataset ||
-          (activeSolvingTask as any)?.originalTask?.scientific_dataset ||
-          (customPracticeTask as any)?.scientific_dataset ||
-          getScientificDatasetForTopic(effectiveTopic, effectivePrimaryCrit, effectiveSubject);
+        const isCustomTask =
+          activeSolvingTask?.sourceType === 'chatgpt_custom' ||
+          (activeTaskObj as any)?.sourceType === 'chatgpt_custom' ||
+          Boolean((activeTaskObj as any)?.customQuestionText);
+
+        const effectiveScientificDataset = isCustomTask
+          ? ((activeTaskObj as any)?.scientific_dataset || (activeSolvingTask as any)?.scientific_dataset || null)
+          : ((activeTaskObj as any)?.scientific_dataset ||
+             (activeSolvingTask as any)?.scientific_dataset ||
+             (activeSolvingTask as any)?.originalTask?.scientific_dataset ||
+             (customPracticeTask as any)?.scientific_dataset ||
+             getScientificDatasetForTopic(effectiveTopic, effectivePrimaryCrit, effectiveSubject));
 
         const effectiveStimulusImages: TaskImageAttachment[] =
           ((activeTaskObj as any)?.stimulusImages && (activeTaskObj as any).stimulusImages.length > 0)
             ? (activeTaskObj as any).stimulusImages
             : (activeSolvingTask?.stimulusImages && activeSolvingTask.stimulusImages.length > 0)
             ? activeSolvingTask.stimulusImages
-            : generateStimulusImagesForTopic(effectiveTopic, effectiveSubject);
+            : (isCustomTask ? [] : generateStimulusImagesForTopic(effectiveTopic, effectiveSubject));
 
         const effectiveParts =
           (activeTaskObj as any)?.parts && (activeTaskObj as any).parts.length > 0
             ? (activeTaskObj as any).parts
+            : isCustomTask
+            ? [
+                {
+                  label: '1',
+                  prompt: 'Answer the question provided above:',
+                  placeholder: 'Type your comprehensive response and justification here...'
+                }
+              ]
             : [
                 {
                   label: 'A',
@@ -1220,16 +1240,18 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                 </div>
               </div>
 
-              {/* 2. Scientific Graph & Dataset Stimulus (GUARANTEED VISIBLE) */}
-              <div className="space-y-2">
-                <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
-                  <BarChart2 className="h-3.5 w-3.5 text-sky-600" />
-                  <span>2. Scientific Data Stimulus & Empirical Evidence</span>
-                </h4>
-                <div className="rounded-2xl border border-sky-200 overflow-hidden bg-white shadow-2xs">
-                  <ScientificGraphStimulus dataset={effectiveScientificDataset} />
+              {/* 2. Scientific Graph & Dataset Stimulus */}
+              {effectiveScientificDataset && (
+                <div className="space-y-2">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
+                    <BarChart2 className="h-3.5 w-3.5 text-sky-600" />
+                    <span>2. Scientific Data Stimulus & Empirical Evidence</span>
+                  </h4>
+                  <div className="rounded-2xl border border-sky-200 overflow-hidden bg-white shadow-2xs">
+                    <ScientificGraphStimulus dataset={effectiveScientificDataset} />
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* 3. Biological Diagrams / Apparatus Stimulus */}
               {effectiveStimulusImages && effectiveStimulusImages.length > 0 && (
@@ -1319,14 +1341,18 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                             {part.label || String.fromCharCode(65 + pIdx)}
                           </span>
                           <span className="text-xs font-extrabold uppercase tracking-wider text-indigo-950">
-                            {pIdx === 0
-                              ? 'Question Part A: Scientific Claim & Quantitative Evidence'
-                              : 'Question Part B: Mechanistic Reasoning & Evaluation'}
+                            {isCustomTask
+                              ? `Question ${part.label ? `Part ${part.label}` : ''}`
+                              : (pIdx === 0
+                                  ? 'Question Part A: Scientific Claim & Quantitative Evidence'
+                                  : 'Question Part B: Mechanistic Reasoning & Evaluation')}
                           </span>
                         </div>
-                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
-                          {pIdx === 0 ? 'Strand i, ii' : 'Strand iii, iv'}
-                        </span>
+                        {!isCustomTask && (
+                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                            {pIdx === 0 ? 'Strand i, ii' : 'Strand iii, iv'}
+                          </span>
+                        )}
                       </div>
 
                       <p className="text-xs sm:text-sm font-bold text-slate-900 leading-relaxed pl-8">
@@ -2224,7 +2250,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                             </p>
                           </div>
 
-                          {/* Score & Attainment Badge */}
+                          {/* Score & Attainment Badge & Delete */}
                           <div className="flex flex-wrap items-center gap-2 shrink-0">
                             {(log.teacherEvaluation?.badgeAwarded || log.badgeAwarded) && (
                               <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-gradient-to-r from-amber-500/15 via-amber-400/20 to-orange-400/15 border border-amber-300 text-amber-900 font-bold text-xs shadow-2xs">
@@ -2249,6 +2275,23 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                                   <div className="text-[9px] text-amber-700">Submitted to Teacher</div>
                                 </div>
                               </div>
+                            )}
+
+                            {onDeleteLog && (
+                              <button
+                                type="button"
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  if (window.confirm(`Permanently delete this submitted work record for "${log.taskTitle || log.topic}"?`)) {
+                                    await onDeleteLog(log.id);
+                                  }
+                                }}
+                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-2xl border border-slate-200 bg-white hover:bg-rose-50 hover:border-rose-200 text-slate-400 hover:text-rose-600 transition-colors text-xs font-semibold cursor-pointer shadow-2xs"
+                                title="Delete this submission record"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                                <span>Delete Submission</span>
+                              </button>
                             )}
                           </div>
                         </div>
@@ -2284,8 +2327,28 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                                 </h4>
                                 {log.responses.map((resp, rIdx) => (
                                   <div key={rIdx} className="rounded-xl bg-slate-50 p-3.5 border border-slate-200 text-xs space-y-1.5">
-                                    <div className="font-bold text-slate-800">
-                                      Part {resp.label}: {resp.prompt}
+                                    <div className="flex items-start justify-between gap-2">
+                                      <div className="font-bold text-slate-800">
+                                        Part {resp.label}: {resp.prompt}
+                                      </div>
+                                      {onUpdateTaskLog && (
+                                        <button
+                                          type="button"
+                                          onClick={async (e) => {
+                                            e.stopPropagation();
+                                            const pLabel = resp.label || String(rIdx + 1);
+                                            if (window.confirm(`Are you sure you want to delete Question Part ${pLabel} from this submitted work?\n\nThis will remove the question prompt and recorded response from this submission.`)) {
+                                              const updated = log.responses!.filter((_, i) => i !== rIdx);
+                                              await onUpdateTaskLog(log.id, { responses: updated });
+                                            }
+                                          }}
+                                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer shrink-0"
+                                          title={`Delete Question Part ${resp.label || rIdx + 1} from this submission`}
+                                        >
+                                          <Trash2 className="w-3 h-3" />
+                                          <span>Delete Part</span>
+                                        </button>
+                                      )}
                                     </div>
                                     {resp.claim || resp.evidence || resp.reasoning ? (
                                       <div className="space-y-1.5 pt-1">
@@ -2580,22 +2643,36 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
         const previewCriteria = (Array.isArray(rawCriteria) ? rawCriteria.filter(Boolean) : [rawCriteria]) as string[];
         const previewPrimaryCrit = determinePrimaryCriterion(previewCriteria);
 
-        const previewScientificDataset =
-          (previewTaskObj as any)?.scientific_dataset ||
-          (previewAssignedTaskModal as any)?.scientific_dataset ||
-          (previewAssignedTaskModal as any)?.originalTask?.scientific_dataset ||
-          getScientificDatasetForTopic(previewTopic, previewPrimaryCrit, previewSubject);
+        const isCustomTask =
+          previewAssignedTaskModal.sourceType === 'chatgpt_custom' ||
+          (previewTaskObj as any)?.sourceType === 'chatgpt_custom' ||
+          Boolean((previewTaskObj as any)?.customQuestionText);
+
+        const previewScientificDataset = isCustomTask
+          ? ((previewTaskObj as any)?.scientific_dataset || (previewAssignedTaskModal as any)?.scientific_dataset || null)
+          : ((previewTaskObj as any)?.scientific_dataset ||
+             (previewAssignedTaskModal as any)?.scientific_dataset ||
+             (previewAssignedTaskModal as any)?.originalTask?.scientific_dataset ||
+             getScientificDatasetForTopic(previewTopic, previewPrimaryCrit, previewSubject));
 
         const previewStimulusImages: TaskImageAttachment[] =
           ((previewTaskObj as any)?.stimulusImages && (previewTaskObj as any).stimulusImages.length > 0)
             ? (previewTaskObj as any).stimulusImages
             : (previewAssignedTaskModal.stimulusImages && previewAssignedTaskModal.stimulusImages.length > 0)
             ? previewAssignedTaskModal.stimulusImages
-            : generateStimulusImagesForTopic(previewTopic, previewSubject);
+            : (isCustomTask ? [] : generateStimulusImagesForTopic(previewTopic, previewSubject));
 
         const previewParts =
           (previewTaskObj as any)?.parts && (previewTaskObj as any).parts.length > 0
             ? (previewTaskObj as any).parts
+            : isCustomTask
+            ? [
+                {
+                  label: '1',
+                  prompt: 'Answer the question provided above:',
+                  placeholder: 'Type your comprehensive response and justification here...'
+                }
+              ]
             : [
                 {
                   label: 'A',
@@ -2657,15 +2734,17 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                 </div>
 
                 {/* Scientific Graph & Dataset */}
-                <div className="space-y-2">
-                  <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
-                    <BarChart2 className="h-3.5 w-3.5 text-sky-600" />
-                    <span>Scientific Data Stimulus & Empirical Evidence</span>
-                  </h4>
-                  <div className="rounded-2xl border border-sky-200 overflow-hidden bg-white shadow-2xs">
-                    <ScientificGraphStimulus dataset={previewScientificDataset} />
+                {previewScientificDataset && (
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
+                      <BarChart2 className="h-3.5 w-3.5 text-sky-600" />
+                      <span>Scientific Data Stimulus & Empirical Evidence</span>
+                    </h4>
+                    <div className="rounded-2xl border border-sky-200 overflow-hidden bg-white shadow-2xs">
+                      <ScientificGraphStimulus dataset={previewScientificDataset} />
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* Biological Diagrams */}
                 {previewStimulusImages && previewStimulusImages.length > 0 && (
@@ -2817,6 +2896,8 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
           isOpen={!!gradingModalLog}
           onClose={() => setGradingModalLog(null)}
           log={gradingModalLog}
+          onUpdateTaskLog={onUpdateTaskLog}
+          onDeleteLog={onDeleteLog}
           onSaveGrade={async (evalData, badge) => {
             if (gradingModalLog && onUpdateTaskLog) {
               const finalScore = evalData.formativeScore ?? (evalData as any).score ?? 5;

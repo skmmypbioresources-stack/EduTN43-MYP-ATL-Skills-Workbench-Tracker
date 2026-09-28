@@ -111,9 +111,7 @@ export const CustomTaskCreatorModal: React.FC<CustomTaskCreatorModalProps> = ({
 
   // Question Format: Single Question or Multi-Part
   const [questionMode, setQuestionMode] = useState<'single' | 'multipart'>('single');
-  const [singleQuestionPrompt, setSingleQuestionPrompt] = useState(
-    'Based on the infographic / question above, analyze the data and provide your comprehensive response and justification.'
-  );
+  const [singleQuestionPrompt, setSingleQuestionPrompt] = useState('');
 
   // Question parts (for multipart mode)
   const [parts, setParts] = useState<
@@ -367,8 +365,8 @@ export const CustomTaskCreatorModal: React.FC<CustomTaskCreatorModalProps> = ({
         ? [
             {
               label: '1',
-              prompt: singleQuestionPrompt.trim() || 'Provide your detailed analysis and answer to the question / infographic above.',
-              placeholder: 'Type your complete response and analysis here...'
+              prompt: singleQuestionPrompt.trim() || 'Answer the question provided above:',
+              placeholder: 'Type your complete response and justification here...'
             }
           ]
         : parts.map((p, idx) => ({
@@ -404,6 +402,7 @@ export const CustomTaskCreatorModal: React.FC<CustomTaskCreatorModalProps> = ({
         target_strands: ['Strand 1', 'Strand 2'],
         stimulusImages: sanitizedImages,
         customQuestionText: stimulusContext.trim(),
+        scientific_dataset: null as any,
         parts: finalParts
       };
 

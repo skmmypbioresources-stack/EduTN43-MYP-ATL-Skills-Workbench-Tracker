@@ -121,6 +121,9 @@ interface DashboardViewProps {
   onOpenStudentPortal?: (studentName: string, evidenceToken: string, mypYear?: string) => void;
   onUpdateTaskLog?: (logId: string, partial: Partial<ATLTaskLog>) => Promise<void>;
   customApiKey?: string;
+  isCleanMode?: boolean;
+  onClearSampleData?: () => Promise<void> | void;
+  onRestoreSampleData?: () => Promise<void> | void;
 }
 
 // Helpers for MYP Class Normalization & Formatting
@@ -239,6 +242,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenStudentPortal,
   onUpdateTaskLog,
   customApiKey,
+  isCleanMode,
+  onClearSampleData,
+  onRestoreSampleData,
 }) => {
   // Toddle Link Manager Modal State
   const [showToddleManagerModal, setShowToddleManagerModal] = useState<boolean>(false);
@@ -1120,6 +1126,43 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {isCleanMode ? (
+              <div className="flex items-center gap-1.5 rounded-xl border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 shadow-2xs">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>Clean Slate: Custom Only</span>
+                {onRestoreSampleData && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (window.confirm('Restore demo sample tasks and sample student submissions?')) {
+                        onRestoreSampleData();
+                      }
+                    }}
+                    className="ml-1 text-[11px] underline text-emerald-700 hover:text-emerald-950 cursor-pointer"
+                    title="Restore demo sample tasks & records"
+                  >
+                    Restore Demo
+                  </button>
+                )}
+              </div>
+            ) : (
+              onClearSampleData && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (window.confirm('Switch to Clean Slate Mode?\n\nThis will permanently remove all prefilled sample demo tasks and sample student logs, leaving ONLY your real tasks and student submissions.')) {
+                      onClearSampleData();
+                    }
+                  }}
+                  className="flex items-center gap-1.5 rounded-xl border border-amber-300 bg-amber-50 px-3.5 py-2 text-xs font-bold text-amber-900 hover:border-amber-400 hover:bg-amber-100 transition-all cursor-pointer shadow-2xs"
+                  title="Remove all prefilled sample demo tasks & submissions for a clean app"
+                >
+                  <Sparkles className="h-4 w-4 text-amber-600" />
+                  <span>Clean Slate Mode</span>
+                </button>
+              )
+            )}
+
             <button
               onClick={() => setShowAssignModal(true)}
               className="flex items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 py-2 text-xs font-bold text-white shadow-xs hover:bg-indigo-700 transition-all cursor-pointer"
@@ -3843,6 +3886,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           isOpen={!!teacherGradingLog}
           onClose={() => setTeacherGradingLog(null)}
           log={teacherGradingLog}
+          onUpdateTaskLog={onUpdateTaskLog}
+          onDeleteLog={onDeleteLog}
           onSaveGrade={async (evalData, badge) => {
             if (teacherGradingLog && onUpdateTaskLog) {
               const effectiveScore = evalData.formativeScore ?? evalData.score ?? 5;
