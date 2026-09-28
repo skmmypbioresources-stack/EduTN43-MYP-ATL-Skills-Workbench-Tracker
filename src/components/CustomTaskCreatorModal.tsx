@@ -91,7 +91,7 @@ export const CustomTaskCreatorModal: React.FC<CustomTaskCreatorModalProps> = ({
   const [cluster, setCluster] = useState('Critical thinking skills');
   const [criteria, setCriteria] = useState<string[]>(['Criterion A', 'Criterion C']);
   const [dueDate, setDueDate] = useState('');
-  const [cerFramework, setCerFramework] = useState<boolean>(true);
+  const [cerFramework, setCerFramework] = useState<boolean>(false);
 
   // ChatGPT Question Scenario / Stimulus
   const [stimulusContext, setStimulusContext] = useState('');
@@ -109,8 +109,8 @@ export const CustomTaskCreatorModal: React.FC<CustomTaskCreatorModalProps> = ({
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Question Format: Single Question or Multi-Part
-  const [questionMode, setQuestionMode] = useState<'single' | 'multipart'>('single');
+  // Question Format: 'infographic_direct' | 'single' | 'multipart'
+  const [questionMode, setQuestionMode] = useState<'infographic_direct' | 'single' | 'multipart'>('infographic_direct');
   const [singleQuestionPrompt, setSingleQuestionPrompt] = useState('');
 
   // Question parts (for multipart mode)
@@ -119,13 +119,13 @@ export const CustomTaskCreatorModal: React.FC<CustomTaskCreatorModalProps> = ({
   >([
     {
       label: 'A',
-      prompt: 'State the trend shown in the stimulus data and explain the scientific rationale behind this pattern.',
-      placeholder: 'Based on the provided information/diagram, the observed pattern is...'
+      prompt: '',
+      placeholder: 'Type prompt for Part A (e.g. Analyze the trend shown in the data)...'
     },
     {
       label: 'B',
-      prompt: 'Evaluate the validity or limitations of the evidence provided in the question.',
-      placeholder: 'A significant strength of this source is... however, a key limitation is...'
+      prompt: '',
+      placeholder: 'Type prompt for Part B (e.g. Justify your scientific conclusion)...'
     }
   ]);
 
@@ -361,17 +361,25 @@ export const CustomTaskCreatorModal: React.FC<CustomTaskCreatorModalProps> = ({
     const finalTopic = topic.trim() || finalTitle;
 
     const finalParts =
-      questionMode === 'single'
+      questionMode === 'infographic_direct'
         ? [
             {
               label: '1',
-              prompt: singleQuestionPrompt.trim() || 'Answer the question provided above:',
+              prompt: singleQuestionPrompt.trim() || 'Submit your response and working for the attached infographic / worksheet:',
+              placeholder: 'Type your comprehensive response or upload photo of handwritten workings...'
+            }
+          ]
+        : questionMode === 'single'
+        ? [
+            {
+              label: '1',
+              prompt: singleQuestionPrompt.trim() || 'Provide your complete response and justification for the stimulus above:',
               placeholder: 'Type your complete response and justification here...'
             }
           ]
         : parts.map((p, idx) => ({
             label: p.label || String.fromCharCode(65 + idx),
-            prompt: p.prompt || `Part ${p.label}`,
+            prompt: p.prompt.trim() || `Question Part ${p.label || String.fromCharCode(65 + idx)}`,
             placeholder: p.placeholder || 'Type your response here...'
           }));
 
@@ -1011,40 +1019,73 @@ export const CustomTaskCreatorModal: React.FC<CustomTaskCreatorModalProps> = ({
               </div>
             </div>
 
-            {/* QUESTION RESPONSE FORMAT: SINGLE OR MULTI-PART */}
+            {/* QUESTION RESPONSE FORMAT: INFOGRAPHIC DIRECT, SINGLE OR MULTI-PART */}
             <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                 <label className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
                   <HelpCircle className="w-4 h-4 text-indigo-600" />
                   <span>Student Response Format</span>
                 </label>
-                <div className="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-200">
+                <div className="inline-flex rounded-xl bg-slate-100 p-1 border border-slate-200 gap-1 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setQuestionMode('infographic_direct')}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      questionMode === 'infographic_direct'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Questions on Infographic
+                  </button>
                   <button
                     type="button"
                     onClick={() => setQuestionMode('single')}
-                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                       questionMode === 'single'
                         ? 'bg-indigo-600 text-white shadow-xs'
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    Single Comprehensive Question
+                    Single Question Prompt
                   </button>
                   <button
                     type="button"
                     onClick={() => setQuestionMode('multipart')}
-                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${
+                    className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                       questionMode === 'multipart'
                         ? 'bg-indigo-600 text-white shadow-xs'
                         : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
-                    Multi-Part Question (A, B, C...)
+                    Multi-Part (A, B, C...)
                   </button>
                 </div>
               </div>
 
-              {questionMode === 'single' ? (
+              {questionMode === 'infographic_direct' ? (
+                <div className="space-y-1.5 bg-emerald-50/60 p-3.5 rounded-xl border border-emerald-200/80">
+                  <div className="flex items-center gap-2 text-emerald-900 font-bold text-xs">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Questions are directly on the attached Infographic / Diagram</span>
+                  </div>
+                  <p className="text-[11px] text-emerald-800 leading-relaxed">
+                    Students will view your infographic at full resolution and type their answers or upload photos of their handwritten work. No artificial or duplicate template questions will be shown.
+                  </p>
+                  <div className="pt-1">
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      Optional Instruction / Header (Leave blank to use clean default):
+                    </label>
+                    <input
+                      type="text"
+                      value={singleQuestionPrompt}
+                      onChange={(e) => setSingleQuestionPrompt(e.target.value)}
+                      placeholder="e.g. Answer questions 1 to 4 shown on the attached diagram:"
+                      className="w-full rounded-xl border border-emerald-200 bg-white p-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-indigo-600"
+                    />
+                  </div>
+                </div>
+              ) : questionMode === 'single' ? (
                 <div className="space-y-1.5 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
                   <label className="block text-[11px] font-bold text-slate-700">
                     Question Prompt for Student
@@ -1053,7 +1094,7 @@ export const CustomTaskCreatorModal: React.FC<CustomTaskCreatorModalProps> = ({
                     rows={2}
                     value={singleQuestionPrompt}
                     onChange={(e) => setSingleQuestionPrompt(e.target.value)}
-                    placeholder="e.g. Based on the infographic above, evaluate the findings and justify your conclusion..."
+                    placeholder="Type your specific question prompt here..."
                     className="w-full rounded-xl border border-slate-200 bg-white p-2.5 text-xs font-medium text-slate-800 focus:outline-none focus:border-indigo-600"
                   />
                   <p className="text-[10px] text-slate-400">

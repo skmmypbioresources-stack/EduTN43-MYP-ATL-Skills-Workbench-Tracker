@@ -1071,7 +1071,9 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
         const isCustomTask =
           activeSolvingTask?.sourceType === 'chatgpt_custom' ||
           (activeTaskObj as any)?.sourceType === 'chatgpt_custom' ||
-          Boolean((activeTaskObj as any)?.customQuestionText);
+          Boolean((activeTaskObj as any)?.customQuestionText) ||
+          Boolean(activeSolvingTask?.stimulusImages && activeSolvingTask.stimulusImages.length > 0) ||
+          Boolean((activeTaskObj as any)?.stimulusImages && (activeTaskObj as any).stimulusImages.length > 0);
 
         const effectiveScientificDataset = isCustomTask
           ? ((activeTaskObj as any)?.scientific_dataset || (activeSolvingTask as any)?.scientific_dataset || null)
@@ -1095,7 +1097,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
             ? [
                 {
                   label: '1',
-                  prompt: 'Answer the question provided above:',
+                  prompt: (activeTaskObj as any)?.customQuestionText || 'Answer the questions from the attached infographic / task stimulus:',
                   placeholder: 'Type your comprehensive response and justification here...'
                 }
               ]
@@ -1169,7 +1171,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
             </div>
 
             {/* ========================================================================= */}
-            {/* SECTION 1: THE COMPLETE INQUIRY QUESTION PAPER & EMPIRICAL STIMULUS */}
+            {/* SECTION 1: THE INQUIRY QUESTION PAPER & EMPIRICAL STIMULUS */}
             {/* ========================================================================= */}
             <div className="rounded-2xl border-2 border-indigo-200/90 bg-gradient-to-b from-indigo-50/40 via-white to-white p-5 sm:p-6 shadow-xs space-y-6">
               {/* Question Paper Header Banner */}
@@ -1179,9 +1181,11 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                     <FileText className="h-4 w-4" />
                   </div>
                   <div>
-                    <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700">IB MYP Sciences Assessment Paper</span>
+                    <span className="text-[10px] font-black uppercase tracking-wider text-indigo-700">
+                      {isCustomTask ? 'Visual Stimulus & Task Assignment' : 'IB MYP Sciences Assessment Paper'}
+                    </span>
                     <h3 className="text-sm sm:text-base font-extrabold text-slate-900">
-                      Inquiry Task & Scientific Stimulus
+                      {isCustomTask ? 'Task Stimulus & Evidence Portfolio' : 'Inquiry Task & Scientific Stimulus'}
                     </h3>
                   </div>
                 </div>
@@ -1189,7 +1193,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                 <div className="flex items-center gap-2">
                   <span className="inline-flex items-center gap-1 rounded-lg bg-emerald-100 text-emerald-900 px-2.5 py-1 text-[11px] font-extrabold">
                     <Sparkles className="h-3 w-3 text-emerald-700" />
-                    <span>CER Inquiry Mode</span>
+                    <span>{isCustomTask ? (isTaskCer ? 'CER Argumentation' : 'Standard Response') : 'CER Inquiry Mode'}</span>
                   </span>
                   <span className="rounded-lg bg-slate-100 text-slate-700 px-2.5 py-1 text-[11px] font-bold">
                     Est. {(activeTaskObj as any)?.estimated_minutes || 20} Mins
@@ -1229,18 +1233,20 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                 </div>
               </div>
 
-              {/* 1. Context / Biological Scenario */}
-              <div className="space-y-2">
-                <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
-                  <BookOpen className="h-3.5 w-3.5 text-indigo-600" />
-                  <span>1. Inquiry Background & Scientific Scenario</span>
-                </h4>
-                <div className="rounded-2xl bg-white border border-indigo-100/90 p-4 sm:p-5 text-xs sm:text-sm text-slate-800 leading-relaxed font-normal whitespace-pre-line shadow-2xs">
-                  {(activeTaskObj as any)?.context || (activeTaskObj as any)?.customQuestionText}
+              {/* 1. Context / Biological Scenario - Only rendered if actual text exists */}
+              {Boolean(((activeTaskObj as any)?.context || (activeTaskObj as any)?.customQuestionText)?.trim()) && (
+                <div className="space-y-2">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
+                    <BookOpen className="h-3.5 w-3.5 text-indigo-600" />
+                    <span>{isCustomTask ? 'Instructions & Task Scenario' : '1. Inquiry Background & Scientific Scenario'}</span>
+                  </h4>
+                  <div className="rounded-2xl bg-white border border-indigo-100/90 p-4 sm:p-5 text-xs sm:text-sm text-slate-800 leading-relaxed font-normal whitespace-pre-line shadow-2xs">
+                    {((activeTaskObj as any)?.context || (activeTaskObj as any)?.customQuestionText)?.trim()}
+                  </div>
                 </div>
-              </div>
+              )}
 
-              {/* 2. Scientific Graph & Dataset Stimulus */}
+              {/* 2. Scientific Graph & Dataset Stimulus (Only for Inquiry tasks with empirical dataset) */}
               {effectiveScientificDataset && (
                 <div className="space-y-2">
                   <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
@@ -1253,13 +1259,13 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                 </div>
               )}
 
-              {/* 3. Biological Diagrams / Apparatus Stimulus */}
+              {/* 3. Biological Diagrams / Infographic Stimulus */}
               {effectiveStimulusImages && effectiveStimulusImages.length > 0 && (
                 <div className="space-y-2.5">
                   <div className="flex items-center justify-between">
                     <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
                       <ImageIcon className="h-3.5 w-3.5 text-indigo-600" />
-                      <span>3. Attached Biological Diagrams & Stimulus Figures ({effectiveStimulusImages.length})</span>
+                      <span>{isCustomTask ? `Attached Infographics & Stimulus Figures (${effectiveStimulusImages.length})` : `3. Attached Biological Diagrams & Stimulus Figures (${effectiveStimulusImages.length})`}</span>
                     </h4>
                     <span className="text-[11px] text-indigo-600 font-semibold flex items-center gap-1">
                       <ZoomIn className="h-3.5 w-3.5" />
@@ -1273,7 +1279,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                         onClick={() => setPreviewModalImage(img.url)}
                         className="group cursor-pointer rounded-2xl border border-indigo-200 bg-white overflow-hidden shadow-2xs hover:border-indigo-400 hover:shadow-md transition-all relative"
                       >
-                        <div className="relative w-full h-44 bg-slate-900/5 flex items-center justify-center overflow-hidden">
+                        <div className="relative w-full h-48 bg-slate-900/5 flex items-center justify-center overflow-hidden">
                           <img
                             src={img.url}
                             alt={img.caption || `Diagram ${i + 1}`}
@@ -1317,57 +1323,55 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                 </div>
               )}
 
-              {/* 4. THE COMPLETE STRUCTURED QUESTIONS DISPLAY */}
-              <div className="space-y-3 pt-3 border-t border-indigo-100">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
-                    <Target className="h-4 w-4 text-indigo-600" />
-                    <span>4. Assessment Questions to Answer ({effectiveParts.length} Structured Inquiries)</span>
-                  </h4>
-                  <span className="text-[11px] font-bold text-indigo-800 bg-indigo-100/70 px-2.5 py-0.5 rounded-md">
-                    Synthesise Evidence & Justify Conclusions Below
-                  </span>
-                </div>
+              {/* 4. STRUCTURED QUESTIONS DISPLAY (Only rendered for standard inquiry tasks to prevent question duplication!) */}
+              {!isCustomTask && (
+                <div className="space-y-3 pt-3 border-t border-indigo-100">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
+                      <Target className="h-4 w-4 text-indigo-600" />
+                      <span>4. Assessment Questions to Answer ({effectiveParts.length} Structured Inquiries)</span>
+                    </h4>
+                    <span className="text-[11px] font-bold text-indigo-800 bg-indigo-100/70 px-2.5 py-0.5 rounded-md">
+                      Synthesise Evidence & Justify Conclusions Below
+                    </span>
+                  </div>
 
-                <div className="grid grid-cols-1 gap-3">
-                  {effectiveParts.map((part: any, pIdx: number) => (
-                    <div
-                      key={pIdx}
-                      className="rounded-2xl border border-indigo-100 bg-white p-4 sm:p-5 shadow-2xs space-y-2 hover:border-indigo-300 transition-colors"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-600 text-white font-black text-xs shrink-0 shadow-2xs">
-                            {part.label || String.fromCharCode(65 + pIdx)}
-                          </span>
-                          <span className="text-xs font-extrabold uppercase tracking-wider text-indigo-950">
-                            {isCustomTask
-                              ? `Question ${part.label ? `Part ${part.label}` : ''}`
-                              : (pIdx === 0
-                                  ? 'Question Part A: Scientific Claim & Quantitative Evidence'
-                                  : 'Question Part B: Mechanistic Reasoning & Evaluation')}
-                          </span>
-                        </div>
-                        {!isCustomTask && (
+                  <div className="grid grid-cols-1 gap-3">
+                    {effectiveParts.map((part: any, pIdx: number) => (
+                      <div
+                        key={pIdx}
+                        className="rounded-2xl border border-indigo-100 bg-white p-4 sm:p-5 shadow-2xs space-y-2 hover:border-indigo-300 transition-colors"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="flex h-6 w-6 items-center justify-center rounded-lg bg-indigo-600 text-white font-black text-xs shrink-0 shadow-2xs">
+                              {part.label || String.fromCharCode(65 + pIdx)}
+                            </span>
+                            <span className="text-xs font-extrabold uppercase tracking-wider text-indigo-950">
+                              {pIdx === 0
+                                ? 'Question Part A: Scientific Claim & Quantitative Evidence'
+                                : 'Question Part B: Mechanistic Reasoning & Evaluation'}
+                            </span>
+                          </div>
                           <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
                             {pIdx === 0 ? 'Strand i, ii' : 'Strand iii, iv'}
                           </span>
+                        </div>
+
+                        <p className="text-xs sm:text-sm font-bold text-slate-900 leading-relaxed pl-8">
+                          {part.prompt}
+                        </p>
+
+                        {part.placeholder && (
+                          <p className="text-[11px] text-slate-500 italic pl-8">
+                            💡 Focus: {part.placeholder}
+                          </p>
                         )}
                       </div>
-
-                      <p className="text-xs sm:text-sm font-bold text-slate-900 leading-relaxed pl-8">
-                        {part.prompt}
-                      </p>
-
-                      {part.placeholder && (
-                        <p className="text-[11px] text-slate-500 italic pl-8">
-                          💡 Focus: {part.placeholder}
-                        </p>
-                      )}
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* ATL Explainer footer */}
               <div className="pt-2 border-t border-indigo-100/80 text-[11px] text-indigo-700 font-semibold flex items-center gap-1.5">
@@ -1387,7 +1391,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                     <span>Your Answers & Evidence Submission</span>
                   </h3>
                   <span className="text-xs text-slate-500 font-medium hidden sm:inline">
-                    Reference the data graph and stimulus above
+                    {isCustomTask ? 'Submit your responses and working for the stimulus above' : 'Reference the data graph and stimulus above'}
                   </span>
                 </div>
 
@@ -1420,9 +1424,9 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                 return (
                   <div key={idx} className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                      <label className="text-xs sm:text-sm font-bold text-slate-800">
-                        <span className="inline-block px-2 py-0.5 rounded bg-indigo-100 text-indigo-800 font-bold mr-2 text-xs">
-                          Part {part.label || String.fromCharCode(65 + idx)}
+                      <label className="text-xs sm:text-sm font-bold text-slate-800 leading-relaxed">
+                        <span className="inline-block px-2.5 py-0.5 rounded bg-indigo-100 text-indigo-800 font-bold mr-2 text-xs">
+                          {effectiveParts.length > 1 ? `Part ${part.label || String.fromCharCode(65 + idx)}` : 'Question Prompt'}
                         </span>
                         {part.prompt}
                       </label>
@@ -2722,16 +2726,18 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
 
               {/* Scrollable Question Body */}
               <div className="flex-1 overflow-y-auto p-6 space-y-6">
-                {/* Context / Scenario */}
-                <div className="space-y-2">
-                  <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
-                    <BookOpen className="h-3.5 w-3.5 text-indigo-600" />
-                    <span>Inquiry Background & Scientific Scenario</span>
-                  </h4>
-                  <div className="rounded-2xl bg-indigo-50/50 border border-indigo-100 p-4 sm:p-5 text-xs sm:text-sm text-slate-800 leading-relaxed font-medium whitespace-pre-line shadow-2xs">
-                    {(previewTaskObj as any)?.context || (previewTaskObj as any)?.customQuestionText}
+                {/* Context / Scenario - Only render if actual text exists */}
+                {Boolean(((previewTaskObj as any)?.context || (previewTaskObj as any)?.customQuestionText)?.trim()) && (
+                  <div className="space-y-2">
+                    <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
+                      <BookOpen className="h-3.5 w-3.5 text-indigo-600" />
+                      <span>{isCustomTask ? 'Instructions & Task Scenario' : 'Inquiry Background & Scientific Scenario'}</span>
+                    </h4>
+                    <div className="rounded-2xl bg-indigo-50/50 border border-indigo-100 p-4 sm:p-5 text-xs sm:text-sm text-slate-800 leading-relaxed font-medium whitespace-pre-line shadow-2xs">
+                      {((previewTaskObj as any)?.context || (previewTaskObj as any)?.customQuestionText)?.trim()}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* Scientific Graph & Dataset */}
                 {previewScientificDataset && (
@@ -2746,13 +2752,13 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                   </div>
                 )}
 
-                {/* Biological Diagrams */}
+                {/* Biological Diagrams / Infographics */}
                 {previewStimulusImages && previewStimulusImages.length > 0 && (
                   <div className="space-y-2.5">
                     <div className="flex items-center justify-between">
                       <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
                         <ImageIcon className="h-3.5 w-3.5 text-indigo-600" />
-                        <span>Attached Biological Diagrams & Figures ({previewStimulusImages.length})</span>
+                        <span>{isCustomTask ? `Attached Infographics & Stimulus Figures (${previewStimulusImages.length})` : `Attached Biological Diagrams & Figures (${previewStimulusImages.length})`}</span>
                       </h4>
                       <span className="text-[11px] text-indigo-600 font-semibold flex items-center gap-1">
                         <ZoomIn className="h-3.5 w-3.5" />
@@ -2798,7 +2804,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                 <div className="space-y-3 pt-2 border-t border-slate-200">
                   <h4 className="text-xs font-black uppercase tracking-wider text-indigo-950 flex items-center gap-1.5">
                     <Target className="h-4 w-4 text-indigo-600" />
-                    <span>Inquiry Questions ({previewParts.length} Structured Prompts)</span>
+                    <span>{isCustomTask ? `Task Questions (${previewParts.length} Prompts)` : `Inquiry Questions (${previewParts.length} Structured Prompts)`}</span>
                   </h4>
 
                   <div className="grid grid-cols-1 gap-3">
@@ -2813,14 +2819,18 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                               {part.label || String.fromCharCode(65 + pIdx)}
                             </span>
                             <span className="text-xs font-extrabold uppercase tracking-wider text-indigo-950">
-                              {pIdx === 0
-                                ? 'Question Part A: Scientific Claim & Quantitative Evidence'
-                                : 'Question Part B: Mechanistic Reasoning & Evaluation'}
+                              {isCustomTask
+                                ? `Question ${part.label ? `Part ${part.label}` : ''}`
+                                : (pIdx === 0
+                                    ? 'Question Part A: Scientific Claim & Quantitative Evidence'
+                                    : 'Question Part B: Mechanistic Reasoning & Evaluation')}
                             </span>
                           </div>
-                          <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
-                            {pIdx === 0 ? 'Strand i, ii' : 'Strand iii, iv'}
-                          </span>
+                          {!isCustomTask && (
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 bg-slate-100 px-2 py-0.5 rounded">
+                              {pIdx === 0 ? 'Strand i, ii' : 'Strand iii, iv'}
+                            </span>
+                          )}
                         </div>
 
                         <p className="text-xs sm:text-sm font-bold text-slate-900 leading-relaxed pl-8">
