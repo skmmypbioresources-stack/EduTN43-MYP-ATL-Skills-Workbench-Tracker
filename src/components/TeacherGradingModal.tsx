@@ -31,8 +31,11 @@ import {
   ZoomIn,
   RotateCcw,
   Edit3,
-  CheckCheck
+  CheckCheck,
+  Download,
+  Loader2
 } from 'lucide-react';
+import { exportToPdf } from '../lib/exportUtils';
 import { ImageZoomLightbox } from './ImageZoomLightbox';
 import { isTaskLogGraded, getTaskEffectiveScore, getTaskAiSuggestedScore, getTaskAiSuggestedLevel } from '../lib/scoreUtils';
 
@@ -131,19 +134,19 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
     }
   };
 
+  const effectiveResponses: StudentResponseItem[] =
+    log.responses && log.responses.length > 0
+      ? log.responses
+      : (log.originalTask?.parts || []).map((p, i) => ({
+          label: p.label || String.fromCharCode(65 + i),
+          prompt: p.prompt,
+          response: ''
+        }));
+
   const handleGenerateAiRecommendation = async () => {
     setIsGeneratingAi(true);
     setAiGenError(null);
     try {
-      const effectiveResponses: StudentResponseItem[] =
-        log.responses && log.responses.length > 0
-          ? log.responses
-          : (log.originalTask?.parts || []).map((p, i) => ({
-              label: p.label || String.fromCharCode(65 + i),
-              prompt: p.prompt,
-              response: ''
-            }));
-
       const taskForEval: GeneratedTask = log.originalTask || {
         title: log.taskTitle || 'Scientific Inquiry Task',
         context: log.originalTask?.context || '',
@@ -313,6 +316,71 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
       setSaveError(err.message || 'Failed to save evaluation. Please try again.');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+
+  const handleExportPdf = async () => {
+    setIsExportingPdf(true);
+    try {
+      const splitStrengths = strengthsText
+        .split('\n')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      const splitNextSteps = nextStepsText
+        .split('\n')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+
+      await exportToPdf({
+        studentName: log.studentName,
+        subject: log.subject,
+        topic: log.topic,
+        mypYear: log.mypYear,
+        academicYear: log.academicYear,
+        term: log.term,
+        category: log.category,
+        cluster: log.cluster,
+        level: level,
+        formativeScore: score,
+        taskTitle: log.taskTitle,
+        context: log.originalTask?.context || (log as any).context,
+        atlPedagogicalIntro: log.atlPedagogicalIntro || log.originalTask?.atlPedagogicalIntro,
+        atl_skill_guide: log.atl_skill_guide || log.originalTask?.atl_skill_guide,
+        skillIndicators: log.skillIndicators,
+        responses: effectiveResponses,
+        feedback: activeAiFeedback || log.feedback || {
+          level: level,
+          formativeScore: score,
+          summary: feedback || 'Formative assessment completed.',
+          strengths: splitStrengths,
+          next_steps: splitNextSteps,
+          rubric_matrix: []
+        },
+        studentReflection: log.studentReflection,
+        criteria: log.criteria,
+        strands: log.strands,
+        attemptNumber: log.attemptNumber,
+        originalTask: log.originalTask,
+        stimulusImages: stimulusImages,
+        studentAttachments: studentAttachments,
+        teacherEvaluation: {
+          formativeScore: score || 0,
+          score: score || 0,
+          level: level,
+          feedback: feedback,
+          strengths: splitStrengths,
+          nextSteps: splitNextSteps,
+          gradedBy: teacherName,
+          gradedAt: new Date().toISOString()
+        },
+        teacherName: teacherName
+      });
+    } catch (err) {
+      console.error('Failed to export PDF:', err);
+    } finally {
+      setIsExportingPdf(false);
     }
   };
 
@@ -714,6 +782,34 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
                     </div>
                   )}
 
+                  {/* Evaluated Student Words / Phrases */}
+                  {((activeAiFeedback?.evaluatedPhrases && activeAiFeedback.evaluatedPhrases.length > 0) ||
+                    (log.feedback?.evaluatedPhrases && log.feedback.evaluatedPhrases.length > 0) ||
+                    (activeAiFeedback?.studentQuotesUsed && activeAiFeedback.studentQuotesUsed.length > 0) ||
+                    (log.feedback?.studentQuotesUsed && log.feedback.studentQuotesUsed.length > 0)) && (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 space-y-2 shadow-2xs">
+                      <span className="text-[11px] font-bold text-amber-900 block flex items-center gap-1.5">
+                        <MessageSquare className="w-3.5 h-3.5 text-amber-700" />
+                        <span>Student Words & Exact Evidence Evaluated:</span>
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(activeAiFeedback?.evaluatedPhrases || log.feedback?.evaluatedPhrases || []).map((item, pIdx) => (
+                          <div key={pIdx} className="inline-flex items-center gap-1.5 bg-white border border-amber-300 rounded-lg px-2.5 py-1 text-xs">
+                            <span className="font-semibold text-slate-800 italic">"{item.studentQuote}"</span>
+                            {item.evaluation && <span className="text-[10px] text-amber-800 bg-amber-100 px-1 rounded">{item.evaluation}</span>}
+                            {item.criterion && <span className="text-[10px] font-bold text-indigo-700">{item.criterion}</span>}
+                          </div>
+                        ))}
+                        {(!activeAiFeedback?.evaluatedPhrases && !log.feedback?.evaluatedPhrases) &&
+                          (activeAiFeedback?.studentQuotesUsed || log.feedback?.studentQuotesUsed || []).map((quote, qIdx) => (
+                            <span key={qIdx} className="inline-block bg-white border border-amber-300 rounded-lg px-2 py-0.5 text-xs text-amber-950 font-medium italic">
+                              "{quote}"
+                            </span>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Rubric Matrix breakdown if available */}
                   {(activeAiFeedback?.rubric_matrix || log.feedback?.rubric_matrix) && (activeAiFeedback?.rubric_matrix || log.feedback?.rubric_matrix)!.length > 0 && (
                     <div className="rounded-xl border border-indigo-100 bg-white p-3 space-y-1.5 shadow-2xs">
@@ -1049,6 +1145,16 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
           </div>
 
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={handleExportPdf}
+              disabled={isExportingPdf}
+              className="px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 font-bold text-xs transition-colors flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              title="Export complete Question Paper, Images, Answers & Grading to PDF"
+            >
+              {isExportingPdf ? <Loader2 className="w-4 h-4 animate-spin text-indigo-600" /> : <Download className="w-4 h-4 text-emerald-600" />}
+              <span>{isExportingPdf ? 'Exporting PDF...' : 'Export PDF'}</span>
+            </button>
             <button
               type="button"
               onClick={onClose}

@@ -2539,6 +2539,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       studentReflection: selectedLogForModal.studentReflection,
                       criteria: selectedLogForModal.criteria,
                       strands: selectedLogForModal.strands,
+                      attemptNumber: selectedLogForModal.attemptNumber,
+                      originalTask: selectedLogForModal.originalTask,
+                      stimulusImages: selectedLogForModal.stimulusImages || selectedLogForModal.originalTask?.stimulusImages,
+                      studentAttachments: selectedLogForModal.studentAttachments,
+                      teacherEvaluation: selectedLogForModal.teacherEvaluation,
+                      teacherName: selectedLogForModal.teacherEvaluation?.gradedBy || (selectedLogForModal as any).teacherName,
                     })
                   }
                   className="flex items-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50 px-3.5 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100 transition-colors cursor-pointer"
@@ -2571,6 +2577,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       studentReflection: selectedLogForModal.studentReflection,
                       criteria: selectedLogForModal.criteria,
                       strands: selectedLogForModal.strands,
+                      attemptNumber: selectedLogForModal.attemptNumber,
+                      originalTask: selectedLogForModal.originalTask,
+                      stimulusImages: selectedLogForModal.stimulusImages || selectedLogForModal.originalTask?.stimulusImages,
+                      studentAttachments: selectedLogForModal.studentAttachments,
+                      teacherEvaluation: selectedLogForModal.teacherEvaluation,
+                      teacherName: selectedLogForModal.teacherEvaluation?.gradedBy || (selectedLogForModal as any).teacherName,
                     })
                   }
                   className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"

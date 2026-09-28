@@ -619,7 +619,16 @@ CRITICAL EXAMINER MARKING PRINCIPLES:
    - Assess strictly what is explicitly stated in the student's text.
    - Scientific mechanism and precision override literary style or enthusiasm. If mechanistic biological processes (e.g., specific organelles, enzymes, chemical equations, cellular transport mechanisms, ATP yield, molecular structures) are missing or vague, strictly penalize the score.
 
-2. STRICT 8-POINT RESTRICTION & SCORE BOUNDARIES:
+2. MANDATORY REQUIREMENT — DIRECT CITATION OF STUDENT PHRASING:
+   - ZERO TOLERANCE FOR GENERIC OR BOILERPLATE FEEDBACK: You are strictly forbidden from writing vague, formulaic comments (such as "The student demonstrated good understanding", "Well done on this task", or "Add more detail").
+   - MUST PICK AND USE WORDS FROM STUDENT ANSWERS: You must actively extract, quote verbatim in quotation marks ("..."), and evaluate specific words, claims, numerical figures, and phrases written by the student.
+   - In "summary": You must directly quote at least 1-2 exact phrases from the student's responses to anchor your evaluation in their specific words (e.g., 'When stating "[quote]", the response correctly captured...').
+   - In "strengths": Every single strength MUST quote exact student words in double quotes ("...") and explain why that exact vocabulary or reasoning was scientifically valid.
+   - In "next_steps": Every single next step MUST cite specific words, phrases, or omissions from the student's answer in double quotes ("...") and specify the precise scientific vocabulary upgrade (e.g., 'Replace your phrase "[student quote]" with precise terminology such as...').
+   - In "studentQuotesUsed": Provide an array of 2 to 4 verbatim phrases picked from the student's answer that were evaluated.
+   - In "evaluatedPhrases": Provide structured items showing the exact studentQuote, your diagnostic evaluation of that phrasing, and status ('accurate' | 'partial' | 'needs_improvement').
+
+3. STRICT 8-POINT RESTRICTION & SCORE BOUNDARIES:
    - 8 / 8 (Exceptional / Flawless Mastery): EXTREMELY RARE. DO NOT award 8 points unless the student's work is virtually flawless, demonstrating exceptional depth, exhaustive molecular/cellular mechanistic explanations, rigorous scientific vocabulary, and zero misconceptions or omissions. If there is ANY minor omission, informal term, or lack of complete mechanistic explanation, the score MUST NOT be 8.
    - 7 / 8 (Strong Extending): Thorough, rigorous, and accurate demonstration of knowledge and understanding with complete explanations, but with slight opportunities for deeper elaboration or minor refinement.
    - 6 / 8 (High Applying): Consistent and accurate understanding across all core questions with appropriate terminology, but lacks the exhaustive depth or independent synthesis needed for Extending.
@@ -627,15 +636,12 @@ CRITICAL EXAMINER MARKING PRINCIPLES:
    - 3–4 / 8 (Developing): Incomplete understanding, partial explanations, missing major mechanisms, significant gaps, or superficial answers. (4 = partial attempt with some valid points; 3 = basic recall with notable misconceptions or omissions).
    - 1–2 / 8 (Beginning / Limited): Major biological errors, severe misconceptions, largely blank or one-sentence non-mechanistic answers. (2 = fragmented/minimal; 1 = insufficient evidence/blank).
 
-3. THREE PROFICIENCY TIERS:
+4. THREE PROFICIENCY TIERS:
    - "Extending" (Formative Score 7-8): Masterful scientific accuracy, precise academic terminology, comprehensive mechanistic reasoning, insightful evaluation.
    - "Applying" (Formative Score 5-6): Competent conceptual understanding addressing the main prompts, but with minor omissions in mechanism or occasional informal phrasing.
    - "Developing" (Formative Score 1-4): Limited understanding, evident misconceptions, missing mechanisms, or vague/fragmented responses.
 
-4. EXAMINER FEEDBACK FORMATTING:
-   - "summary": 2-3 concise, objective, rigorous examiner sentences diagnosing the exact scientific depth, mechanistic precision, and accuracy under ${primaryCriterion}.
-   - "strengths": Array of 2-3 genuine, evidence-based strengths directly quoting or citing the student's accurate reasoning. If work is weak, note strictly what limited valid points were present without inflation.
-   - "next_steps": Array of 2-3 explicit, actionable, uncompromising scientific corrections and error analyses. Specify exact misconceptions, missing biological mechanisms, and required grade-level vocabulary upgrades (e.g., "Replace 'powerhouse creates energy' with 'mitochondria synthesize ATP via aerobic cellular respiration'", "Specify whether passive diffusion, facilitated diffusion, or active transport via ATP hydrolysis occurs"). Avoid generic advice like 'add more detail'.`;
+Return ONLY valid JSON matching the schema.`;
 
     const userPrompt = `
 PRIMARY CRITERION: ${primaryCriterion}
@@ -650,8 +656,11 @@ CRITERIA & STRANDS:
 ${meta?.criteria ? `Criteria: ${meta.criteria.join(', ')}` : primaryCriterion}
 ${meta?.strands ? `Strands: ${meta.strands.join('; ')}` : ''}
 
-STUDENT RESPONSES:
-${responses.map((r: any) => `Part ${r.label} (${r.prompt}):\nResponse: ${r.response || '(left blank)'}`).join('\n\n')}
+STUDENT RESPONSES TO EVALUATE:
+${responses.map((r: any) => `Part ${r.label} (${r.prompt}):
+Student Written Answer: ${r.response || (r.claim ? `Claim: ${r.claim}\nEvidence: ${r.evidence}\nReasoning: ${r.reasoning}` : '(left blank)')}`).join('\n\n')}
+
+INSTRUCTION: Carefully read the student's exact text above. Extract verbatim quotes/words written by the student and use them throughout your feedback. Do NOT provide generic comments.
     `;
 
     if (ai) {
@@ -673,16 +682,37 @@ ${responses.map((r: any) => `Part ${r.label} (${r.prompt}):\nResponse: ${r.respo
                 type: Type.INTEGER,
                 description: 'Numerical formative score out of 8 (1 to 8) based on demonstrated evidence'
               },
-              summary: { type: Type.STRING, description: 'Objective, evidence-based examiner synthesis' },
+              summary: {
+                type: Type.STRING,
+                description: 'Objective, evidence-based examiner synthesis that explicitly quotes and references the student\'s exact words'
+              },
               strengths: {
                 type: Type.ARRAY,
                 items: { type: Type.STRING },
-                description: 'Explicit, verified scientific strengths'
+                description: 'Explicit, verified scientific strengths that directly quote the student\'s words in double quotes ("...")'
               },
               next_steps: {
                 type: Type.ARRAY,
                 items: { type: Type.STRING },
-                description: 'Targeted error analyses and specific scientific vocabulary/mechanism upgrades'
+                description: 'Targeted error analyses citing the student\'s specific words or phrasing in double quotes ("...") and giving concrete scientific upgrades'
+              },
+              studentQuotesUsed: {
+                type: Type.ARRAY,
+                items: { type: Type.STRING },
+                description: 'List of 2-4 exact phrases and words picked from the student\'s answer that were evaluated'
+              },
+              evaluatedPhrases: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    studentQuote: { type: Type.STRING, description: 'Exact quote or phrase from student answer' },
+                    evaluation: { type: Type.STRING, description: 'Examiner evaluation of this specific phrasing' },
+                    status: { type: Type.STRING, enum: ['accurate', 'partial', 'needs_improvement'] }
+                  },
+                  required: ['studentQuote', 'evaluation', 'status']
+                },
+                description: 'Structured breakdown of student phrasing picked and evaluated by the AI'
               }
             },
             required: ['level', 'formativeScore', 'summary', 'strengths', 'next_steps']
@@ -701,7 +731,6 @@ ${responses.map((r: any) => `Part ${r.label} (${r.prompt}):\nResponse: ${r.respo
           // Validate and normalize formativeScore within range under strict criteria
           let score = typeof parsed.formativeScore === 'number' ? Math.round(parsed.formativeScore) : 0;
           if (parsed.level === 'Extending') {
-            // Guard 8 points strictly: only allow 8 if AI explicitly designated 8; otherwise cap at 7
             if (score === 8) {
               score = 8;
             } else {
@@ -714,6 +743,22 @@ ${responses.map((r: any) => `Part ${r.label} (${r.prompt}):\nResponse: ${r.respo
           }
           parsed.formativeScore = score;
 
+          // If studentQuotesUsed wasn't populated by AI, derive it from parsed text quotes
+          if (!parsed.studentQuotesUsed || parsed.studentQuotesUsed.length === 0) {
+            const quoteRegex = /"([^"]{4,80})"/g;
+            const extractedQuotes: string[] = [];
+            let m;
+            const combinedFeedback = `${parsed.summary} ${parsed.strengths?.join(' ')} ${parsed.next_steps?.join(' ')}`;
+            while ((m = quoteRegex.exec(combinedFeedback)) !== null) {
+              if (!extractedQuotes.includes(m[1]) && !m[1].includes('Developing') && !m[1].includes('Applying') && !m[1].includes('Extending')) {
+                extractedQuotes.push(m[1]);
+              }
+            }
+            if (extractedQuotes.length > 0) {
+              parsed.studentQuotesUsed = extractedQuotes.slice(0, 4);
+            }
+          }
+
           return res.json(parsed);
         }
       } catch (geminiError: any) {
@@ -721,17 +766,29 @@ ${responses.map((r: any) => `Part ${r.label} (${r.prompt}):\nResponse: ${r.respo
       }
     }
 
-    // Strict heuristic fallback grading if Gemini key is absent or fails
+    // Smart heuristic fallback grading that extracts and cites REAL student words
+    const studentPhrases: string[] = [];
+    responses.forEach((r: any) => {
+      const rawText = (r.response || `${r.claim || ''} ${r.evidence || ''} ${r.reasoning || ''}`).trim();
+      if (rawText && rawText.length > 5) {
+        // Extract meaningful clauses or sentences from the student's actual text
+        const chunks = rawText.split(/[.;\n]+/).map((s: string) => s.trim()).filter((s: string) => s.length >= 10 && s.length <= 120);
+        for (const c of chunks) {
+          if (!studentPhrases.includes(c)) {
+            studentPhrases.push(c);
+          }
+        }
+      }
+    });
+
     const totalChars = responses.reduce((acc: number, r: any) => acc + (r.response ? r.response.length : 0), 0);
     const filledCount = responses.filter((r: any) => r.response && r.response.trim().length > 30).length;
 
     let level: 'Developing' | 'Applying' | 'Extending' = 'Developing';
     let formativeScore = 3;
 
-    // Strict grading thresholds: require substantial, comprehensive responses for higher tiers
     if (filledCount >= responses.length && totalChars > 500) {
       level = 'Extending';
-      // 8 is strictly reserved for exhaustive submissions (>750 chars across all responses)
       formativeScore = totalChars > 750 ? 8 : 7;
     } else if (filledCount >= 2 && totalChars > 220) {
       level = 'Applying';
@@ -741,24 +798,40 @@ ${responses.map((r: any) => `Part ${r.label} (${r.prompt}):\nResponse: ${r.respo
       formativeScore = totalChars > 120 ? 4 : totalChars > 60 ? 3 : totalChars > 0 ? 2 : 1;
     }
 
-    const clusterName = task?.chosen_cluster || meta?.cluster || 'Critical thinking';
+    const firstQuote = studentPhrases[0] ? `"${studentPhrases[0]}"` : 'your initial claim';
+    const secondQuote = studentPhrases[1] ? `"${studentPhrases[1]}"` : 'your supporting explanation';
+    const thirdQuote = studentPhrases[2] ? `"${studentPhrases[2]}"` : 'your reasoning';
 
     const fallbackFeedback = {
       level,
       formativeScore,
-      summary: level === 'Extending'
-        ? `The submission demonstrates rigorous scientific articulation for ${meta?.topic || 'the topic'}, applying explicit mechanisms and consistent evidence-based reasoning in line with MYP Year ${meta?.year || '4'} expectations.`
-        : level === 'Applying'
-        ? `The response demonstrates accurate conceptual understanding of ${meta?.topic || 'the topic'}, but requires greater precision in biochemical mechanisms and explicit scientific justifications.`
-        : `The response shows emerging familiarity with ${meta?.topic || 'the topic'}, but lacks specific scientific mechanisms, evidence-based justifications, and formal vocabulary.`,
+      summary: studentPhrases.length > 0
+        ? `In evaluating your response, when you wrote ${firstQuote}, you established a direct connection to ${meta?.topic || 'the topic'}. However, addressing ${primaryCriterion} requires anchoring this claim in precise molecular/mechanistic terminology.`
+        : `Your submission addressed ${meta?.topic || 'the inquiry topic'} under ${primaryCriterion}, but lacks sufficient written depth and specific scientific terminology to evaluate full mechanistic understanding.`,
       strengths: [
-        `Directly engaged with analytical prompts for ${meta?.subject || 'Sciences'}.`,
-        `Identified foundational relationships within ${meta?.topic || 'the topic'}.`
+        studentPhrases[0]
+          ? `In your answer, stating ${firstQuote} demonstrated appropriate engagement with the targeted ATL inquiry prompt.`
+          : `Directly addressed the key inquiry prompt for ${meta?.subject || 'Sciences'}.`,
+        studentPhrases[1]
+          ? `Your explanation including ${secondQuote} identified an authentic relationship within ${meta?.topic || 'the topic'}.`
+          : `Engaged with empirical evidence relevant to ${meta?.topic || 'the topic'}.`
       ],
       next_steps: [
-        `Incorporate exact physiological and cellular mechanisms rather than general descriptive statements.`,
-        `Strengthen evidence-based justifications by explicitly linking structure to function.`
-      ]
+        studentPhrases[0]
+          ? `Upgrade your wording in ${firstQuote} by substituting informal terms with specific physiological mechanisms and scientific vocabulary.`
+          : `Incorporate explicit scientific mechanisms rather than general descriptive statements.`,
+        studentPhrases[2] || studentPhrases[1]
+          ? `Expand upon your reasoning around ${thirdQuote} to justify how structural features directly dictate the biological outcome.`
+          : `Strengthen evidence-based justifications by explicitly linking structure to function.`
+      ],
+      studentQuotesUsed: studentPhrases.slice(0, 4).map((p) => `"${p}"`),
+      evaluatedPhrases: studentPhrases.slice(0, 3).map((p, idx) => ({
+        studentQuote: p,
+        evaluation: idx === 0
+          ? 'Identified core topic trend, but needs deeper mechanistic explanation.'
+          : 'Valid empirical observation; upgrade vocabulary with formal scientific terms.',
+        status: idx === 0 ? 'partial' : 'accurate'
+      }))
     };
 
     return res.json(fallbackFeedback);

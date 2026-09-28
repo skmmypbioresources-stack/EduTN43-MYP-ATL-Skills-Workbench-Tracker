@@ -23,8 +23,11 @@ import {
   Trash2,
   Maximize2,
   Minimize2,
-  BarChart3
+  BarChart3,
+  Download,
+  Loader2
 } from 'lucide-react';
+import { exportToPdf, exportToWordDoc } from '../lib/exportUtils';
 import { ImageZoomLightbox } from './ImageZoomLightbox';
 import { ScientificGraphStimulus } from './ScientificGraphStimulus';
 import { isTaskLogGraded, getTaskEffectiveScore } from '../lib/scoreUtils';
@@ -210,8 +213,79 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
   );
   const resolvedAtlGuide = rawAtlGuide || derivedAtl.atl_skill_guide;
 
+  const [isExportingPdf, setIsExportingPdf] = useState(false);
+
   const handlePrint = () => {
     window.print();
+  };
+
+  const handleExportPdf = async () => {
+    setIsExportingPdf(true);
+    try {
+      await exportToPdf({
+        studentName: log.studentName,
+        subject: log.subject,
+        topic: log.topic,
+        mypYear: log.mypYear,
+        academicYear: log.academicYear,
+        term: log.term,
+        category: log.category,
+        cluster: log.cluster,
+        level: log.level,
+        formativeScore: score,
+        taskTitle: log.taskTitle,
+        context: log.originalTask?.context || (log as any).context,
+        atlPedagogicalIntro: log.atlPedagogicalIntro || log.originalTask?.atlPedagogicalIntro,
+        atl_skill_guide: log.atl_skill_guide || log.originalTask?.atl_skill_guide,
+        skillIndicators: log.skillIndicators,
+        responses: log.responses,
+        feedback: log.feedback,
+        studentReflection: log.studentReflection,
+        criteria: log.criteria,
+        strands: log.strands,
+        attemptNumber: log.attemptNumber,
+        originalTask: log.originalTask,
+        stimulusImages: stimulusImages,
+        studentAttachments: log.studentAttachments,
+        teacherEvaluation: log.teacherEvaluation,
+        teacherName: log.teacherEvaluation?.gradedBy || (log as any).teacherName
+      });
+    } catch (err) {
+      console.error('Failed to export PDF:', err);
+    } finally {
+      setIsExportingPdf(false);
+    }
+  };
+
+  const handleExportWord = () => {
+    exportToWordDoc({
+      studentName: log.studentName,
+      subject: log.subject,
+      topic: log.topic,
+      mypYear: log.mypYear,
+      academicYear: log.academicYear,
+      term: log.term,
+      category: log.category,
+      cluster: log.cluster,
+      level: log.level,
+      formativeScore: score,
+      taskTitle: log.taskTitle,
+      context: log.originalTask?.context || (log as any).context,
+      atlPedagogicalIntro: log.atlPedagogicalIntro || log.originalTask?.atlPedagogicalIntro,
+      atl_skill_guide: log.atl_skill_guide || log.originalTask?.atl_skill_guide,
+      skillIndicators: log.skillIndicators,
+      responses: log.responses,
+      feedback: log.feedback,
+      studentReflection: log.studentReflection,
+      criteria: log.criteria,
+      strands: log.strands,
+      attemptNumber: log.attemptNumber,
+      originalTask: log.originalTask,
+      stimulusImages: stimulusImages,
+      studentAttachments: log.studentAttachments,
+      teacherEvaluation: log.teacherEvaluation,
+      teacherName: log.teacherEvaluation?.gradedBy || (log as any).teacherName
+    });
   };
 
   // Active parts to show under Structured Question Prompts
@@ -263,6 +337,27 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             <button
               type="button"
+              onClick={handleExportWord}
+              className="px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-blue-300 hover:text-blue-200 transition-colors flex items-center gap-1.5 text-xs font-bold cursor-pointer"
+              title="Download Microsoft Word Document"
+            >
+              <FileText className="w-4 h-4 text-blue-400" />
+              <span className="hidden lg:inline">Word</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportPdf}
+              disabled={isExportingPdf}
+              className="px-2.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition-colors flex items-center gap-1.5 text-xs font-bold cursor-pointer disabled:opacity-50"
+              title="Export complete Question Paper, Images, Answers & Grading to PDF"
+            >
+              {isExportingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+              <span className="hidden sm:inline">{isExportingPdf ? 'Exporting...' : 'Export PDF'}</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setIsMaximized((prev) => !prev)}
               className="px-2.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors flex items-center gap-1.5 text-xs font-bold cursor-pointer"
               title={isMaximized ? 'Compact Card View' : 'Full Page Fit View'}
@@ -275,7 +370,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
               type="button"
               onClick={handlePrint}
               className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer"
-              title="Print / Save PDF"
+              title="Print / Save PDF via Browser"
             >
               <Printer className="w-4 h-4" />
             </button>

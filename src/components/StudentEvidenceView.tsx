@@ -2372,7 +2372,13 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                                   strands: log.strands,
                                   responses: log.responses,
                                   feedback: log.feedback,
-                                  studentReflection: log.studentReflection
+                                  studentReflection: log.studentReflection,
+                                  attemptNumber: log.attemptNumber,
+                                  originalTask: log.originalTask,
+                                  stimulusImages: log.stimulusImages || log.originalTask?.stimulusImages,
+                                  studentAttachments: log.studentAttachments,
+                                  teacherEvaluation: log.teacherEvaluation,
+                                  teacherName: log.teacherEvaluation?.gradedBy || (log as any).teacherName
                                 })}
                                 className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs"
                               >
@@ -2401,7 +2407,13 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                                   strands: log.strands,
                                   responses: log.responses,
                                   feedback: log.feedback,
-                                  studentReflection: log.studentReflection
+                                  studentReflection: log.studentReflection,
+                                  attemptNumber: log.attemptNumber,
+                                  originalTask: log.originalTask,
+                                  stimulusImages: log.stimulusImages || log.originalTask?.stimulusImages,
+                                  studentAttachments: log.studentAttachments,
+                                  teacherEvaluation: log.teacherEvaluation,
+                                  teacherName: log.teacherEvaluation?.gradedBy || (log as any).teacherName
                                 })}
                                 className="inline-flex items-center gap-1 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs"
                               >

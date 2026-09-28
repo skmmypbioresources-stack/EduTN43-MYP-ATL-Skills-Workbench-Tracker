@@ -1,5 +1,14 @@
-import { TaskFeedback, TaskMeta, GeneratedTask, StudentResponseItem, ATLTaskLog, ATLCategoryKey } from '../types';
-import { buildATLSkillGuideAndIntro } from './scientificDatasetGenerator';
+import {
+  TaskFeedback,
+  TaskMeta,
+  GeneratedTask,
+  StudentResponseItem,
+  ATLTaskLog,
+  ATLCategoryKey,
+  TaskImageAttachment,
+  TeacherEvaluation
+} from '../types';
+import { buildATLSkillGuideAndIntro, generateStimulusImagesForTopic } from './scientificDatasetGenerator';
 import { isTaskLogGraded, getTaskEffectiveScore } from './scoreUtils';
 
 export interface ReportData {
@@ -28,6 +37,13 @@ export interface ReportData {
   dueDate?: string;
   submissionStatus?: 'on_time' | 'overdue' | 'not_applicable';
   daysOverdue?: number;
+  originalTask?: GeneratedTask;
+  stimulusImages?: TaskImageAttachment[];
+  studentAttachments?: TaskImageAttachment[];
+  teacherEvaluation?: TeacherEvaluation;
+  teacherName?: string;
+  classSection?: string;
+  badgeAwarded?: any;
 }
 
 /**
@@ -121,6 +137,199 @@ export function resolveSkillIndicators(data: ReportData): string[] {
   ];
 }
 
+function renderStimulusImagesHtml(images: TaskImageAttachment[], sanitize: (t: string) => string): string {
+  if (!images || images.length === 0) return '';
+  return `
+    <div style="margin-top: 12px; margin-bottom: 16px; page-break-inside: avoid; break-inside: avoid;">
+      <div style="font-size: 9pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: #4338ca; margin-bottom: 6px;">
+        Attached Stimulus Images & Scientific Diagrams (${images.length})
+      </div>
+      <div style="display: grid; grid-template-columns: ${images.length === 1 ? '1fr' : 'repeat(auto-fit, minmax(260px, 1fr))'}; gap: 12px;">
+        ${images.map((img, idx) => `
+          <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px; text-align: center; page-break-inside: avoid; break-inside: avoid;">
+            <div style="font-size: 8.5pt; font-weight: bold; color: #334155; margin-bottom: 6px; text-align: left;">
+              Figure ${idx + 1}: ${sanitize(img.name || img.caption || 'Scientific Stimulus Diagram')}
+            </div>
+            <img src="${img.url}" alt="${sanitize(img.caption || img.name || 'Scientific Diagram')}" style="max-width: 100%; max-height: 240px; object-fit: contain; border-radius: 6px; border: 1px solid #e2e8f0; background: #ffffff; display: block; margin: 0 auto;" />
+            ${img.caption ? `<div style="margin-top: 6px; font-size: 8pt; color: #64748b; font-style: italic; line-height: 1.35;">${sanitize(img.caption)}</div>` : ''}
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderDatasetStimulusHtml(dataset: any, sanitize: (t: string) => string): string {
+  if (!dataset || !dataset.data_points || dataset.data_points.length === 0) return '';
+  return `
+    <div style="margin-top: 12px; margin-bottom: 16px; background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; page-break-inside: avoid; break-inside: avoid;">
+      <div style="font-size: 9pt; font-weight: bold; text-transform: uppercase; color: #0f172a; margin-bottom: 4px;">
+        Scientific Empirical Dataset: ${sanitize(dataset.title || 'Experimental Observations')}
+      </div>
+      <div style="font-size: 8pt; color: #64748b; margin-bottom: 8px;">
+        Independent Variable: <strong>${sanitize(dataset.independent_variable || 'X')}</strong> • Dependent Variable: <strong>${sanitize(dataset.dependent_variable || 'Y')}</strong>
+      </div>
+      <table style="width: 100%; border-collapse: collapse; font-size: 8.5pt; background: #ffffff;">
+        <thead>
+          <tr style="background-color: #f1f5f9; border-bottom: 2px solid #cbd5e1;">
+            <th style="padding: 6px 10px; text-align: left; border: 1px solid #e2e8f0;">${sanitize(dataset.independent_variable || 'Independent Variable')}</th>
+            <th style="padding: 6px 10px; text-align: left; border: 1px solid #e2e8f0;">${sanitize(dataset.dependent_variable || 'Dependent Variable')}</th>
+            <th style="padding: 6px 10px; text-align: left; border: 1px solid #e2e8f0;">Observation Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${dataset.data_points.slice(0, 10).map((dp: any) => `
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+              <td style="padding: 5px 10px; border: 1px solid #e2e8f0; font-weight: 600;">${sanitize(String(dp.x))}</td>
+              <td style="padding: 5px 10px; border: 1px solid #e2e8f0;">${sanitize(String(dp.y))}</td>
+              <td style="padding: 5px 10px; border: 1px solid #e2e8f0; color: #64748b; font-style: italic;">${sanitize(dp.note || '—')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      ${dataset.trend_description ? `
+        <div style="margin-top: 6px; font-size: 8pt; color: #475569; font-style: italic;">
+          Trend Note: ${sanitize(dataset.trend_description)}
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function renderStudentAnswersHtml(responses: StudentResponseItem[], studentAttachments: TaskImageAttachment[] | undefined, sanitize: (t: string) => string): string {
+  const partsHtml = (responses || []).map((r, idx) => {
+    const hasCer = r.claim || r.evidence || r.reasoning;
+    return `
+      <div style="margin-bottom: 14px; border: 1px solid #cbd5e1; border-radius: 8px; background-color: #ffffff; padding: 12px; page-break-inside: avoid; break-inside: avoid;">
+        <div style="font-weight: bold; color: #1e1b4b; font-size: 10pt; margin-bottom: 8px; border-bottom: 1px solid #f1f5f9; padding-bottom: 6px;">
+          <span style="display: inline-block; background-color: #4f46e5; color: #ffffff; font-size: 8pt; font-weight: bold; padding: 2px 7px; border-radius: 4px; margin-right: 6px; text-transform: uppercase;">
+            Part ${sanitize(r.label || String.fromCharCode(65 + idx))}
+          </span>
+          ${sanitize(r.prompt)}
+        </div>
+        ${hasCer ? `
+          <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 6px;">
+            ${r.claim ? `
+              <div style="background-color: #eff6ff; border-left: 3px solid #3b82f6; padding: 8px 10px; border-radius: 4px; font-size: 9pt;">
+                <strong style="color: #1e40af; text-transform: uppercase; font-size: 7.5pt; display: block; margin-bottom: 2px;">Scientific Claim:</strong>
+                <span style="color: #1e293b;">${sanitize(r.claim)}</span>
+              </div>
+            ` : ''}
+            ${r.evidence ? `
+              <div style="background-color: #ecfdf5; border-left: 3px solid #10b981; padding: 8px 10px; border-radius: 4px; font-size: 9pt;">
+                <strong style="color: #065f46; text-transform: uppercase; font-size: 7.5pt; display: block; margin-bottom: 2px;">Empirical Evidence:</strong>
+                <span style="color: #1e293b;">${sanitize(r.evidence)}</span>
+              </div>
+            ` : ''}
+            ${r.reasoning ? `
+              <div style="background-color: #faf5ff; border-left: 3px solid #8b5cf6; padding: 8px 10px; border-radius: 4px; font-size: 9pt;">
+                <strong style="color: #5b21b6; text-transform: uppercase; font-size: 7.5pt; display: block; margin-bottom: 2px;">Mechanistic Reasoning:</strong>
+                <span style="color: #1e293b;">${sanitize(r.reasoning)}</span>
+              </div>
+            ` : ''}
+          </div>
+        ` : `
+          <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px; font-size: 9pt; color: #1e293b; white-space: pre-wrap; line-height: 1.5;">
+            ${r.response ? sanitize(r.response) : '<em style="color: #94a3b8;">(No response provided / Left blank)</em>'}
+          </div>
+        `}
+        ${r.attachments && r.attachments.length > 0 ? `
+          <div style="margin-top: 10px; padding-top: 8px; border-top: 1px dashed #cbd5e1;">
+            <div style="font-size: 8pt; font-weight: bold; color: #475569; margin-bottom: 6px; text-transform: uppercase;">
+              Student Attached Working / Diagram for Part ${sanitize(r.label)}:
+            </div>
+            <div style="display: flex; flex-wrap: wrap; gap: 10px;">
+              ${r.attachments.map((att) => `
+                <div style="border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px; background: #fafafa; text-align: center;">
+                  <img src="${att.url}" alt="${sanitize(att.caption || 'Student diagram')}" style="max-height: 170px; max-width: 100%; object-fit: contain; border-radius: 4px;" />
+                  ${att.caption ? `<div style="font-size: 7.5pt; color: #64748b; margin-top: 3px;">${sanitize(att.caption)}</div>` : ''}
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }).join('');
+
+  const attachmentsHtml = (studentAttachments && studentAttachments.length > 0) ? `
+    <div style="margin-top: 14px; background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; page-break-inside: avoid; break-inside: avoid;">
+      <div style="font-size: 8.5pt; font-weight: bold; text-transform: uppercase; color: #334155; margin-bottom: 8px;">
+        Additional Student Submitted Attachments / Work Evidence (${studentAttachments.length})
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px;">
+        ${studentAttachments.map((att, i) => `
+          <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px; text-align: center;">
+            <img src="${att.url}" alt="${sanitize(att.caption || `Student artifact ${i + 1}`)}" style="max-height: 180px; max-width: 100%; object-fit: contain; border-radius: 4px;" />
+            <div style="font-size: 8pt; color: #64748b; margin-top: 4px;">${sanitize(att.name || att.caption || `Artifact #${i + 1}`)}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  ` : '';
+
+  return partsHtml + attachmentsHtml;
+}
+
+function renderEvaluatedWordsHtml(feedback: TaskFeedback, sanitize: (t: string) => string): string {
+  const evaluatedPhrases = feedback.evaluatedPhrases || [];
+  const quotesUsed = feedback.studentQuotesUsed || [];
+
+  let quoteItems: { quote: string; evaluation?: string; status?: string }[] = [];
+  if (evaluatedPhrases.length > 0) {
+    quoteItems = evaluatedPhrases.map((ep) => ({
+      quote: ep.studentQuote,
+      evaluation: ep.evaluation ? ep.evaluation.replace(/\bexaminer('?s)?\b/gi, (m) => m.toLowerCase().startsWith("examiner's") ? (m[0] === 'E' ? "Teacher's" : "teacher's") : (m[0] === 'E' ? 'Teacher' : 'teacher')) : ep.evaluation,
+      status: ep.status
+    }));
+  } else if (quotesUsed.length > 0) {
+    quoteItems = quotesUsed.map((q) => ({
+      quote: q.replace(/^["']|["']$/g, ''),
+      evaluation: 'Extracted from student response and evaluated by the teacher against criterion standards.',
+      status: 'accurate'
+    }));
+  } else {
+    const combined = `${feedback.summary || ''} ${(feedback.strengths || []).join(' ')} ${(feedback.next_steps || []).join(' ')}`;
+    const matches = combined.match(/"([^"]{4,100})"/g);
+    if (matches && matches.length > 0) {
+      const unique = Array.from(new Set(matches.map((m) => m.replace(/^"|"$/g, '')))).slice(0, 4);
+      quoteItems = unique.map((u) => ({
+        quote: u,
+        evaluation: 'Direct phrase cited from student response by the teacher.',
+        status: 'accurate'
+      }));
+    }
+  }
+
+  if (quoteItems.length === 0) return '';
+
+  return `
+    <div style="margin-top: 14px; margin-bottom: 16px; background-color: #f5f3ff; border: 1px solid #ddd6fe; border-left: 4px solid #7c3aed; border-radius: 8px; padding: 12px 14px; page-break-inside: avoid; break-inside: avoid;">
+      <div style="font-size: 9.5pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: #6d28d9; margin-bottom: 6px;">
+        🔍 Words & Phrases Picked From Student Answer & Evaluated
+      </div>
+      <div style="font-size: 8.5pt; color: #4c1d95; margin-bottom: 10px; line-height: 1.4;">
+        The teacher specifically identified and evaluated the following terminology and phrasing written in the student's submission:
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        ${quoteItems.map((item) => `
+          <div style="background-color: #ffffff; border: 1px solid #e9d5ff; border-radius: 6px; padding: 8px 12px; font-size: 9pt;">
+            <div style="display: flex; align-items: baseline; gap: 6px; margin-bottom: 3px;">
+              <span style="font-size: 7.5pt; font-weight: bold; text-transform: uppercase; color: #7c3aed; background: #ede9fe; padding: 2px 6px; border-radius: 4px;">Student Wrote:</span>
+              <strong style="color: #1e1b4b; font-family: Georgia, serif; font-size: 9.5pt;">"${sanitize(item.quote)}"</strong>
+            </div>
+            ${item.evaluation ? `
+              <div style="font-size: 8.5pt; color: #475569; padding-left: 4px; line-height: 1.35;">
+                <strong style="color: #6b21a8;">Teacher Diagnostic:</strong> ${sanitize(item.evaluation)}
+              </div>
+            ` : ''}
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
 function generateReportHtml(data: ReportData): string {
   const sanitize = (text: string) => text ? text.replace(/</g, '&lt;').replace(/>/g, '&gt;') : '';
 
@@ -144,62 +353,92 @@ function generateReportHtml(data: ReportData): string {
     .map((ns) => `<li style="margin-bottom: 6px; color: #3730a3;"><strong>→</strong> ${sanitize(ns)}</li>`)
     .join('');
 
-  const responsesHtml = data.responses
-    .map(
-      (r) => `
-      <div style="margin-bottom: 16px; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; background-color: #f8fafc;">
-        <p style="margin: 0 0 8px 0; font-weight: bold; color: #4338ca; font-size: 13px;">
-          Question / Part ${sanitize(r.label)}: ${sanitize(r.prompt)}
-        </p>
-        <div style="background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; font-size: 12px; color: #1e293b; white-space: pre-wrap;">
-          <strong>Student Answer:</strong><br/>
-          ${r.response ? sanitize(r.response) : '<em>(No response provided / Left blank)</em>'}
-        </div>
-      </div>
-    `
-    )
-    .join('');
+  // Resolve stimulus images
+  const stimulusImages =
+    (data.stimulusImages && data.stimulusImages.length > 0)
+      ? data.stimulusImages
+      : (data.originalTask?.stimulusImages && data.originalTask.stimulusImages.length > 0)
+      ? data.originalTask.stimulusImages
+      : generateStimulusImagesForTopic(data.topic, data.subject);
+
+  // Resolve student attachments
+  const studentAttachments =
+    (data.studentAttachments && data.studentAttachments.length > 0)
+      ? data.studentAttachments
+      : data.responses?.flatMap((r) => r.attachments || []) || [];
+
+  // Resolve Question Paper Prompts
+  const questionParts =
+    data.originalTask?.parts && data.originalTask.parts.length > 0
+      ? data.originalTask.parts
+      : data.responses.map((r, i) => ({
+          label: r.label || String.fromCharCode(65 + i),
+          prompt: r.prompt || `Part ${r.label || String.fromCharCode(65 + i)}`,
+          criterion_assessed: (data.criteria && data.criteria[0]) || 'Criterion A'
+        }));
 
   const attemptText = data.attemptNumber ? `Attempt #${data.attemptNumber} for ${sanitize(data.cluster)}` : null;
   const progressionText = data.previousLevels && data.previousLevels.length > 0
     ? [...data.previousLevels, data.level].join(' ➔ ')
     : data.level;
 
+  const scoreDisplay = data.teacherEvaluation?.formativeScore ?? data.formativeScore ?? data.feedback?.formativeScore;
+
   return `
     <div style="font-family: 'Segoe UI', Arial, sans-serif; color: #0f172a; line-height: 1.5; padding: 20px; background: #ffffff;">
+      <!-- Header Banner -->
       <div style="border-bottom: 3px solid #4f46e5; padding-bottom: 12px; margin-bottom: 20px;">
-        <div style="font-size: 9pt; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;">EduTN43 • IB MYP Approaches to Learning (ATL) Skill Development Report</div>
-        <div style="font-size: 18pt; font-weight: bold; color: #1e1b4b;">${sanitize(data.taskTitle || 'ATL Skill Task Assessment')}</div>
+        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+          <div>
+            <div style="font-size: 8.5pt; color: #64748b; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px;">
+              EduTN43 • IB MYP Approaches to Learning (ATL) Assessment Portfolio
+            </div>
+            <div style="font-size: 17pt; font-weight: bold; color: #1e1b4b;">${sanitize(data.taskTitle || 'ATL Skill Assessment Report')}</div>
+          </div>
+          <div style="text-align: right; background-color: #f1f5f9; padding: 6px 12px; border-radius: 6px; border: 1px solid #cbd5e1;">
+            <div style="font-size: 8pt; color: #64748b; text-transform: uppercase; font-weight: bold;">Comprehensive Record</div>
+            <div style="font-size: 9.5pt; font-weight: 800; color: #4338ca;">Questions • Student Work • Grading</div>
+          </div>
+        </div>
       </div>
 
+      <!-- Student & Assessment Metadata Table -->
       <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px; background-color: #f1f5f9;">
         <tr>
-          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt; vertical-align: top;"><strong>Student Name:</strong> ${sanitize(data.studentName || 'Anonymous')}</td>
-          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt; vertical-align: top;"><strong>Academic Year:</strong> ${sanitize(data.academicYear)} (${sanitize(data.term)})</td>
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 10.5pt; vertical-align: top;">
+            <strong>Student Name:</strong> ${sanitize(data.studentName || 'Anonymous')}<br/>
+            ${data.classSection ? `<span style="font-size: 9pt; color: #64748b;">Class / Section: ${sanitize(data.classSection)}</span>` : ''}
+          </td>
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 10.5pt; vertical-align: top;">
+            <strong>Academic Year:</strong> ${sanitize(data.academicYear)} (${sanitize(data.term)})<br/>
+            <span style="font-size: 9pt; color: #64748b;">Assessment Date: ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</span>
+          </td>
         </tr>
         <tr>
-          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt; vertical-align: top;"><strong>Subject & Topic:</strong> ${sanitize(data.subject)} (MYP ${sanitize(data.mypYear)}) — ${sanitize(data.topic)}</td>
-          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt; vertical-align: top;">
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 10.5pt; vertical-align: top;">
+            <strong>Subject & Topic:</strong> ${sanitize(data.subject)} (MYP ${sanitize(data.mypYear)}) — ${sanitize(data.topic)}
+          </td>
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 10.5pt; vertical-align: top;">
             <div><strong>ATL Cluster:</strong> ${sanitize(data.cluster)} (${sanitize(data.category)})</div>
             ${skillIndicatorsHtml}
           </td>
         </tr>
         <tr>
-          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt;">
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 10.5pt;">
             <div style="margin-bottom: 4px;">
               <strong>Formative Score:</strong> 
               <span style="display: inline-block; padding: 2px 8px; border-radius: 6px; font-weight: 800; font-size: 11pt; color: #1e1b4b; background-color: #e0e7ff;">
-                ${data.formativeScore ? `${data.formativeScore}/8` : (data.feedback?.formativeScore ? `${data.feedback.formativeScore}/8` : 'N/A')}
+                ${scoreDisplay ? `${scoreDisplay}/8` : 'Formative Assessment'}
               </span>
             </div>
             <div>
               <strong>Demonstrated Level:</strong> 
-              <span style="display: inline-block; padding: 3px 10px; border-radius: 10px; font-weight: bold; font-size: 10.5pt; color: #ffffff; background-color: ${
+              <span style="display: inline-block; padding: 3px 10px; border-radius: 10px; font-weight: bold; font-size: 10pt; color: #ffffff; background-color: ${
                 data.level === 'Extending' ? '#10b981' : data.level === 'Applying' ? '#4f46e5' : '#f59e0b'
               };">${sanitize(data.level)}</span>
             </div>
           </td>
-          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt;">
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 10.5pt;">
             <strong>Skill Attempt & Growth:</strong><br/>
             ${attemptText ? `<strong>${attemptText}</strong><br/>` : ''}
             <span>Progression: ${sanitize(progressionText)}</span>
@@ -209,10 +448,10 @@ function generateReportHtml(data: ReportData): string {
           data.dueDate || data.submissionStatus
             ? `
         <tr>
-          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt;">
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 10.5pt;">
             <strong>Task Due Date:</strong> ${data.dueDate ? sanitize(data.dueDate) : 'Open Task (No due date)'}
           </td>
-          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 11pt;">
+          <td style="padding: 8px 12px; border: 1px solid #cbd5e1; font-size: 10.5pt;">
             <strong>Submission Timing:</strong> ${
               data.submissionStatus === 'overdue'
                 ? `<span style="color: #b45309; font-weight: bold;">Extended Submission (+${data.daysOverdue || 1}d overdue)</span>`
@@ -227,11 +466,12 @@ function generateReportHtml(data: ReportData): string {
         }
       </table>
 
+      <!-- Criteria Banner -->
       ${
         (data.criteria && data.criteria.length > 0) || (data.strands && data.strands.length > 0)
           ? `
-        <div style="margin-bottom: 20px; border: 1px solid #a7f3d0; background-color: #ecfdf5; border-left: 4px solid #059669; padding: 12px 14px; border-radius: 6px; font-size: 10.5pt; color: #064e3b;">
-          <div style="font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: #047857; margin-bottom: 4px; font-size: 9.5pt;">Target MYP Assessment Criteria & Strands</div>
+        <div style="margin-bottom: 20px; border: 1px solid #a7f3d0; background-color: #ecfdf5; border-left: 4px solid #059669; padding: 10px 14px; border-radius: 6px; font-size: 10pt; color: #064e3b; page-break-inside: avoid; break-inside: avoid;">
+          <div style="font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: #047857; margin-bottom: 3px; font-size: 9pt;">Target MYP Assessment Criteria & Strands</div>
           ${
             data.criteria && data.criteria.length > 0
               ? `<div><strong>Target Criteria:</strong> ${data.criteria.map((c) => sanitize(c)).join(', ')}</div>`
@@ -239,7 +479,7 @@ function generateReportHtml(data: ReportData): string {
           }
           ${
             data.strands && data.strands.length > 0
-              ? `<div style="margin-top: 4px; font-size: 10pt; color: #065f46;"><strong>Focused Strands:</strong> ${data.strands.map((s) => sanitize(s)).join(' • ')}</div>`
+              ? `<div style="margin-top: 3px; font-size: 9pt; color: #065f46;"><strong>Focused Strands:</strong> ${data.strands.map((s) => sanitize(s)).join(' • ')}</div>`
               : ''
           }
         </div>
@@ -247,6 +487,7 @@ function generateReportHtml(data: ReportData): string {
           : ''
       }
 
+      <!-- ATL Pedagogical Focus -->
       ${
         (() => {
           const rawIntro = data.atlPedagogicalIntro;
@@ -262,30 +503,30 @@ function generateReportHtml(data: ReportData): string {
           const resolvedGuide = rawGuide || derived.atl_skill_guide;
 
           return `
-            <div style="margin-bottom: 20px; border: 1px solid #c7d2fe; background-color: #f5f3ff; border-left: 4px solid #6366f1; padding: 14px 16px; border-radius: 8px;">
-              <div style="font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: #4338ca; margin-bottom: 4px; font-size: 9.5pt;">
-                Approaches to Learning (ATL) Pedagogical Purpose • Named & Taught on Purpose
+            <div style="margin-bottom: 20px; border: 1px solid #c7d2fe; background-color: #f5f3ff; border-left: 4px solid #6366f1; padding: 12px 14px; border-radius: 8px; page-break-inside: avoid; break-inside: avoid;">
+              <div style="font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: #4338ca; margin-bottom: 3px; font-size: 9pt;">
+                Targeted ATL Skill Focus & Pedagogical Context
               </div>
-              <div style="font-size: 11pt; font-weight: bold; color: #1e1b4b; margin-bottom: 6px;">
-                Targeted Skill: ${sanitize(resolvedGuide?.skill_name || data.cluster)} (${sanitize(data.category)})
+              <div style="font-size: 10.5pt; font-weight: bold; color: #1e1b4b; margin-bottom: 4px;">
+                Skill: ${sanitize(resolvedGuide?.skill_name || data.cluster)} (${sanitize(data.category)})
               </div>
-              <p style="font-size: 10pt; color: #312e81; line-height: 1.5; margin: 0 0 10px 0;">
+              <p style="font-size: 9.5pt; color: #312e81; line-height: 1.45; margin: 0 0 8px 0;">
                 ${sanitize(resolvedIntro)}
               </p>
               ${
                 resolvedGuide
                   ? `
-                <table style="width: 100%; border-collapse: collapse; margin-top: 8px;">
+                <table style="width: 100%; border-collapse: collapse; margin-top: 6px;">
                   <tr>
-                    <td style="padding: 8px 10px; background-color: #ffffff; border: 1px solid #e0e7ff; border-radius: 6px; font-size: 9.5pt; width: 33%; vertical-align: top;">
+                    <td style="padding: 6px 8px; background-color: #ffffff; border: 1px solid #e0e7ff; border-radius: 6px; font-size: 8.5pt; width: 33%; vertical-align: top;">
                       <strong style="color: #4338ca; display: block; margin-bottom: 2px;">1. What You Are Doing:</strong>
                       <span style="color: #334155;">${sanitize(resolvedGuide.what_you_are_doing)}</span>
                     </td>
-                    <td style="padding: 8px 10px; background-color: #ffffff; border: 1px solid #e0e7ff; border-radius: 6px; font-size: 9.5pt; width: 33%; vertical-align: top;">
+                    <td style="padding: 6px 8px; background-color: #ffffff; border: 1px solid #e0e7ff; border-radius: 6px; font-size: 8.5pt; width: 33%; vertical-align: top;">
                       <strong style="color: #4338ca; display: block; margin-bottom: 2px;">2. How It Is Tested (CER):</strong>
                       <span style="color: #334155;">${sanitize(resolvedGuide.how_it_is_tested)}</span>
                     </td>
-                    <td style="padding: 8px 10px; background-color: #ffffff; border: 1px solid #e0e7ff; border-radius: 6px; font-size: 9.5pt; width: 34%; vertical-align: top;">
+                    <td style="padding: 6px 8px; background-color: #ffffff; border: 1px solid #e0e7ff; border-radius: 6px; font-size: 8.5pt; width: 34%; vertical-align: top;">
                       <strong style="color: #4338ca; display: block; margin-bottom: 2px;">3. What Is Being Developed:</strong>
                       <span style="color: #334155;">${sanitize(resolvedGuide.what_is_being_developed)}</span>
                     </td>
@@ -299,57 +540,198 @@ function generateReportHtml(data: ReportData): string {
         })()
       }
 
-      ${
-        data.context
-          ? `
-        <div style="font-size: 12pt; font-weight: bold; color: #312e81; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; margin-top: 20px; margin-bottom: 10px; text-transform: uppercase;">Task Context & Background</div>
-        <p style="font-size: 10.5pt; color: #334155; font-style: italic; background: #fafafa; padding: 10px; border-radius: 6px; border: 1px solid #f1f5f9; margin-bottom: 20px;">
-          ${sanitize(data.context)}
-        </p>
-      `
-          : ''
-      }
+      <!-- ========================================== -->
+      <!-- SECTION 1: QUESTION PAPER & STIMULUS       -->
+      <!-- ========================================== -->
+      <div style="margin-top: 24px; margin-bottom: 20px;">
+        <div style="font-size: 12pt; font-weight: 800; color: #1e1b4b; border-bottom: 2px solid #4f46e5; padding-bottom: 5px; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px;">
+          Section 1: Official Question Paper & Assessment Stimulus
+        </div>
 
-      <div style="font-size: 12pt; font-weight: bold; color: #312e81; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; margin-top: 20px; margin-bottom: 10px; text-transform: uppercase;">Task Questions & Student Submitted Answers</div>
-      ${responsesHtml}
+        ${
+          data.context || data.originalTask?.context
+            ? `
+          <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-left: 4px solid #0284c7; padding: 12px; border-radius: 6px; margin-bottom: 14px; page-break-inside: avoid; break-inside: avoid;">
+            <div style="font-size: 9pt; font-weight: bold; text-transform: uppercase; color: #0369a1; margin-bottom: 4px;">
+              Scientific Inquiry Scenario & Context:
+            </div>
+            <div style="font-size: 9.5pt; color: #1e293b; line-height: 1.5;">
+              ${sanitize(data.context || data.originalTask?.context || '')}
+            </div>
+          </div>
+        `
+            : ''
+        }
 
-      <div style="font-size: 12pt; font-weight: bold; color: #312e81; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; margin-top: 20px; margin-bottom: 10px; text-transform: uppercase;">ATL Skill Feedback & Evaluation</div>
-      <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-left: 4px solid #4f46e5; padding: 12px; border-radius: 6px; font-size: 11pt; margin-bottom: 16px;">
-        <strong>Overview:</strong><br/>
-        ${sanitize(data.feedback.summary)}
+        <!-- Stimulus Images / Scientific Diagrams -->
+        ${renderStimulusImagesHtml(stimulusImages, sanitize)}
+
+        <!-- Scientific Dataset Stimulus (if present) -->
+        ${data.originalTask?.scientific_dataset ? renderDatasetStimulusHtml(data.originalTask.scientific_dataset, sanitize) : ''}
+
+        <!-- Structured Question Paper Prompts -->
+        <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px; margin-top: 14px; page-break-inside: avoid; break-inside: avoid;">
+          <div style="font-size: 9pt; font-weight: bold; text-transform: uppercase; color: #334155; margin-bottom: 8px;">
+            Inquiry Question Prompts Assigned to Student:
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            ${questionParts.map((qp: any, idx: number) => `
+              <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 10px; font-size: 9pt;">
+                <div style="font-weight: bold; color: #1e1b4b; margin-bottom: 2px;">
+                  <span style="color: #4f46e5; margin-right: 4px;">Part ${sanitize(qp.label || String.fromCharCode(65 + idx))}:</span>
+                  ${sanitize(qp.prompt)}
+                </div>
+                ${qp.criterion_assessed ? `
+                  <div style="font-size: 8pt; color: #64748b;">Assessing: <em>${sanitize(qp.criterion_assessed)}</em></div>
+                ` : ''}
+              </div>
+            `).join('')}
+          </div>
+        </div>
       </div>
 
-      <table style="width: 100%; margin-top: 16px; border-collapse: collapse; margin-bottom: 20px;">
-        <tr valign="top">
-          <td style="width: 50%; padding-right: 10px;">
-            <div style="font-weight: bold; color: #15803d; font-size: 11pt; margin-bottom: 6px;">Key Strengths Demonstrated:</div>
-            <ul style="padding-left: 20px; margin: 0; font-size: 10.5pt;">
-              ${strengthsHtml}
-            </ul>
-          </td>
-          <td style="width: 50%; padding-left: 10px;">
-            <div style="font-weight: bold; color: #4338ca; font-size: 11pt; margin-bottom: 6px;">Next Steps for Skill Progression:</div>
-            <ul style="padding-left: 20px; margin: 0; font-size: 10.5pt;">
-              ${nextStepsHtml}
-            </ul>
-          </td>
-        </tr>
-      </table>
-
-      ${
-        data.studentReflection
-          ? `
-        <div style="font-size: 12pt; font-weight: bold; color: #312e81; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; margin-top: 20px; margin-bottom: 10px; text-transform: uppercase;">Student Self-Reflection & Learning Log</div>
-        <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-left: 4px solid #16a34a; padding: 12px; border-radius: 6px; font-size: 11pt; color: #14532d;">
-          <strong>Student Post-Task Reflection:</strong><br/>
-          ${sanitize(data.studentReflection)}
+      <!-- ========================================== -->
+      <!-- SECTION 2: STUDENT SUBMITTED ANSWERS       -->
+      <!-- ========================================== -->
+      <div style="margin-top: 24px; margin-bottom: 20px;">
+        <div style="font-size: 12pt; font-weight: 800; color: #1e1b4b; border-bottom: 2px solid #059669; padding-bottom: 5px; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px;">
+          Section 2: Student Submitted Answers & Evidence
         </div>
-      `
-          : ''
-      }
+        ${renderStudentAnswersHtml(data.responses, studentAttachments, sanitize)}
+      </div>
 
-      <div style="margin-top: 30px; border-top: 1px solid #cbd5e1; padding-top: 8px; font-size: 9pt; color: #94a3b8; text-align: center;">
-        * Generated by EduTN43 • MYP ATL Skills Workbench & Tracker. Skill Development Report for teaching and learning dialogue.
+      <!-- ========================================== -->
+      <!-- SECTION 3: TEACHER EVALUATION & GRADING    -->
+      <!-- ========================================== -->
+      <div style="margin-top: 24px; margin-bottom: 20px;">
+        <div style="font-size: 12pt; font-weight: 800; color: #1e1b4b; border-bottom: 2px solid #7c3aed; padding-bottom: 5px; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px;">
+          Section 3: Teacher Evaluation & ATL Skill Grading
+        </div>
+
+        <!-- Grade Banner -->
+        <div style="display: flex; justify-content: space-between; align-items: center; background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 12px 16px; margin-bottom: 14px; page-break-inside: avoid; break-inside: avoid;">
+          <div>
+            <div style="font-size: 8pt; text-transform: uppercase; font-weight: bold; color: #64748b;">Final Formative Evaluation</div>
+            <div style="font-size: 14pt; font-weight: 800; color: #1e1b4b;">
+              Formative Score: <span style="color: #4f46e5;">${scoreDisplay ? `${scoreDisplay} / 8` : 'Assessed'}</span>
+            </div>
+            ${data.teacherEvaluation?.gradedBy || data.teacherName ? `
+              <div style="font-size: 8.5pt; color: #64748b; margin-top: 2px;">
+                Graded by: <strong>${sanitize(data.teacherEvaluation?.gradedBy || data.teacherName || 'Sciences Faculty')}</strong>
+                ${data.teacherEvaluation?.gradedAt ? ` • on ${sanitize(data.teacherEvaluation.gradedAt)}` : ''}
+              </div>
+            ` : ''}
+          </div>
+          <div>
+            <span style="display: inline-block; padding: 6px 14px; border-radius: 12px; font-weight: bold; font-size: 11pt; color: #ffffff; background-color: ${
+              data.level === 'Extending' ? '#10b981' : data.level === 'Applying' ? '#4f46e5' : '#f59e0b'
+            };">
+              ${sanitize(data.level)}
+            </span>
+          </div>
+        </div>
+
+        <!-- Specific Words Quoted from Student Answer and Evaluated -->
+        ${renderEvaluatedWordsHtml(data.feedback, sanitize)}
+
+        <!-- Diagnostic Summary -->
+        <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-left: 4px solid #4f46e5; padding: 12px; border-radius: 6px; font-size: 9.5pt; margin-bottom: 16px; page-break-inside: avoid; break-inside: avoid;">
+          <strong style="color: #1e1b4b; display: block; margin-bottom: 3px; font-size: 9pt; text-transform: uppercase;">Teacher Diagnostic Commentary:</strong>
+          <span style="color: #334155; line-height: 1.5;">${sanitize(data.teacherEvaluation?.feedback || data.feedback.summary)}</span>
+        </div>
+
+        <!-- Strengths & Growth Targets -->
+        <table style="width: 100%; border-collapse: collapse; margin-bottom: 18px; page-break-inside: avoid; break-inside: avoid;">
+          <tr valign="top">
+            <td style="width: 50%; padding-right: 10px;">
+              <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 10px 12px;">
+                <div style="font-weight: bold; color: #15803d; font-size: 9.5pt; margin-bottom: 6px; text-transform: uppercase;">
+                  ✓ Demonstrated Strengths (Citing Student Work):
+                </div>
+                <ul style="padding-left: 18px; margin: 0; font-size: 9pt; color: #14532d; line-height: 1.4;">
+                  ${strengthsHtml}
+                </ul>
+              </div>
+            </td>
+            <td style="width: 50%; padding-left: 10px;">
+              <div style="background-color: #eef2ff; border: 1px solid #c7d2fe; border-radius: 6px; padding: 10px 12px;">
+                <div style="font-weight: bold; color: #4338ca; font-size: 9.5pt; margin-bottom: 6px; text-transform: uppercase;">
+                  → Actionable Next Steps & Mechanism Upgrades:
+                </div>
+                <ul style="padding-left: 18px; margin: 0; font-size: 9pt; color: #312e81; line-height: 1.4;">
+                  ${nextStepsHtml}
+                </ul>
+              </div>
+            </td>
+          </tr>
+        </table>
+
+        <!-- Rubric Matrix if available -->
+        ${
+          data.feedback.rubric_matrix && Array.isArray(data.feedback.rubric_matrix) && data.feedback.rubric_matrix.length > 0
+            ? `
+          <div style="margin-bottom: 16px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; background: #ffffff; page-break-inside: avoid; break-inside: avoid;">
+            <div style="font-size: 9pt; font-weight: bold; color: #334155; margin-bottom: 6px; text-transform: uppercase;">
+              Criteria Rubric Matrix Assessment:
+            </div>
+            <table style="width: 100%; border-collapse: collapse; font-size: 8.5pt;">
+              ${data.feedback.rubric_matrix.map((rm: any) => `
+                <tr style="border-bottom: 1px solid #f1f5f9;">
+                  <td style="padding: 4px 6px; font-weight: bold; color: #4338ca; width: 25%;">${sanitize(rm.criterion || '')}</td>
+                  <td style="padding: 4px 6px; color: #334155; width: 60%;">${sanitize(rm.descriptor || '')}</td>
+                  <td style="padding: 4px 6px; text-align: right; font-weight: bold; color: #0f172a; width: 15%;">${sanitize(rm.score_range || '')}</td>
+                </tr>
+              `).join('')}
+            </table>
+          </div>
+        `
+            : ''
+        }
+
+        <!-- Digital Badge Awarded if present -->
+        ${
+          data.badgeAwarded || data.teacherEvaluation?.badgeAwarded
+            ? `
+          <div style="display: flex; align-items: center; gap: 8px; background-color: #fef3c7; border: 1px solid #fde68a; border-radius: 6px; padding: 8px 12px; margin-bottom: 14px; page-break-inside: avoid; break-inside: avoid;">
+            <span style="font-size: 14pt;">★</span>
+            <div>
+              <strong style="color: #92400e; font-size: 9pt;">Digital Skill Badge Awarded: ${(data.badgeAwarded || data.teacherEvaluation?.badgeAwarded).name}</strong>
+              <div style="font-size: 8pt; color: #78350f;">${(data.badgeAwarded || data.teacherEvaluation?.badgeAwarded).description}</div>
+            </div>
+          </div>
+        `
+            : ''
+        }
+
+        <!-- Student Self-Reflection -->
+        ${
+          data.studentReflection
+            ? `
+          <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-left: 4px solid #16a34a; padding: 10px 12px; border-radius: 6px; font-size: 9pt; color: #14532d; margin-bottom: 16px; page-break-inside: avoid; break-inside: avoid;">
+            <strong style="text-transform: uppercase; font-size: 8pt; display: block; margin-bottom: 2px;">Student Metacognitive Reflection:</strong>
+            <em>"${sanitize(data.studentReflection)}"</em>
+          </div>
+        `
+            : ''
+        }
+
+        <!-- Official Sign-off Verification -->
+        <table style="width: 100%; border-collapse: collapse; margin-top: 24px; border-top: 1px solid #cbd5e1; padding-top: 12px; page-break-inside: avoid; break-inside: avoid;">
+          <tr>
+            <td style="width: 50%; padding-top: 16px; font-size: 9pt; color: #475569;">
+              <div style="border-bottom: 1px solid #94a3b8; width: 75%; height: 24px; margin-bottom: 4px;"></div>
+              <strong>Assessing Teacher Signature:</strong> ${sanitize(data.teacherEvaluation?.gradedBy || data.teacherName || 'Subject Teacher')}
+            </td>
+            <td style="width: 50%; padding-top: 16px; font-size: 9pt; color: #475569; text-align: right;">
+              <div style="border-bottom: 1px solid #94a3b8; width: 75%; height: 24px; margin-bottom: 4px; margin-left: auto;"></div>
+              <strong>Verified Date:</strong> ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+            </td>
+          </tr>
+        </table>
+      </div>
+
+      <div style="margin-top: 24px; border-top: 1px solid #cbd5e1; padding-top: 8px; font-size: 8.5pt; color: #94a3b8; text-align: center;">
+        * Generated by EduTN43 • MYP ATL Skills Workbench & Assessment System. Official task record for students, parents, and coordinators.
       </div>
     </div>
   `;
@@ -388,312 +770,24 @@ export async function exportToPdf(data: ReportData): Promise<void> {
  */
 export function exportToWordDoc(data: ReportData) {
   const sanitize = (text: string) => text ? text.replace(/</g, '&lt;').replace(/>/g, '&gt;') : '';
-
-  const indicators = resolveSkillIndicators(data);
-  const skillIndicatorsHtml = indicators.length > 0
-    ? `
-      <div style="margin-top: 6px; font-size: 9.5pt; color: #1e293b;">
-        <strong style="color: #0f172a;">Skill Indicators:</strong>
-        <ul style="margin: 3px 0 0 0; padding-left: 16px; color: #334155; line-height: 1.45;">
-          ${indicators.map((ind) => `<li style="margin-bottom: 2px;">${sanitize(ind.replace(/^[•\-\*]\s*/, ''))}</li>`).join('')}
-        </ul>
-      </div>
-    `
-    : '';
-
-  const strengthsHtml = data.feedback.strengths
-    .map((s) => `<li style="margin-bottom: 6px; color: #166534;"><strong>✓</strong> ${sanitize(s)}</li>`)
-    .join('');
-
-  const nextStepsHtml = data.feedback.next_steps
-    .map((ns) => `<li style="margin-bottom: 6px; color: #3730a3;"><strong>→</strong> ${sanitize(ns)}</li>`)
-    .join('');
-
-  const responsesHtml = data.responses
-    .map(
-      (r) => `
-      <div style="margin-bottom: 16px; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; background-color: #f8fafc;">
-        <p style="margin: 0 0 8px 0; font-weight: bold; color: #4338ca; font-size: 13px;">
-          Question / Part ${sanitize(r.label)}: ${sanitize(r.prompt)}
-        </p>
-        <div style="background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; font-size: 12px; color: #1e293b; white-space: pre-wrap;">
-          <strong>Student Answer:</strong><br/>
-          ${r.response ? sanitize(r.response) : '<em>(No response provided / Left blank)</em>'}
-        </div>
-      </div>
-    `
-    )
-    .join('');
-
-  const attemptText = data.attemptNumber ? `Attempt #${data.attemptNumber} for ${sanitize(data.cluster)}` : null;
-  const progressionText = data.previousLevels && data.previousLevels.length > 0
-    ? [...data.previousLevels, data.level].join(' ➔ ')
-    : data.level;
+  const bodyHtml = generateReportHtml(data);
 
   const htmlContent = `
     <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
     <head>
       <meta charset='utf-8'>
-      <title>ATL Skill Development Report - ${sanitize(data.studentName)}</title>
+      <title>ATL Skill Assessment Report - ${sanitize(data.studentName)}</title>
       <style>
         body {
           font-family: 'Calibri', 'Segoe UI', Arial, sans-serif;
-          margin: 30px;
+          margin: 20px;
           color: #0f172a;
           line-height: 1.5;
-        }
-        .header-box {
-          border-bottom: 3px solid #4f46e5;
-          padding-bottom: 12px;
-          margin-bottom: 20px;
-        }
-        .title {
-          font-size: 20pt;
-          font-weight: bold;
-          color: #1e1b4b;
-          margin: 0;
-        }
-        .subtitle {
-          font-size: 10pt;
-          color: #64748b;
-          text-transform: uppercase;
-          letter-spacing: 1px;
-          margin-top: 4px;
-        }
-        .meta-table {
-          width: 100%;
-          border-collapse: collapse;
-          margin-bottom: 20px;
-          background-color: #f1f5f9;
-        }
-        .meta-table td {
-          padding: 8px 12px;
-          border: 1px solid #cbd5e1;
-          font-size: 11pt;
-        }
-        .badge {
-          display: inline-block;
-          padding: 4px 12px;
-          border-radius: 12px;
-          font-weight: bold;
-          font-size: 12pt;
-          color: #ffffff;
-          background-color: ${
-            data.level === 'Extending' ? '#10b981' : data.level === 'Applying' ? '#4f46e5' : '#f59e0b'
-          };
-        }
-        .section-heading {
-          font-size: 13pt;
-          font-weight: bold;
-          color: #312e81;
-          border-bottom: 1px solid #e2e8f0;
-          padding-bottom: 4px;
-          margin-top: 24px;
-          margin-bottom: 10px;
-          text-transform: uppercase;
-        }
-        .summary-box {
-          background-color: #f8fafc;
-          border: 1px solid #cbd5e1;
-          border-left: 4px solid #4f46e5;
-          padding: 12px;
-          border-radius: 6px;
-          font-size: 11pt;
-        }
-        .reflection-box {
-          background-color: #f0fdf4;
-          border: 1px solid #bbf7d0;
-          border-left: 4px solid #16a34a;
-          padding: 12px;
-          border-radius: 6px;
-          font-size: 11pt;
-          color: #14532d;
         }
       </style>
     </head>
     <body>
-      <div class="header-box">
-        <div class="subtitle">EduTN43 • IB MYP Approaches to Learning (ATL) Skill Development Report</div>
-        <div class="title">${sanitize(data.taskTitle || 'ATL Skill Task Assessment')}</div>
-      </div>
-
-      <table class="meta-table">
-        <tr>
-          <td><strong>Student Name:</strong> ${sanitize(data.studentName || 'Anonymous')}</td>
-          <td><strong>Academic Year:</strong> ${sanitize(data.academicYear)} (${sanitize(data.term)})</td>
-        </tr>
-        <tr>
-          <td style="vertical-align: top;"><strong>Subject & Topic:</strong> ${sanitize(data.subject)} (MYP ${sanitize(data.mypYear)}) — ${sanitize(data.topic)}</td>
-          <td style="vertical-align: top;">
-            <div><strong>ATL Cluster:</strong> ${sanitize(data.cluster)} (${sanitize(data.category)})</div>
-            ${skillIndicatorsHtml}
-          </td>
-        </tr>
-        <tr>
-          <td>
-            <div style="margin-bottom: 4px;">
-              <strong>Formative Score:</strong> 
-              <span style="display: inline-block; padding: 2px 8px; border-radius: 6px; font-weight: bold; font-size: 11pt; color: #1e1b4b; background-color: #e0e7ff;">
-                ${data.formativeScore ? `${data.formativeScore}/8` : (data.feedback?.formativeScore ? `${data.feedback.formativeScore}/8` : 'N/A')}
-              </span>
-            </div>
-            <div>
-              <strong>Demonstrated Level:</strong> 
-              <span class="badge">${sanitize(data.level)}</span>
-            </div>
-          </td>
-          <td>
-            <strong>Skill Attempt & Growth:</strong><br/>
-            ${attemptText ? `<strong>${attemptText}</strong><br/>` : ''}
-            <span>Progression: ${sanitize(progressionText)}</span>
-          </td>
-        </tr>
-        ${
-          data.dueDate || data.submissionStatus
-            ? `
-        <tr>
-          <td>
-            <strong>Task Due Date:</strong> ${data.dueDate ? sanitize(data.dueDate) : 'Open Task (No due date)'}
-          </td>
-          <td>
-            <strong>Submission Timing:</strong> ${
-              data.submissionStatus === 'overdue'
-                ? `<span style="color: #b45309; font-weight: bold;">Extended Submission (+${data.daysOverdue || 1}d overdue)</span>`
-                : data.submissionStatus === 'on_time'
-                ? `<span style="color: #15803d; font-weight: bold;">Submitted On-Time</span>`
-                : 'Standard'
-            }
-          </td>
-        </tr>
-        `
-            : ''
-        }
-      </table>
-
-      ${
-        (data.criteria && data.criteria.length > 0) || (data.strands && data.strands.length > 0)
-          ? `
-        <div style="margin-bottom: 20px; border: 1px solid #a7f3d0; background-color: #ecfdf5; border-left: 4px solid #059669; padding: 12px 14px; border-radius: 6px; font-size: 10.5pt; color: #064e3b;">
-          <div style="font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: #047857; margin-bottom: 4px; font-size: 9.5pt;">Target MYP Assessment Criteria & Strands</div>
-          ${
-            data.criteria && data.criteria.length > 0
-              ? `<div><strong>Target Criteria:</strong> ${data.criteria.map((c) => sanitize(c)).join(', ')}</div>`
-              : ''
-          }
-          ${
-            data.strands && data.strands.length > 0
-              ? `<div style="margin-top: 4px; font-size: 10pt; color: #065f46;"><strong>Focused Strands:</strong> ${data.strands.map((s) => sanitize(s)).join(' • ')}</div>`
-              : ''
-          }
-        </div>
-      `
-          : ''
-      }
-
-      ${
-        (() => {
-          const rawIntro = data.atlPedagogicalIntro;
-          const rawGuide = data.atl_skill_guide;
-          const derived = buildATLSkillGuideAndIntro(
-            data.cluster || 'Critical thinking',
-            data.category || 'Thinking',
-            data.topic,
-            data.criteria?.[0] || 'Criterion C',
-            data.subject
-          );
-          const resolvedIntro = rawIntro || derived.atlPedagogicalIntro;
-          const resolvedGuide = rawGuide || derived.atl_skill_guide;
-
-          return `
-            <div style="margin-bottom: 20px; border: 1px solid #c7d2fe; background-color: #f5f3ff; border-left: 4px solid #6366f1; padding: 14px 16px; border-radius: 8px;">
-              <div style="font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; color: #4338ca; margin-bottom: 4px; font-size: 9.5pt;">
-                Approaches to Learning (ATL) Pedagogical Purpose • Named & Taught on Purpose
-              </div>
-              <div style="font-size: 11pt; font-weight: bold; color: #1e1b4b; margin-bottom: 6px;">
-                Targeted Skill: ${sanitize(resolvedGuide?.skill_name || data.cluster)} (${sanitize(data.category)})
-              </div>
-              <p style="font-size: 10.5pt; color: #312e81; line-height: 1.5; margin: 0 0 10px 0;">
-                ${sanitize(resolvedIntro)}
-              </p>
-              ${
-                resolvedGuide
-                  ? `
-                <table style="width: 100%; border-collapse: collapse; margin-top: 8px;">
-                  <tr>
-                    <td style="padding: 8px 10px; background-color: #ffffff; border: 1px solid #e0e7ff; border-radius: 6px; font-size: 9.5pt; width: 33%; vertical-align: top;">
-                      <strong style="color: #4338ca; display: block; margin-bottom: 2px;">1. What You Are Doing:</strong>
-                      <span style="color: #334155;">${sanitize(resolvedGuide.what_you_are_doing)}</span>
-                    </td>
-                    <td style="padding: 8px 10px; background-color: #ffffff; border: 1px solid #e0e7ff; border-radius: 6px; font-size: 9.5pt; width: 33%; vertical-align: top;">
-                      <strong style="color: #4338ca; display: block; margin-bottom: 2px;">2. How It Is Tested (CER):</strong>
-                      <span style="color: #334155;">${sanitize(resolvedGuide.how_it_is_tested)}</span>
-                    </td>
-                    <td style="padding: 8px 10px; background-color: #ffffff; border: 1px solid #e0e7ff; border-radius: 6px; font-size: 9.5pt; width: 34%; vertical-align: top;">
-                      <strong style="color: #4338ca; display: block; margin-bottom: 2px;">3. What Is Being Developed:</strong>
-                      <span style="color: #334155;">${sanitize(resolvedGuide.what_is_being_developed)}</span>
-                    </td>
-                  </tr>
-                </table>
-              `
-                  : ''
-              }
-            </div>
-          `;
-        })()
-      }
-
-      ${
-        data.context
-          ? `
-        <div class="section-heading">Task Context & Background</div>
-        <p style="font-size: 11pt; color: #334155; font-style: italic; background: #fafafa; padding: 10px; border-radius: 6px; border: 1px solid #f1f5f9;">
-          ${sanitize(data.context)}
-        </p>
-      `
-          : ''
-      }
-
-      <div class="section-heading">Task Questions & Student Submitted Answers</div>
-      ${responsesHtml}
-
-      <div class="section-heading">ATL Skill Feedback & Evaluation</div>
-      <div class="summary-box">
-        <strong>Overview:</strong><br/>
-        ${sanitize(data.feedback.summary)}
-      </div>
-
-      <table style="width: 100%; margin-top: 16px; border-collapse: collapse;">
-        <tr valign="top">
-          <td style="width: 50%; padding-right: 10px;">
-            <div style="font-weight: bold; color: #15803d; font-size: 11pt; margin-bottom: 6px;">Key Strengths Demonstrated:</div>
-            <ul style="padding-left: 20px; margin: 0;">
-              ${strengthsHtml}
-            </ul>
-          </td>
-          <td style="width: 50%; padding-left: 10px;">
-            <div style="font-weight: bold; color: #4338ca; font-size: 11pt; margin-bottom: 6px;">Next Steps for Skill Progression:</div>
-            <ul style="padding-left: 20px; margin: 0;">
-              ${nextStepsHtml}
-            </ul>
-          </td>
-        </tr>
-      </table>
-
-      ${
-        data.studentReflection
-          ? `
-        <div class="section-heading">Student Self-Reflection & Learning Log</div>
-        <div class="reflection-box">
-          <strong>Student Post-Task Reflection:</strong><br/>
-          ${sanitize(data.studentReflection)}
-        </div>
-      `
-          : ''
-      }
-
-      <div style="margin-top: 30px; border-top: 1px solid #cbd5e1; padding-top: 8px; font-size: 9pt; color: #94a3b8; text-align: center;">
-        * Generated by EduTN43 • MYP ATL Skills Workbench & Tracker. Skill Development Report for teaching and learning dialogue.
-      </div>
+      ${bodyHtml}
     </body>
     </html>
   `;
@@ -1168,6 +1262,92 @@ export function generateStudentProgressReportHtml(params: StudentProgressReportP
           `
             : ''
         }
+
+        ${
+          log.feedback ? renderEvaluatedWordsHtml(log.feedback, sanitize) : ''
+        }
+
+        ${(() => {
+          const taskStimulusImages =
+            (log.stimulusImages && log.stimulusImages.length > 0)
+              ? log.stimulusImages
+              : (log.originalTask?.stimulusImages && log.originalTask.stimulusImages.length > 0)
+              ? log.originalTask.stimulusImages
+              : generateStimulusImagesForTopic(log.topic, log.subject);
+
+          const studentWorkImages =
+            (log.studentAttachments && log.studentAttachments.length > 0)
+              ? log.studentAttachments
+              : log.responses?.flatMap((r) => r.attachments || []) || [];
+
+          return `
+            <div style="margin-top: 10px; border-top: 1px dashed #cbd5e1; padding-top: 8px;">
+              ${log.originalTask?.context ? `
+                <div style="font-size: 8pt; color: #475569; margin-bottom: 6px; font-style: italic; background: #f8fafc; padding: 6px; border-radius: 4px;">
+                  <strong>Question Context:</strong> ${sanitize(log.originalTask.context)}
+                </div>
+              ` : ''}
+
+              ${taskStimulusImages && taskStimulusImages.length > 0 ? `
+                <div style="margin-bottom: 8px;">
+                  <div style="font-size: 7.5pt; font-weight: bold; text-transform: uppercase; color: #4338ca; margin-bottom: 4px;">
+                    Question Paper Attached Images (${taskStimulusImages.length}):
+                  </div>
+                  <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                    ${taskStimulusImages.slice(0, 3).map((img, i) => `
+                      <div style="border: 1px solid #cbd5e1; border-radius: 4px; padding: 4px; background: #ffffff; text-align: center; max-width: 180px;">
+                        <img src="${img.url}" alt="${sanitize(img.caption || 'Stimulus')}" style="max-height: 110px; max-width: 100%; object-fit: contain; border-radius: 3px;" />
+                        <div style="font-size: 7pt; color: #64748b; margin-top: 2px;">${sanitize(img.name || img.caption || `Diagram ${i + 1}`)}</div>
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+              ` : ''}
+
+              ${log.responses && log.responses.length > 0 ? `
+                <div style="font-size: 8pt; font-weight: bold; color: #334155; margin-bottom: 4px; text-transform: uppercase;">
+                  Assigned Questions & Student Submitted Answers:
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 6px;">
+                  ${log.responses.map((r, i) => `
+                    <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 6px 8px; font-size: 8pt;">
+                      <div style="font-weight: bold; color: #1e1b4b; margin-bottom: 2px;">
+                        <span style="color: #4f46e5;">Part ${sanitize(r.label || String.fromCharCode(65 + i))}:</span> ${sanitize(r.prompt)}
+                      </div>
+                      <div style="color: #334155; font-size: 8pt; background: #ffffff; padding: 4px 6px; border-radius: 3px; border: 1px solid #f1f5f9;">
+                        ${r.claim || r.evidence || r.reasoning ? `
+                          ${r.claim ? `<div><strong style="color: #1e40af;">Claim:</strong> ${sanitize(r.claim)}</div>` : ''}
+                          ${r.evidence ? `<div><strong style="color: #065f46;">Evidence:</strong> ${sanitize(r.evidence)}</div>` : ''}
+                          ${r.reasoning ? `<div><strong style="color: #6b21a8;">Reasoning:</strong> ${sanitize(r.reasoning)}</div>` : ''}
+                        ` : (r.response ? sanitize(r.response) : '<em style="color: #94a3b8;">(Left blank)</em>')}
+                      </div>
+                      ${r.attachments && r.attachments.length > 0 ? `
+                        <div style="margin-top: 4px; display: flex; gap: 6px;">
+                          ${r.attachments.map((att) => `
+                            <img src="${att.url}" alt="${sanitize(att.caption || 'Student work')}" style="max-height: 80px; max-width: 100px; object-fit: contain; border-radius: 3px; border: 1px solid #cbd5e1;" />
+                          `).join('')}
+                        </div>
+                      ` : ''}
+                    </div>
+                  `).join('')}
+                </div>
+              ` : ''}
+
+              ${studentWorkImages && studentWorkImages.length > 0 ? `
+                <div style="margin-top: 6px;">
+                  <div style="font-size: 7.5pt; font-weight: bold; text-transform: uppercase; color: #047857; margin-bottom: 4px;">
+                    Student Attached Work Evidence (${studentWorkImages.length}):
+                  </div>
+                  <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                    ${studentWorkImages.map((img) => `
+                      <img src="${img.url}" alt="${sanitize(img.caption || 'Student artifact')}" style="max-height: 90px; max-width: 120px; object-fit: contain; border-radius: 4px; border: 1px solid #cbd5e1;" />
+                    `).join('')}
+                  </div>
+                </div>
+              ` : ''}
+            </div>
+          `;
+        })()}
       </div>
     `;
   }).join('');

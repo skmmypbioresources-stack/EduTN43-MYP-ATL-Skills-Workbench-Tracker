@@ -150,6 +150,14 @@ export interface TaskMeta {
 
 export type SkillLevel = 'Developing' | 'Applying' | 'Extending';
 
+export interface EvaluatedPhraseItem {
+  studentQuote: string;
+  evaluation: string;
+  status: 'accurate' | 'partial' | 'needs_improvement';
+  criterion?: string;
+  context?: string;
+}
+
 export interface TaskFeedback {
   level: SkillLevel;
   formativeScore?: number; // Numerical formative score out of 8 (1-8)
@@ -157,6 +165,8 @@ export interface TaskFeedback {
   strengths: string[];
   next_steps: string[];
   rubric_matrix?: any;
+  studentQuotesUsed?: string[]; // Verbatim phrases/words quoted from student answers
+  evaluatedPhrases?: EvaluatedPhraseItem[]; // Words/phrases picked from student responses with evaluation
 }
 
 export interface StudentResponseItem {
