@@ -31,6 +31,7 @@ import { exportToPdf, exportToWordDoc } from '../lib/exportUtils';
 import { ImageZoomLightbox } from './ImageZoomLightbox';
 import { ScientificGraphStimulus } from './ScientificGraphStimulus';
 import { isTaskLogGraded, getTaskEffectiveScore } from '../lib/scoreUtils';
+import { formatTeacherComment } from '../lib/sanitizeTaskData';
 import {
   generateStimulusImagesForTopic,
   determinePrimaryCriterion,
@@ -616,10 +617,10 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                         type="button"
                         onClick={gradingHandler}
                         className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs transition-colors flex items-center gap-1.5 shadow-xs cursor-pointer"
-                        title="Open grading window with AI Grading Assistant"
+                        title="Open teacher grading and feedback window"
                       >
                         <Sparkles className="w-4 h-4 text-amber-300" />
-                        <span>AI Grading Assistant</span>
+                        <span>Teacher Feedback & Grading</span>
                       </button>
 
                       <button
@@ -660,10 +661,10 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 {evaluation?.feedback || log.feedback?.summary ? (
                   <div className="space-y-1.5 pt-2 border-t border-indigo-100/60">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 block">
-                      Teacher Qualitative Feedback & Commendations:
+                      Teacher Feedback & Scientific Corrections:
                     </span>
                     <p className="text-xs text-slate-700 leading-relaxed font-medium bg-white/80 p-3 rounded-xl border border-indigo-50">
-                      {evaluation?.feedback || log.feedback.summary}
+                      {formatTeacherComment(evaluation?.feedback || log.feedback?.summary)}
                     </p>
                   </div>
                 ) : null}

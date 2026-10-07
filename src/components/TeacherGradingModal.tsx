@@ -39,6 +39,7 @@ import {
 import { exportToPdf } from '../lib/exportUtils';
 import { ImageZoomLightbox } from './ImageZoomLightbox';
 import { isTaskLogGraded, getTaskEffectiveScore, getTaskAiSuggestedScore, getTaskAiSuggestedLevel } from '../lib/scoreUtils';
+import { formatTeacherComment } from '../lib/sanitizeTaskData';
 
 interface TeacherGradingModalProps {
   log: ATLTaskLog;
@@ -221,7 +222,7 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
         setLevel(generated.level as SkillLevel);
       }
       if (generated.summary) {
-        setFeedback(generated.summary);
+        setFeedback(formatTeacherComment(generated.summary));
       }
       if (generated.strengths && generated.strengths.length > 0) {
         setStrengthsText(generated.strengths.join('\n'));
@@ -230,11 +231,11 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
         setNextStepsText(generated.next_steps.join('\n'));
       }
 
-      setAiAppliedNotice('AI assessment recommendation generated. Review, edit, and adjust the score and feedback below before saving.');
+      setAiAppliedNotice('Scientific corrections generated. Review, edit, and adjust the score and feedback below before saving.');
       setTimeout(() => setAiAppliedNotice(null), 5000);
     } catch (err: any) {
-      console.error('Failed to generate AI grading recommendation:', err);
-      setAiGenError(err.message || 'Failed to generate AI recommendation. You can still grade manually below.');
+      console.error('Failed to generate diagnostic recommendation:', err);
+      setAiGenError(err.message || 'Failed to generate recommendation. You can still grade manually below.');
     } finally {
       setIsGeneratingAi(false);
     }
@@ -252,10 +253,7 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
       setLevel(levelToUse as SkillLevel);
     }
     if (feedbackToUse?.summary && feedbackToUse.summary !== 'Work submitted for teacher review and grading.') {
-      const cleanSummary = feedbackToUse.summary
-        .replace(/^Work submitted for teacher review and grading\.\s*\(AI Formative Guidance generated:\s*/, '')
-        .replace(/\)$/, '');
-      setFeedback(cleanSummary);
+      setFeedback(formatTeacherComment(feedbackToUse.summary));
     }
     if (feedbackToUse?.strengths && feedbackToUse.strengths.length > 0) {
       setStrengthsText(feedbackToUse.strengths.join('\n'));
@@ -263,7 +261,7 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
     if (feedbackToUse?.next_steps && feedbackToUse.next_steps.length > 0) {
       setNextStepsText(feedbackToUse.next_steps.join('\n'));
     }
-    setAiAppliedNotice('AI suggested grade and commentary loaded. You can now modify any score or feedback.');
+    setAiAppliedNotice('Scientific corrections loaded into fields. You can now customize and finalize.');
     setTimeout(() => setAiAppliedNotice(null), 4000);
   };
 
@@ -701,7 +699,7 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
             )}
           </div>
 
-          {/* SECTION 2: AI Grading Assistant (Teacher Advisory Tool) */}
+          {/* SECTION 2: Point Out Errors & Scientific Corrections */}
           <div className="pt-5 space-y-4">
             <div className="rounded-2xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50/70 via-purple-50/30 to-white p-5 space-y-4 shadow-2xs">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -711,13 +709,13 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
                   </div>
                   <div>
                     <h4 className="font-extrabold text-slate-900 text-sm sm:text-base flex items-center gap-2">
-                      <span>2. AI Grading Assistant</span>
+                      <span>2. Point Out Errors & Scientific Corrections</span>
                       <span className="text-[10px] uppercase font-extrabold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 border border-indigo-200">
-                        Teacher Advisory Tool
+                        Scientific Corrections
                       </span>
                     </h4>
                     <p className="text-xs text-slate-600 mt-0.5">
-                      Generate an advisory IB criteria evaluation for this student's submission. The final grade and marks are strictly determined by you.
+                      Identify specific errors and generate brief, to-the-point scientific corrections showing how to write them scientifically correctly.
                     </p>
                   </div>
                 </div>
@@ -738,7 +736,7 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
                       <>
                         <Sparkles className="w-4 h-4 text-amber-300" />
                         <span>
-                          {hasAiAssistance ? 'Re-Generate AI Recommendation' : 'Generate AI Recommendation'}
+                          {hasAiAssistance ? 'Re-Analyze Errors & Corrections' : 'Point Out Errors & Scientific Corrections'}
                         </span>
                       </>
                     )}
@@ -753,12 +751,12 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
                 </div>
               )}
 
-              {/* Display AI recommendations if available */}
+              {/* Display recommendations if available */}
               {hasAiAssistance && (
                 <div className="space-y-3 pt-2 border-t border-indigo-100">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
-                      <span className="text-xs font-bold text-slate-700">AI Suggested Formative Level:</span>
+                      <span className="text-xs font-bold text-slate-700">Suggested Formative Level:</span>
                       {typeof effectiveAiSuggestedScore === 'number' && (
                         <span className="text-sm font-black text-indigo-700 bg-white px-2.5 py-0.5 rounded-lg border border-indigo-200 shadow-2xs">
                           {effectiveAiSuggestedScore} / 8
@@ -778,7 +776,7 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
                         className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold transition-all shadow-2xs cursor-pointer"
                       >
                         <Sparkles className="w-3.5 h-3.5" />
-                        <span>Apply AI Draft to Fields</span>
+                        <span>Apply Corrections to Feedback</span>
                       </button>
                       <button
                         type="button"
@@ -791,17 +789,15 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
                     </div>
                   </div>
 
-                  {/* AI Summary and Comments */}
+                  {/* Summary and Comments */}
                   {(activeAiFeedback?.summary || log.feedback?.summary) && (
                     <div className="text-xs text-slate-700 bg-white/90 p-3.5 rounded-xl border border-indigo-100 leading-relaxed font-medium shadow-2xs">
-                      <span className="font-bold text-indigo-900 block mb-1">AI Diagnostic Commentary:</span>
-                      {(activeAiFeedback?.summary || log.feedback?.summary || '')
-                        .replace(/^Work submitted for teacher review and grading\.\s*\(AI Formative Guidance generated:\s*/, '')
-                        .replace(/\)$/, '')}
+                      <span className="font-bold text-indigo-900 block mb-1">Scientific Corrections (Pointing Out Errors & How to Write Correctly):</span>
+                      {formatTeacherComment(activeAiFeedback?.summary || log.feedback?.summary || '')}
                     </div>
                   )}
 
-                  {/* AI Strengths & Next Steps */}
+                  {/* Strengths & Next Steps */}
                   {((activeAiFeedback?.strengths && activeAiFeedback.strengths.length > 0) ||
                     (log.feedback?.strengths && log.feedback.strengths.length > 0) ||
                     (activeAiFeedback?.next_steps && activeAiFeedback.next_steps.length > 0) ||
@@ -810,7 +806,7 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
                       {((activeAiFeedback?.strengths && activeAiFeedback.strengths.length > 0) ||
                         (log.feedback?.strengths && log.feedback.strengths.length > 0)) && (
                         <div className="p-3 bg-white/90 rounded-xl border border-emerald-100 text-slate-700 shadow-2xs">
-                          <span className="font-bold text-emerald-800 block mb-1">Identified Strengths:</span>
+                          <span className="font-bold text-emerald-800 block mb-1">What You Did Well:</span>
                           <ul className="list-disc list-inside space-y-0.5 text-slate-600">
                             {(activeAiFeedback?.strengths || log.feedback?.strengths || []).slice(0, 3).map((st, sIdx) => (
                               <li key={sIdx} className="truncate">{st}</li>
@@ -821,7 +817,7 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
                       {((activeAiFeedback?.next_steps && activeAiFeedback.next_steps.length > 0) ||
                         (log.feedback?.next_steps && log.feedback.next_steps.length > 0)) && (
                         <div className="p-3 bg-white/90 rounded-xl border border-blue-100 text-slate-700 shadow-2xs">
-                          <span className="font-bold text-blue-800 block mb-1">Suggested Next Steps:</span>
+                          <span className="font-bold text-blue-800 block mb-1">Identified Errors & How to Write Scientifically Correctly:</span>
                           <ul className="list-disc list-inside space-y-0.5 text-slate-600">
                             {(activeAiFeedback?.next_steps || log.feedback?.next_steps || []).slice(0, 3).map((ns, nIdx) => (
                               <li key={nIdx} className="truncate">{ns}</li>
@@ -840,7 +836,7 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
                     <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 space-y-2 shadow-2xs">
                       <span className="text-[11px] font-bold text-amber-900 block flex items-center gap-1.5">
                         <MessageSquare className="w-3.5 h-3.5 text-amber-700" />
-                        <span>Student Words & Exact Evidence Evaluated:</span>
+                        <span>Student Evidence & Phrasing Evaluated:</span>
                       </span>
                       <div className="flex flex-wrap gap-1.5">
                         {(activeAiFeedback?.evaluatedPhrases || log.feedback?.evaluatedPhrases || []).map((item, pIdx) => (
@@ -879,7 +875,7 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
                   )}
 
                   <div className="text-[11px] text-slate-500 font-medium italic pt-1">
-                    * The above AI evaluation is an advisory draft. Review, edit, and finalize your score and comments in Section 3 below.
+                    * Review, edit, and finalize your score and direct feedback in Section 3 below.
                   </div>
                 </div>
               )}
@@ -893,17 +889,17 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
             </div>
           </div>
 
-          {/* SECTION 3: Teacher Grading, Feedback & Digital Badge */}
+          {/* SECTION 3: Teacher Grading, Direct Feedback & Digital Badge */}
           <div className="pt-5 space-y-5">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
               <div className="flex items-center gap-2">
                 <Trophy className="w-5 h-5 text-indigo-600" />
                 <div>
                   <h3 className="font-bold text-slate-900 text-base">
-                    3. Teacher Grading, Corrections & Badge Award
+                    3. Teacher Grading, Direct Feedback & Badge Award
                   </h3>
                   <p className="text-xs text-slate-500">
-                    As teacher, your score and feedback override any automated or draft evaluation.
+                    Write directly to the student in the first person ("I noticed...", "Here is how to correct this:").
                   </p>
                 </div>
               </div>
@@ -1017,13 +1013,13 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
             {/* Teacher Feedback Text */}
             <div className="space-y-1.5">
               <label className="text-xs font-bold uppercase tracking-wider text-slate-700 block">
-                Teacher Written Feedback & Corrections
+                Teacher Feedback & Scientific Corrections (First Person — "I / You")
               </label>
               <textarea
                 rows={3}
                 value={feedback}
                 onChange={(e) => setFeedback(e.target.value)}
-                placeholder="Write actionable comments, praise student reasoning, note corrections, or highlight ATL skill execution..."
+                placeholder='Write directly to the student in the first person pointing out errors briefly and to the point (e.g. "I reviewed your work. In Part 1, you correctly identified... however, I noticed an error where you wrote \"[quote]\". To write this scientifically correctly: [brief fix].")'
                 className="w-full p-3.5 rounded-2xl border border-slate-300 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
               />
             </div>
@@ -1033,13 +1029,13 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
               <div className="space-y-1.5">
                 <label className="text-xs font-bold uppercase tracking-wider text-emerald-800 block flex items-center gap-1">
                   <Check className="w-3.5 h-3.5 text-emerald-600" />
-                  Key Strengths (one per line)
+                  What You Did Well (one per line)
                 </label>
                 <textarea
                   rows={2}
                   value={strengthsText}
                   onChange={(e) => setStrengthsText(e.target.value)}
-                  placeholder="e.g. Precise scientific vocabulary&#10;Clear step-by-step logic"
+                  placeholder="e.g. I commend your precise use of scientific vocabulary&#10;Your quantitative calculations were accurate"
                   className="w-full p-3 rounded-xl border border-slate-300 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                 />
               </div>
@@ -1047,13 +1043,13 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
               <div className="space-y-1.5">
                 <label className="text-xs font-bold uppercase tracking-wider text-amber-800 block flex items-center gap-1">
                   <Target className="w-3.5 h-3.5 text-amber-600" />
-                  Target Next Steps (one per line)
+                  How to Write Scientifically Correctly (one correction per line)
                 </label>
                 <textarea
                   rows={2}
                   value={nextStepsText}
                   onChange={(e) => setNextStepsText(e.target.value)}
-                  placeholder="e.g. Connect evidence directly to hypothesis&#10;Justify assumptions with data"
+                  placeholder="e.g. I want you to replace 'energy' with 'ATP yield via oxidative phosphorylation'&#10;Correct your claim by citing specific units (mg/mL)"
                   className="w-full p-3 rounded-xl border border-slate-300 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-500"
                 />
               </div>

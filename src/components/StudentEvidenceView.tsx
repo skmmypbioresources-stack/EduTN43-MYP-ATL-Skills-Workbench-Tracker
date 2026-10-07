@@ -25,6 +25,7 @@ import { resolveFormativeScore, isTaskLogGraded, getTaskEffectiveScore } from '.
 import { calculateStudentMilestoneBadges } from '../lib/badgeUtils';
 import { compressImage } from '../utils/imageOptimizer';
 import { safeGetLocalStorageItem } from '../lib/safeStorage';
+import { formatTeacherComment } from '../lib/sanitizeTaskData';
 import { TaskDetailModal } from './TaskDetailModal';
 import { TeacherGradingModal } from './TeacherGradingModal';
 import { DigitalBadgesGallery } from './DigitalBadgesGallery';
@@ -686,7 +687,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
         feedback: {
           ...evaluationFeedback,
           formativeScore: undefined,
-          summary: `Work submitted for teacher review and grading. (AI Formative Guidance generated: ${evaluationFeedback.summary})`,
+          summary: evaluationFeedback.summary ? formatTeacherComment(evaluationFeedback.summary) : 'Work submitted for teacher review and grading.',
         },
         studentReflection: metacognitiveReflection || undefined,
         assignedTaskId: activeSolvingTask?.id,
@@ -1725,7 +1726,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                             )}
                             {(task.sourceType === 'chatgpt_custom' || task.task?.sourceType === 'chatgpt_custom') && (
                               <span className="rounded-md bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[10px] font-bold">
-                                ChatGPT / Teacher Task
+                                Teacher Assigned Task
                               </span>
                             )}
                             {((task.stimulusImages && task.stimulusImages.length > 0) || (task.task?.stimulusImages && task.task.stimulusImages.length > 0)) && (
@@ -2300,12 +2301,28 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                           </div>
                         </div>
 
-                        {/* Summary */}
-                        {log.feedback?.summary && (
-                          <p className="text-xs text-slate-700 bg-slate-50 p-3.5 rounded-2xl border border-slate-100 font-medium leading-relaxed">
-                            {log.feedback.summary}
-                          </p>
-                        )}
+                        {/* Teacher Written Feedback & Scientific Guidance */}
+                        {(log.teacherEvaluation?.feedback || log.feedback?.summary) && (() => {
+                          const comment = formatTeacherComment(log.teacherEvaluation?.feedback || log.feedback?.summary);
+                          if (!comment) return null;
+                          return (
+                            <div className="rounded-2xl border border-indigo-100 bg-indigo-50/40 p-3.5 space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-[11px] font-bold uppercase tracking-wider text-indigo-900">
+                                  Teacher Feedback & Scientific Corrections:
+                                </span>
+                                {log.teacherEvaluation?.gradedBy && (
+                                  <span className="text-[10px] text-indigo-600 font-semibold">
+                                    ({log.teacherEvaluation.gradedBy})
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-slate-800 font-medium leading-relaxed">
+                                {comment}
+                              </p>
+                            </div>
+                          );
+                        })()}
 
                         {/* Metacognitive Reflection if logged */}
                         {log.studentReflection && (
@@ -2387,29 +2404,29 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
 
                             {/* Strengths & Next Steps */}
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                              {log.feedback?.strengths && (
+                              {log.feedback?.strengths && log.feedback.strengths.length > 0 && (
                                 <div className="rounded-xl bg-emerald-50/60 border border-emerald-200 p-3 space-y-1">
                                   <span className="text-[10px] font-bold uppercase text-emerald-800 flex items-center gap-1">
                                     <Check className="h-3 w-3 text-emerald-600" />
-                                    <span>Key Strengths:</span>
+                                    <span>What You Did Well:</span>
                                   </span>
                                   <ul className="text-xs text-slate-700 space-y-1">
                                     {log.feedback.strengths.map((s, idx) => (
-                                      <li key={idx}>• {s}</li>
+                                      <li key={idx}>• {formatTeacherComment(s)}</li>
                                     ))}
                                   </ul>
                                 </div>
                               )}
 
-                              {log.feedback?.next_steps && (
+                              {log.feedback?.next_steps && log.feedback.next_steps.length > 0 && (
                                 <div className="rounded-xl bg-amber-50/60 border border-amber-200 p-3 space-y-1">
                                   <span className="text-[10px] font-bold uppercase text-amber-800 flex items-center gap-1">
                                     <Target className="h-3 w-3 text-amber-600" />
-                                    <span>Actionable Next Steps:</span>
+                                    <span>Identified Errors & Scientific Corrections:</span>
                                   </span>
                                   <ul className="text-xs text-slate-700 space-y-1">
                                     {log.feedback.next_steps.map((n, idx) => (
-                                      <li key={idx}>• {n}</li>
+                                      <li key={idx}>• {formatTeacherComment(n)}</li>
                                     ))}
                                   </ul>
                                 </div>

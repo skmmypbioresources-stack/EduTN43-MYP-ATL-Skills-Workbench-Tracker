@@ -10,6 +10,7 @@ import {
 } from '../types';
 import { buildATLSkillGuideAndIntro, generateStimulusImagesForTopic } from './scientificDatasetGenerator';
 import { isTaskLogGraded, getTaskEffectiveScore } from './scoreUtils';
+import { formatTeacherComment } from './sanitizeTaskData';
 
 export interface ReportData {
   studentName: string;
@@ -645,8 +646,8 @@ function generateReportHtml(data: ReportData): string {
 
         <!-- Diagnostic Summary -->
         <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-left: 4px solid #4f46e5; padding: 12px; border-radius: 6px; font-size: 9.5pt; margin-bottom: 16px; page-break-inside: avoid; break-inside: avoid;">
-          <strong style="color: #1e1b4b; display: block; margin-bottom: 3px; font-size: 9pt; text-transform: uppercase;">Teacher Diagnostic Commentary:</strong>
-          <span style="color: #334155; line-height: 1.5;">${sanitize(data.teacherEvaluation?.feedback || data.feedback.summary)}</span>
+          <strong style="color: #1e1b4b; display: block; margin-bottom: 3px; font-size: 9pt; text-transform: uppercase;">Teacher Feedback & Scientific Corrections:</strong>
+          <span style="color: #334155; line-height: 1.5;">${sanitize(formatTeacherComment(data.teacherEvaluation?.feedback || data.feedback.summary))}</span>
         </div>
 
         <!-- Strengths & Growth Targets -->
@@ -655,7 +656,7 @@ function generateReportHtml(data: ReportData): string {
             <td style="width: 50%; padding-right: 10px;">
               <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 10px 12px;">
                 <div style="font-weight: bold; color: #15803d; font-size: 9.5pt; margin-bottom: 6px; text-transform: uppercase;">
-                  ✓ Demonstrated Strengths (Citing Student Work):
+                  ✓ Demonstrated Strengths (What You Did Well):
                 </div>
                 <ul style="padding-left: 18px; margin: 0; font-size: 9pt; color: #14532d; line-height: 1.4;">
                   ${strengthsHtml}
@@ -665,7 +666,7 @@ function generateReportHtml(data: ReportData): string {
             <td style="width: 50%; padding-left: 10px;">
               <div style="background-color: #eef2ff; border: 1px solid #c7d2fe; border-radius: 6px; padding: 10px 12px;">
                 <div style="font-weight: bold; color: #4338ca; font-size: 9.5pt; margin-bottom: 6px; text-transform: uppercase;">
-                  → Actionable Next Steps & Mechanism Upgrades:
+                  → How to Write Scientifically Correctly (Errors & Fixes):
                 </div>
                 <ul style="padding-left: 18px; margin: 0; font-size: 9pt; color: #312e81; line-height: 1.4;">
                   ${nextStepsHtml}
@@ -1234,28 +1235,28 @@ export function generateStudentProgressReportHtml(params: StudentProgressReportP
         }
 
         <div style="font-size: 8.5pt; color: #1e293b; margin-bottom: 8px; line-height: 1.45;">
-          <strong>Teacher Diagnostic Summary:</strong><br/>
-          ${sanitize(log.feedback?.summary || log.teacherEvaluation?.feedback || 'Student completed scientific inquiry response.')}
+          <strong>Teacher Feedback & Scientific Corrections:</strong><br/>
+          ${sanitize(formatTeacherComment(log.feedback?.summary || log.teacherEvaluation?.feedback || 'Student completed scientific inquiry response.'))}
         </div>
 
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 8pt; margin-bottom: 8px;">
           <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 6px; padding: 8px 10px;">
-            <strong style="color: #166534; display: block; margin-bottom: 3px;">✓ Demonstrated Strengths:</strong>
+            <strong style="color: #166534; display: block; margin-bottom: 3px;">✓ Demonstrated Strengths (What You Did Well):</strong>
             ${
               strengths.length > 0
                 ? `<ul style="margin: 0; padding-left: 14px; color: #14532d; line-height: 1.35;">
-                    ${strengths.map((s) => `<li style="margin-bottom: 2px;">${sanitize(s)}</li>`).join('')}
+                    ${strengths.map((s) => `<li style="margin-bottom: 2px;">${sanitize(formatTeacherComment(s))}</li>`).join('')}
                   </ul>`
                 : '<span style="color: #15803d;">Demonstrated solid biological reasoning.</span>'
             }
           </div>
 
           <div style="background-color: #eef2ff; border: 1px solid #c7d2fe; border-radius: 6px; padding: 8px 10px;">
-            <strong style="color: #3730a3; display: block; margin-bottom: 3px;">→ Actionable Growth Targets:</strong>
+            <strong style="color: #3730a3; display: block; margin-bottom: 3px;">→ How to Write Scientifically Correctly (Errors & Fixes):</strong>
             ${
               nextSteps.length > 0
                 ? `<ul style="margin: 0; padding-left: 14px; color: #312e81; line-height: 1.35;">
-                    ${nextSteps.map((ns) => `<li style="margin-bottom: 2px;">${sanitize(ns)}</li>`).join('')}
+                    ${nextSteps.map((ns) => `<li style="margin-bottom: 2px;">${sanitize(formatTeacherComment(ns))}</li>`).join('')}
                   </ul>`
                 : '<span style="color: #4338ca;">Continue applying evidence-based justifications.</span>'
             }
