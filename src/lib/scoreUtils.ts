@@ -180,3 +180,16 @@ export function getTaskAiSuggestedLevel(log: Partial<ATLTaskLog> | null | undefi
   }
   return undefined;
 }
+
+/**
+ * Checks whether the teacher has officially graded AND released marks & corrections to the student.
+ * If pending review or unreleased draft, students are locked from viewing marks.
+ */
+export function isGradeReleasedToStudent(log: Partial<ATLTaskLog> | null | undefined): boolean {
+  if (!log) return false;
+  if (log.status === 'pending_review') return false;
+  if (log.isGradeReleased === true) return true;
+  if (log.isGradeReleased === false) return false;
+  // Fallback for previously graded tasks
+  return isTaskLogGraded(log);
+}

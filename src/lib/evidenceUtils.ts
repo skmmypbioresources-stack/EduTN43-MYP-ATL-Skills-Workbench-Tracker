@@ -352,6 +352,39 @@ export function computeCanonicalToken(canonicalName: string, studentId: string, 
 }
 
 /**
+ * Finds student by 4-digit Roll Number / Student ID from official and custom rosters
+ */
+export function findStudentByRollNumber(
+  rollNumber: string,
+  hintMypYear?: string
+): CanonicalStudentInfo | null {
+  if (!rollNumber) return null;
+  const cleanId = rollNumber.trim().replace(/\D/g, '');
+  if (cleanId.length < 3) return null;
+
+  // Search official roster
+  const foundOfficial = ALL_STUDENTS_ROSTER.find(
+    (s) => s.id === cleanId || s.id.replace(/\D/g, '') === cleanId
+  );
+  if (foundOfficial) {
+    return findCanonicalStudent(foundOfficial.name, foundOfficial.mypYear, cleanId);
+  }
+
+  // Search custom roster
+  const customList = getCustomStudents();
+  const foundCustom = customList.find(
+    (s) =>
+      (s.studentId && s.studentId.replace(/\D/g, '') === cleanId) ||
+      (s.id && s.id.replace(/\D/g, '') === cleanId)
+  );
+  if (foundCustom) {
+    return findCanonicalStudent(foundCustom.name, foundCustom.mypYear, cleanId);
+  }
+
+  return null;
+}
+
+/**
  * Finds or constructs the single canonical identity for any student reference.
  * Resolves short names ("Aarya"), full names ("AARYA SUDHIR BHOSLE"), IDs ("8547"),
  * and tokens ("aarya-sudhir-bhosle-...", "aarya-...") to the exact same canonical profile.
@@ -359,12 +392,31 @@ export function computeCanonicalToken(canonicalName: string, studentId: string, 
  */
 export function findCanonicalStudent(
   identifier: string,
-  hintMypYear?: string
+  hintMypYear?: string,
+  hintRollNumber?: string
 ): CanonicalStudentInfo {
+  // If a specific 4-digit roll number is provided, prioritize it to eliminate spelling errors
+  if (hintRollNumber && /^\d{3,5}$/.test(hintRollNumber.trim().replace(/\D/g, ''))) {
+    const cleanRoll = hintRollNumber.trim().replace(/\D/g, '');
+    const officialByRoll = ALL_STUDENTS_ROSTER.find((s) => s.id === cleanRoll);
+    if (officialByRoll) {
+      const canonYear = (officialByRoll.mypYear || hintMypYear || '2').replace(/\D/g, '') || '2';
+      return {
+        canonicalName: officialByRoll.name.trim(),
+        studentId: officialByRoll.id.trim(),
+        mypYear: canonYear,
+        classSection: officialByRoll.classSection || (canonYear === '2' ? 'MYP 2C' : `MYP ${canonYear}`),
+        subject: officialByRoll.subject || 'Science • Biology',
+        canonicalToken: computeCanonicalToken(officialByRoll.name.trim(), officialByRoll.id.trim(), canonYear),
+        aliases: [officialByRoll.name.toLowerCase(), officialByRoll.id, cleanRoll]
+      };
+    }
+  }
+
   const clean = (identifier || '').trim();
   const lower = clean.toLowerCase();
   const cleanYear = hintMypYear ? hintMypYear.replace(/\D/g, '') : '';
-  const cacheKey = `${lower}__${cleanYear}`;
+  const cacheKey = `${lower}__${cleanYear}__${hintRollNumber || ''}`;
 
   if (canonicalStudentMemoryCache.has(cacheKey)) {
     return canonicalStudentMemoryCache.get(cacheKey)!;
@@ -524,20 +576,30 @@ export function isSameStudent(
   identA: string,
   identB: string,
   yearA?: string,
-  yearB?: string
+  yearB?: string,
+  idA?: string,
+  idB?: string
 ): boolean {
+  if (idA && idB && idA.trim() && idB.trim()) {
+    const cleanIdA = idA.trim().replace(/\D/g, '');
+    const cleanIdB = idB.trim().replace(/\D/g, '');
+    if (cleanIdA.length >= 3 && cleanIdB.length >= 3 && cleanIdA === cleanIdB) {
+      return true;
+    }
+  }
+
   if (!identA || !identB) return false;
   const cleanA = identA.trim().toLowerCase();
   const cleanB = identB.trim().toLowerCase();
   if (cleanA === cleanB) return true;
 
   // Direct ID extraction (e.g. "8654" or "[8654]")
-  const matchIdA = cleanA.match(/\b\d{4}\b/)?.[0];
-  const matchIdB = cleanB.match(/\b\d{4}\b/)?.[0];
+  const matchIdA = cleanA.match(/\b\d{4}\b/)?.[0] || (idA ? idA.match(/\b\d{4}\b/)?.[0] : undefined);
+  const matchIdB = cleanB.match(/\b\d{4}\b/)?.[0] || (idB ? idB.match(/\b\d{4}\b/)?.[0] : undefined);
   if (matchIdA && matchIdB && matchIdA === matchIdB) return true;
 
-  const canonA = findCanonicalStudent(identA, yearA);
-  const canonB = findCanonicalStudent(identB, yearB);
+  const canonA = findCanonicalStudent(identA, yearA, idA);
+  const canonB = findCanonicalStudent(identB, yearB, idB);
 
   if (canonA.studentId && canonB.studentId && canonA.studentId === canonB.studentId) {
     return true;

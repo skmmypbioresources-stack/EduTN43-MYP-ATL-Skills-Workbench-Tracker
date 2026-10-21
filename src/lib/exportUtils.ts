@@ -6,7 +6,9 @@ import {
   ATLTaskLog,
   ATLCategoryKey,
   TaskImageAttachment,
-  TeacherEvaluation
+  TeacherEvaluation,
+  StudentRecord,
+  AssignedTask
 } from '../types';
 import { buildATLSkillGuideAndIntro, generateStimulusImagesForTopic } from './scientificDatasetGenerator';
 import { isTaskLogGraded, getTaskEffectiveScore } from './scoreUtils';
@@ -1852,5 +1854,1412 @@ export function printStudentProgressReport(params: StudentProgressReportParams):
     printWindow.print();
   }, 500);
 }
+
+/* ========================================================================== */
+/* CLASS RECORD & EVIDENCE PORTFOLIO EXPORT SYSTEM                            */
+/* ========================================================================== */
+
+export interface ClassRecordReportParams {
+  classKey: string; // '1' | '2' | '3' | '4' | '5' | 'All'
+  className: string; // e.g. 'MYP 1 (Grade 6 · Ages 11–12)'
+  academicYear: string;
+  term?: string;
+  subject?: string;
+  teacherName?: string;
+  schoolName?: string;
+  logs: ATLTaskLog[];
+  assignedTasks?: AssignedTask[];
+  classStudents?: StudentRecord[];
+  onlySubmittedStudents?: boolean; // When true, filters out students who have not completed any tasks
+  includeStudentAnswersAppendix?: boolean; // When true, places full student answers in a detachable Part II appendix
+}
+
+/**
+ * Generates an inline SVG vector line chart for Class Longitudinal ATL Growth Curve.
+ */
+function generateClassGrowthCurveSvg(
+  points: { label: string; score: number; date: string; taskTitle: string }[],
+  width = 720,
+  height = 220
+): string {
+  if (!points || points.length === 0) {
+    return `
+      <div style="background-color: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 8px; padding: 20px; text-align: center; color: #64748b; font-size: 9pt;">
+        No chronological formative score data logged yet for this class cohort.
+      </div>
+    `;
+  }
+
+  const padLeft = 45;
+  const padRight = 30;
+  const padTop = 25;
+  const padBottom = 40;
+  const chartW = width - padLeft - padRight;
+  const chartH = height - padTop - padBottom;
+
+  const yMax = 8;
+  const yMin = 0;
+
+  const getY = (val: number) => padTop + chartH - ((val - yMin) / (yMax - yMin)) * chartH;
+  const getX = (idx: number) => {
+    if (points.length === 1) return padLeft + chartW / 2;
+    return padLeft + (idx / (points.length - 1)) * chartW;
+  };
+
+  // Background benchmark bands
+  const yExt = getY(7);
+  const yApp = getY(4);
+  const yBase = getY(0);
+
+  const polyPoints = points.map((p, i) => `${getX(i).toFixed(1)},${getY(p.score).toFixed(1)}`).join(' ');
+  const areaPoints = `${getX(0).toFixed(1)},${yBase} ${polyPoints} ${getX(points.length - 1).toFixed(1)},${yBase}`;
+
+  const avgScore = points.reduce((acc, p) => acc + p.score, 0) / points.length;
+  const yAvg = getY(avgScore);
+
+  return `
+    <svg viewBox="0 0 ${width} ${height}" style="width: 100%; max-width: ${width}px; height: auto; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: block; margin: 0 auto; background: #ffffff; border-radius: 8px;">
+      <defs>
+        <linearGradient id="growthGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#4f46e5" stop-opacity="0.25"/>
+          <stop offset="100%" stop-color="#4f46e5" stop-opacity="0.02"/>
+        </linearGradient>
+      </defs>
+
+      <!-- Benchmark colored bands -->
+      <rect x="${padLeft}" y="${getY(8)}" width="${chartW}" height="${yExt - getY(8)}" fill="#ecfdf5" opacity="0.75" />
+      <rect x="${padLeft}" y="${yExt}" width="${chartW}" height="${yApp - yExt}" fill="#eef2ff" opacity="0.75" />
+      <rect x="${padLeft}" y="${yApp}" width="${chartW}" height="${yBase - yApp}" fill="#fffbeb" opacity="0.6" />
+
+      <!-- Horizontal gridlines and score labels -->
+      ${[2, 4, 6, 7, 8].map((s) => {
+        const y = getY(s);
+        return `
+          <line x1="${padLeft}" y1="${y}" x2="${padLeft + chartW}" y2="${y}" stroke="#cbd5e1" stroke-dasharray="${s === 7 ? '0' : '3,3'}" stroke-width="${s === 7 ? '1.5' : '1'}" />
+          <text x="${padLeft - 8}" y="${y + 3.5}" text-anchor="end" font-size="8.5" fill="#64748b" font-weight="bold">${s}</text>
+        `;
+      }).join('')}
+
+      <!-- Benchmark Zone Labels on Right -->
+      <text x="${padLeft + chartW - 6}" y="${getY(7.5) + 3}" text-anchor="end" font-size="7.5" font-weight="bold" fill="#059669">EXTENDING (7-8)</text>
+      <text x="${padLeft + chartW - 6}" y="${getY(5.5) + 3}" text-anchor="end" font-size="7.5" font-weight="bold" fill="#4338ca">APPLYING (4-6)</text>
+      <text x="${padLeft + chartW - 6}" y="${getY(2.5) + 3}" text-anchor="end" font-size="7.5" font-weight="bold" fill="#d97706">DEVELOPING (1-3)</text>
+
+      <!-- Cohort Average Dashed Line -->
+      <line x1="${padLeft}" y1="${yAvg}" x2="${padLeft + chartW}" y2="${yAvg}" stroke="#059669" stroke-width="1.8" stroke-dasharray="5,4" />
+      <text x="${padLeft + 8}" y="${yAvg - 4}" font-size="8" font-weight="bold" fill="#047857">Cohort Average: ${avgScore.toFixed(1)} / 8</text>
+
+      <!-- Shaded Area Under Curve -->
+      <polygon points="${areaPoints}" fill="url(#growthGrad)" />
+
+      <!-- Polyline Curve -->
+      <polyline points="${polyPoints}" fill="none" stroke="#4f46e5" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+
+      <!-- Points with Score Badges and Dates -->
+      ${points.map((p, i) => {
+        const cx = getX(i);
+        const cy = getY(p.score);
+        return `
+          <g>
+            <circle cx="${cx}" cy="${cy}" r="5" fill="#ffffff" stroke="#4338ca" stroke-width="2.5" />
+            <rect x="${cx - 15}" y="${cy - 20}" width="30" height="14" rx="4" fill="#1e1b4b" opacity="0.9" />
+            <text x="${cx}" y="${cy - 10}" text-anchor="middle" font-size="8" font-weight="bold" fill="#ffffff">${p.score.toFixed(1)}</text>
+            <text x="${cx}" y="${padTop + chartH + 16}" text-anchor="middle" font-size="8" fill="#334155" font-weight="600">${p.date ? p.date.substring(5) : `Task #${i + 1}`}</text>
+            <text x="${cx}" y="${padTop + chartH + 28}" text-anchor="middle" font-size="7" fill="#64748b">${p.label || `T${i + 1}`}</text>
+          </g>
+        `;
+      }).join('')}
+
+      <!-- Bottom X Axis Line -->
+      <line x1="${padLeft}" y1="${yBase}" x2="${padLeft + chartW}" y2="${yBase}" stroke="#94a3b8" stroke-width="1.5" />
+      <text x="${padLeft + chartW / 2}" y="${height - 4}" text-anchor="middle" font-size="8" font-weight="bold" fill="#64748b">Chronological Tasks & Inquiries Till Date</text>
+    </svg>
+  `;
+}
+
+/**
+ * Generates an inline SVG mini sparkline for an individual student in a table row.
+ */
+function generateStudentGrowthCurveMiniSvg(scores: number[], width = 110, height = 26): string {
+  if (!scores || scores.length === 0) return '<span style="color:#94a3b8;font-size:7.5pt;">—</span>';
+  if (scores.length === 1) {
+    return `<span style="font-weight:bold;color:#4f46e5;font-size:8.5pt;">${scores[0]} / 8</span>`;
+  }
+
+  const pad = 4;
+  const w = width - pad * 2;
+  const h = height - pad * 2;
+  const min = 1;
+  const max = 8;
+
+  const getY = (v: number) => pad + h - ((v - min) / (max - min)) * h;
+  const getX = (i: number) => pad + (i / (scores.length - 1)) * w;
+
+  const pointsStr = scores.map((s, i) => `${getX(i).toFixed(1)},${getY(s).toFixed(1)}`).join(' ');
+  const latestScore = scores[scores.length - 1];
+  const firstScore = scores[0];
+  const isUp = latestScore >= firstScore;
+  const strokeColor = isUp ? '#059669' : '#d97706';
+
+  return `
+    <svg viewBox="0 0 ${width} ${height}" style="width: ${width}px; height: ${height}px; vertical-align: middle; display: inline-block;">
+      <polyline points="${pointsStr}" fill="none" stroke="${strokeColor}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+      <circle cx="${getX(scores.length - 1).toFixed(1)}" cy="${getY(latestScore).toFixed(1)}" r="3" fill="${strokeColor}" />
+    </svg>
+  `;
+}
+
+/**
+ * Generates an inline SVG representation of a scientific dataset (Line / Bar graph).
+ */
+function generateScientificDatasetSvg(dataset: any, width = 680, height = 200): string {
+  if (!dataset) return '';
+  const dataPoints: Array<{ x: any; y: any; note?: string }> = dataset.data_points || dataset.data || [];
+  if (!Array.isArray(dataPoints) || dataPoints.length === 0) return '';
+
+  const padLeft = 50;
+  const padRight = 30;
+  const padTop = 20;
+  const padBottom = 35;
+  const chartW = width - padLeft - padRight;
+  const chartH = height - padTop - padBottom;
+
+  const numVals = dataPoints.map((d) => Number(d.y)).filter((n) => !isNaN(n));
+  if (numVals.length === 0) return '';
+
+  const minY = Math.min(0, Math.min(...numVals));
+  const maxY = Math.max(10, Math.max(...numVals) * 1.15);
+
+  const getY = (v: number) => padTop + chartH - ((v - minY) / (maxY - minY || 1)) * chartH;
+  const getX = (i: number) => {
+    if (dataPoints.length === 1) return padLeft + chartW / 2;
+    return padLeft + (i / (dataPoints.length - 1)) * chartW;
+  };
+
+  const pointsStr = dataPoints.map((d, i) => `${getX(i).toFixed(1)},${getY(Number(d.y)).toFixed(1)}`).join(' ');
+
+  return `
+    <div style="margin-top: 8px; margin-bottom: 12px; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; page-break-inside: avoid; break-inside: avoid;">
+      <div style="font-size: 8pt; font-weight: bold; text-transform: uppercase; color: #1e1b4b; margin-bottom: 6px;">
+        Scientific Graphical Representation: ${dataset.title || 'Experimental Dataset'}
+      </div>
+      <svg viewBox="0 0 ${width} ${height}" style="width: 100%; height: auto; max-height: 200px; font-family: sans-serif; display: block;">
+        <!-- Axes -->
+        <line x1="${padLeft}" y1="${padTop + chartH}" x2="${padLeft + chartW}" y2="${padTop + chartH}" stroke="#64748b" stroke-width="1.5" />
+        <line x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${padTop + chartH}" stroke="#64748b" stroke-width="1.5" />
+
+        <!-- Gridlines -->
+        ${[0, 0.25, 0.5, 0.75, 1].map((pct) => {
+          const val = minY + (maxY - minY) * pct;
+          const y = getY(val);
+          return `
+            <line x1="${padLeft}" y1="${y}" x2="${padLeft + chartW}" y2="${y}" stroke="#f1f5f9" stroke-width="1" />
+            <text x="${padLeft - 6}" y="${y + 3}" text-anchor="end" font-size="7.5" fill="#64748b">${val.toFixed(1)}</text>
+          `;
+        }).join('')}
+
+        <!-- Trend Line -->
+        <polyline points="${pointsStr}" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+
+        <!-- Points -->
+        ${dataPoints.map((d, i) => `
+          <circle cx="${getX(i)}" cy="${getY(Number(d.y))}" r="4" fill="#1d4ed8" stroke="#ffffff" stroke-width="1.5" />
+          <text x="${getX(i)}" y="${padTop + chartH + 14}" text-anchor="middle" font-size="7" fill="#475569">${String(d.x)}</text>
+        `).join('')}
+
+        <!-- Axis Labels -->
+        <text x="${padLeft + chartW / 2}" y="${height - 4}" text-anchor="middle" font-size="7.5" font-weight="bold" fill="#334155">${dataset.independent_variable || dataset.x_axis_label || 'Independent Variable (X)'}</text>
+        <text x="14" y="${padTop + chartH / 2}" text-anchor="middle" font-size="7.5" font-weight="bold" fill="#334155" transform="rotate(-90 14 ${padTop + chartH / 2})">${dataset.dependent_variable || dataset.y_axis_label || 'Dependent Variable (Y)'}</text>
+      </svg>
+    </div>
+  `;
+}
+
+/**
+ * Generates the complete, high-resolution Institutional Class Record & Evidence Portfolio HTML document.
+ * Includes:
+ * 1. Official IB Programme & Institutional Header
+ * 2. Class Longitudinal ATL Growth Curve & Attainment Analytics (till date)
+ * 3. Class Roster Growth Table with individual trajectory & initial-to-latest scores
+ * 4. Comprehensive Task Inquiries (ALL Questions visible, scenario, stimulus images, datasets & graphs)
+ * 5. Student-by-Student Submitted Work, CER Evidence, Teacher Evaluations, and Quoted Phrases
+ */
+export function generateClassRecordHtml(params: ClassRecordReportParams): string {
+  const sanitize = (text?: string | null) =>
+    text ? replaceExaminerWithTeacher(String(text)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;') : '';
+
+  const normalizeClassKey = (str?: string): string => {
+    if (!str) return 'All';
+    const s = str.trim().toLowerCase();
+    if (s.includes('1')) return '1';
+    if (s.includes('2')) return '2';
+    if (s.includes('3')) return '3';
+    if (s.includes('4')) return '4';
+    if (s.includes('5')) return '5';
+    return str;
+  };
+
+  const targetClassKey = params.classKey || 'All';
+
+  // Filter logs for this class and academic year
+  const classLogs = params.logs.filter((log) => {
+    if (params.academicYear && log.academicYear !== params.academicYear) return false;
+    if (targetClassKey !== 'All') {
+      const lk = normalizeClassKey(log.mypYear);
+      if (lk !== targetClassKey) return false;
+    }
+    return true;
+  });
+
+  // Sort logs chronologically
+  const sortedLogs = [...classLogs].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+
+  // Calculate cohort performance metrics
+  const gradedLogs = sortedLogs.filter(isTaskLogGraded);
+  const pendingLogs = sortedLogs.filter((l) => !isTaskLogGraded(l));
+
+  const validScores = gradedLogs
+    .map((l) => getTaskEffectiveScore(l))
+    .filter((s): s is number => typeof s === 'number');
+
+  const avgClassScore =
+    validScores.length > 0 ? (validScores.reduce((a, b) => a + b, 0) / validScores.length).toFixed(1) : '—';
+  const highestScore = validScores.length > 0 ? Math.max(...validScores) : null;
+  const lowestScore = validScores.length > 0 ? Math.min(...validScores) : null;
+
+  let extCount = 0;
+  let appCount = 0;
+  let devCount = 0;
+
+  gradedLogs.forEach((l) => {
+    const lvl = l.teacherEvaluation?.level || l.level || 'Applying';
+    if (lvl === 'Extending') extCount++;
+    else if (lvl === 'Developing') devCount++;
+    else appCount++;
+  });
+
+  const totalGraded = gradedLogs.length;
+  const extPct = totalGraded > 0 ? Math.round((extCount / totalGraded) * 100) : 0;
+  const appPct = totalGraded > 0 ? Math.round((appCount / totalGraded) * 100) : 0;
+  const devPct = totalGraded > 0 ? Math.round((devCount / totalGraded) * 100) : 0;
+
+  // Group logs by student to compute individual growth trajectories
+  const studentLogsMap: Record<string, ATLTaskLog[]> = {};
+  sortedLogs.forEach((l) => {
+    const name = (l.studentName || 'Anonymous').trim();
+    if (!studentLogsMap[name]) studentLogsMap[name] = [];
+    studentLogsMap[name].push(l);
+  });
+
+  // Filter students who have actually submitted / completed work
+  const onlyDone = params.onlySubmittedStudents !== false; // Default to true: ignore unsubmitted students
+  const submittedStudentNames = Object.keys(studentLogsMap)
+    .filter((name) => (studentLogsMap[name] || []).length > 0)
+    .sort((a, b) => a.localeCompare(b));
+
+  const activeStudentNames = onlyDone
+    ? submittedStudentNames
+    : Array.from(new Set([
+        ...(params.classStudents?.map((s) => s.name) || []),
+        ...submittedStudentNames
+      ])).sort((a, b) => a.localeCompare(b));
+
+  // Calculate Growth Curve points across chronological tasks
+  const taskGroupMap: Record<string, { date: string; title: string; scores: number[] }> = {};
+  sortedLogs.forEach((l) => {
+    const key = (l.taskTitle || l.topic || 'Task').trim();
+    if (!taskGroupMap[key]) {
+      taskGroupMap[key] = { date: l.date || '', title: key, scores: [] };
+    }
+    const sc = getTaskEffectiveScore(l);
+    if (typeof sc === 'number') {
+      taskGroupMap[key].scores.push(sc);
+    }
+  });
+
+  const growthCurvePoints: { label: string; score: number; date: string; taskTitle: string }[] = [];
+  Object.values(taskGroupMap).forEach((grp, idx) => {
+    if (grp.scores.length > 0) {
+      const avg = grp.scores.reduce((a, b) => a + b, 0) / grp.scores.length;
+      growthCurvePoints.push({
+        label: `Inquiry #${idx + 1}`,
+        score: Number(avg.toFixed(1)),
+        date: grp.date,
+        taskTitle: grp.title
+      });
+    }
+  });
+
+  // ATL Categories Attainment Breakdown
+  const ATL_CATEGORIES: { name: string; key: ATLCategoryKey }[] = [
+    { name: 'Thinking', key: 'Thinking' },
+    { name: 'Communication', key: 'Communication' },
+    { name: 'Social', key: 'Social' },
+    { name: 'Self-management', key: 'Self-management' },
+    { name: 'Research', key: 'Research' }
+  ];
+
+  const categoryMasteryRowsHtml = ATL_CATEGORIES.map((cat) => {
+    const catLogs = sortedLogs.filter((l) => (l.category || '').toLowerCase() === cat.key.toLowerCase());
+    const catScores = catLogs
+      .map((l) => getTaskEffectiveScore(l))
+      .filter((s): s is number => typeof s === 'number');
+    const catAvg = catScores.length > 0 ? (catScores.reduce((a, b) => a + b, 0) / catScores.length).toFixed(1) : '—';
+    const percentWidth = catScores.length > 0 ? Math.min(100, Math.round((Number(catAvg) / 8) * 100)) : 0;
+
+    return `
+      <tr>
+        <td style="padding: 7px 10px; border-bottom: 1px solid #e2e8f0; font-weight: bold; color: #1e1b4b;">
+          ${sanitize(cat.name)}
+        </td>
+        <td style="padding: 7px 10px; border-bottom: 1px solid #e2e8f0; text-align: center; color: #334155;">
+          ${catLogs.length} task${catLogs.length === 1 ? '' : 's'}
+        </td>
+        <td style="padding: 7px 10px; border-bottom: 1px solid #e2e8f0; text-align: center;">
+          ${catAvg !== '—' ? `<strong style="color: #1e1b4b; background: #f1f5f9; padding: 2px 6px; border-radius: 4px;">${catAvg}/8</strong>` : '<span style="color: #94a3b8;">Pending</span>'}
+        </td>
+        <td style="padding: 7px 10px; border-bottom: 1px solid #e2e8f0; width: 120px;">
+          <div style="background-color: #e2e8f0; border-radius: 3px; height: 8px; width: 100%; overflow: hidden;">
+            <div style="background-color: #4f46e5; height: 100%; width: ${percentWidth}%;"></div>
+          </div>
+          <div style="font-size: 7.5pt; color: #64748b; margin-top: 2px; text-align: right;">${percentWidth}% mastery</div>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  // Class Roster Growth Table Rows (Filtered by only active/submitted students)
+  const studentGrowthRowsHtml = activeStudentNames.map((stName, idx) => {
+    const stLogs = studentLogsMap[stName] || [];
+    const stOfficial = params.classStudents?.find((s) => s.name.toLowerCase() === stName.toLowerCase());
+    const rollNo = stOfficial?.id || (stLogs[0]?.studentRollNumber || stLogs[0]?.rollNumber || `ST-${100 + idx}`);
+    const stScores = stLogs
+      .map((l) => getTaskEffectiveScore(l))
+      .filter((s): s is number => typeof s === 'number');
+
+    const stAvg = stScores.length > 0 ? (stScores.reduce((a, b) => a + b, 0) / stScores.length).toFixed(1) : '—';
+    const firstScore = stScores.length > 0 ? stScores[0] : null;
+    const latestScore = stScores.length > 0 ? stScores[stScores.length - 1] : null;
+
+    let growthDeltaText = '—';
+    let growthColor = '#64748b';
+    if (firstScore !== null && latestScore !== null && stScores.length > 1) {
+      const diff = Number((latestScore - firstScore).toFixed(1));
+      if (diff > 0) {
+        growthDeltaText = `+${diff} pts ↑`;
+        growthColor = '#047857';
+      } else if (diff < 0) {
+        growthDeltaText = `${diff} pts ↓`;
+        growthColor = '#b45309';
+      } else {
+        growthDeltaText = `0.0 (Steady)`;
+        growthColor = '#4338ca';
+      }
+    }
+
+    const latestLevel =
+      stLogs.length > 0
+        ? (stLogs[stLogs.length - 1].teacherEvaluation?.level || stLogs[stLogs.length - 1].level || 'Applying')
+        : 'Pending';
+
+    const levelBadgeBg =
+      latestLevel === 'Extending' ? '#ecfdf5' : latestLevel === 'Applying' ? '#eef2ff' : '#fffbeb';
+    const levelBadgeColor =
+      latestLevel === 'Extending' ? '#047857' : latestLevel === 'Applying' ? '#4338ca' : '#b45309';
+
+    // Top cluster
+    const clusterCounts: Record<string, number> = {};
+    stLogs.forEach((l) => {
+      if (l.cluster) clusterCounts[l.cluster] = (clusterCounts[l.cluster] || 0) + 1;
+    });
+    const topCluster = Object.entries(clusterCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || 'Inquiry';
+
+    return `
+      <tr style="border-bottom: 1px solid #f1f5f9;">
+        <td style="padding: 6px 8px; font-size: 8pt; color: #64748b; font-weight: bold; width: 45px;">
+          #${idx + 1}
+        </td>
+        <td style="padding: 6px 8px; font-size: 8pt; color: #64748b; font-family: monospace; width: 60px;">
+          ${sanitize(rollNo)}
+        </td>
+        <td style="padding: 6px 8px; font-size: 8.5pt; font-weight: bold; color: #0f172a;">
+          ${sanitize(stName)}
+          ${stOfficial?.gender ? `<span style="font-size: 7pt; color: #94a3b8; font-weight: normal; margin-left: 4px;">(${sanitize(stOfficial.gender)})</span>` : ''}
+        </td>
+        <td style="padding: 6px 8px; font-size: 8pt; text-align: center; color: #334155;">
+          ${stLogs.length}
+        </td>
+        <td style="padding: 6px 8px; text-align: center;">
+          ${generateStudentGrowthCurveMiniSvg(stScores, 85, 22)}
+        </td>
+        <td style="padding: 6px 8px; font-size: 8pt; text-align: center;">
+          ${firstScore !== null && latestScore !== null ? `
+            <span style="color: #64748b;">${firstScore}</span> ➔ <strong style="color: #1e1b4b;">${latestScore}</strong>
+            <div style="font-size: 7pt; font-weight: bold; color: ${growthColor};">${growthDeltaText}</div>
+          ` : '<span style="color: #94a3b8;">—</span>'}
+        </td>
+        <td style="padding: 6px 8px; font-size: 9pt; text-align: center;">
+          ${stAvg !== '—' ? `<strong style="color: #1e1b4b; background: #eef2ff; padding: 2px 6px; border-radius: 4px;">${stAvg}</strong>` : '<span style="color: #94a3b8;">—</span>'}
+        </td>
+        <td style="padding: 6px 8px; text-align: center;">
+          <span style="font-size: 7.5pt; font-weight: bold; color: ${levelBadgeColor}; background-color: ${levelBadgeBg}; padding: 2px 6px; border-radius: 4px;">
+            ${sanitize(latestLevel)}
+          </span>
+        </td>
+        <td style="padding: 6px 8px; font-size: 8pt; color: #4338ca; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+          ${sanitize(topCluster)}
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  // Group unique tasks to render Official Question Papers with BIG Stimulus Images & Datasets
+  const uniqueTasksMap = new Map<string, { taskMeta: ATLTaskLog; submissions: ATLTaskLog[] }>();
+  sortedLogs.forEach((log) => {
+    const key = (log.assignedTaskId || log.taskTitle || log.topic).trim();
+    if (!uniqueTasksMap.has(key)) {
+      uniqueTasksMap.set(key, { taskMeta: log, submissions: [] });
+    }
+    uniqueTasksMap.get(key)!.submissions.push(log);
+  });
+
+  // PART I - SECTION 1: OFFICIAL QUESTIONS & ENLARGED STIMULUS MATERIAL
+  const questionsOnlyPortfolioHtml = Array.from(uniqueTasksMap.entries()).map(([taskKey, taskData], taskIdx) => {
+    const baseLog = taskData.taskMeta;
+    const taskSubmissions = taskData.submissions;
+    const originalTask = baseLog.originalTask;
+
+    // Resolve Questions/Prompts
+    const questionParts =
+      originalTask?.parts && originalTask.parts.length > 0
+        ? originalTask.parts
+        : baseLog.responses && baseLog.responses.length > 0
+        ? baseLog.responses.map((r, i) => ({
+            label: r.label || String.fromCharCode(65 + i),
+            prompt: r.prompt || `Part ${r.label || String.fromCharCode(65 + i)}`,
+            criterion_assessed: (baseLog.criteria && baseLog.criteria[0]) || 'Criterion A'
+          }))
+        : [
+            { label: 'A', prompt: `Analyse the core biological mechanisms and principles governing ${baseLog.topic}.`, criterion_assessed: 'Criterion A' },
+            { label: 'B', prompt: `Evaluate empirical scientific data, identifying patterns, correlations, and anomalies.`, criterion_assessed: 'Criterion C' },
+            { label: 'C', prompt: `Construct a justified scientific claim supported by mechanistic evidence and scientific reasoning.`, criterion_assessed: 'Criterion C' }
+          ];
+
+    // Resolve Stimulus Images (Now rendered significantly larger for clear visibility)
+    const taskStimulusImages =
+      (baseLog.stimulusImages && baseLog.stimulusImages.length > 0)
+        ? baseLog.stimulusImages
+        : (originalTask?.stimulusImages && originalTask.stimulusImages.length > 0)
+        ? originalTask.stimulusImages
+        : generateStimulusImagesForTopic(baseLog.topic, baseLog.subject);
+
+    // Pedagogical Guide
+    const derivedPedagogy = buildATLSkillGuideAndIntro(
+      baseLog.cluster || 'Critical thinking',
+      baseLog.category || 'Thinking',
+      baseLog.topic,
+      baseLog.criteria?.[0] || 'Criterion C',
+      baseLog.subject
+    );
+    const resolvedIntro = baseLog.atlPedagogicalIntro || originalTask?.atlPedagogicalIntro || derivedPedagogy.atlPedagogicalIntro;
+    const resolvedGuide = baseLog.atl_skill_guide || originalTask?.atl_skill_guide || derivedPedagogy.atl_skill_guide;
+
+    // Scientific Dataset
+    const dataset: any = originalTask?.scientific_dataset;
+
+    return `
+      <div style="margin-top: 18px; margin-bottom: 24px; border: 2px solid #cbd5e1; border-radius: 10px; background-color: #ffffff; padding: 18px; page-break-inside: avoid; break-inside: avoid;">
+        <!-- Task Header Banner -->
+        <div style="border-bottom: 2px solid #4f46e5; padding-bottom: 10px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: flex-start;">
+          <div>
+            <div style="font-size: 8pt; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px; color: #4338ca;">
+              Inquiry Task #${taskIdx + 1} • ${sanitize(baseLog.academicYear)} (${sanitize(baseLog.term || 'Academic Term')})
+            </div>
+            <h2 style="font-size: 15pt; font-weight: 800; color: #1e1b4b; margin: 3px 0 2px 0;">
+              ${sanitize(baseLog.taskTitle || 'Scientific Inquiry Task')}
+            </h2>
+            <div style="font-size: 9.5pt; color: #475569;">
+              Subject: <strong>${sanitize(baseLog.subject)}</strong> (MYP ${sanitize(baseLog.mypYear)}) • Curriculum Topic: <strong>${sanitize(baseLog.topic)}</strong>
+            </div>
+          </div>
+          <div style="text-align: right; background-color: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 6px; padding: 6px 12px;">
+            <div style="font-size: 7.5pt; font-weight: bold; text-transform: uppercase; color: #6d28d9;">Submissions Recorded</div>
+            <div style="font-size: 12pt; font-weight: 800; color: #4338ca;">${taskSubmissions.length} Students Completed</div>
+          </div>
+        </div>
+
+        <!-- Task Metadata Strip -->
+        <div style="display: flex; flex-wrap: wrap; gap: 12px; font-size: 8.5pt; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 12px; margin-bottom: 12px;">
+          <div><strong>ATL Focus:</strong> <span style="color: #4338ca; font-weight: bold;">${sanitize(baseLog.cluster)}</span> (${sanitize(baseLog.category)})</div>
+          ${baseLog.criteria && baseLog.criteria.length > 0 ? `<div><strong>Target Criteria:</strong> ${sanitize(baseLog.criteria.join(', '))}</div>` : ''}
+          ${baseLog.strands && baseLog.strands.length > 0 ? `<div><strong>Strands:</strong> ${sanitize(baseLog.strands.join(' • '))}</div>` : ''}
+          <div><strong>Due Date:</strong> ${baseLog.dueDate ? sanitize(baseLog.dueDate) : 'Open Task Window'}</div>
+        </div>
+
+        <!-- Pedagogical Focus Box -->
+        ${resolvedIntro ? `
+          <div style="background-color: #f5f3ff; border: 1px solid #ddd6fe; border-left: 3.5px solid #7c3aed; border-radius: 6px; padding: 10px 12px; font-size: 8.5pt; margin-bottom: 12px;">
+            <strong style="color: #6d28d9; text-transform: uppercase; font-size: 8pt; display: block; margin-bottom: 2px;">
+              Targeted ATL Pedagogical Rationale & Skill Model:
+            </strong>
+            <div style="color: #312e81; line-height: 1.45;">${sanitize(resolvedIntro)}</div>
+            ${resolvedGuide ? `
+              <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 8px; padding-top: 6px; border-top: 1px dashed #ddd6fe; font-size: 8pt;">
+                <div><strong style="color: #6d28d9;">1. What Student Is Doing:</strong> ${sanitize(resolvedGuide.what_you_are_doing)}</div>
+                <div><strong style="color: #6d28d9;">2. How Tested (CER):</strong> ${sanitize(resolvedGuide.how_it_is_tested)}</div>
+                <div><strong style="color: #6d28d9;">3. What Is Developed:</strong> ${sanitize(resolvedGuide.what_is_being_developed)}</div>
+              </div>
+            ` : ''}
+          </div>
+        ` : ''}
+
+        <!-- Inquiry Scenario & Context -->
+        ${(baseLog.originalTask?.context || (baseLog as any).context) ? `
+          <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; border-left: 3.5px solid #0284c7; border-radius: 6px; padding: 10px 14px; font-size: 9pt; margin-bottom: 14px;">
+            <strong style="color: #0369a1; text-transform: uppercase; font-size: 8pt; display: block; margin-bottom: 3px;">
+              Inquiry Scenario & Scientific Background Context:
+            </strong>
+            <div style="color: #1e293b; line-height: 1.5;">
+              ${sanitize(baseLog.originalTask?.context || (baseLog as any).context)}
+            </div>
+          </div>
+        ` : ''}
+
+        <!-- Attached Stimulus Images & Scientific Diagrams (SIGNIFICANTLY LARGER & CLEARLY VISIBLE) -->
+        ${taskStimulusImages && taskStimulusImages.length > 0 ? `
+          <div style="margin-bottom: 16px; page-break-inside: avoid; break-inside: avoid;">
+            <div style="font-size: 9pt; font-weight: 800; text-transform: uppercase; letter-spacing: 0.6px; color: #312e81; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+              <span>🔬 Question Stimulus Material & Scientific Diagrams (${taskStimulusImages.length}):</span>
+              <span style="font-size: 7.5pt; color: #4338ca; font-weight: 600; text-transform: none;">Referenced in inquiry questions below</span>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 14px;">
+              ${taskStimulusImages.map((img, i) => `
+                <div style="background-color: #ffffff; border: 2px solid #cbd5e1; border-radius: 8px; padding: 12px; page-break-inside: avoid; break-inside: avoid; box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                  <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; padding-bottom: 6px; margin-bottom: 10px;">
+                    <div style="font-size: 9pt; font-weight: bold; color: #0f172a;">
+                      Figure ${i + 1}: ${sanitize(img.name || img.caption || 'Scientific Stimulus Diagram')}
+                    </div>
+                    <span style="font-size: 7pt; font-weight: bold; background: #e0e7ff; color: #3730a3; padding: 2px 7px; border-radius: 4px; text-transform: uppercase;">
+                      Question Visual Stimulus
+                    </span>
+                  </div>
+                  <div style="padding: 8px; background-color: #f8fafc; border-radius: 6px; border: 1px solid #f1f5f9; display: flex; justify-content: center; align-items: center;">
+                    <img 
+                      src="${img.url}" 
+                      alt="${sanitize(img.caption || 'Scientific Stimulus Diagram')}" 
+                      style="max-height: 440px; width: auto; max-width: 100%; object-fit: contain; border-radius: 4px; display: block; margin: 0 auto;" 
+                    />
+                  </div>
+                  ${img.caption ? `
+                    <div style="font-size: 8.5pt; color: #334155; margin-top: 8px; text-align: left; background: #f8fafc; padding: 8px 12px; border-radius: 4px; border-left: 3px solid #6366f1; line-height: 1.45;">
+                      <strong>Caption & Observational Context:</strong> ${sanitize(img.caption)}
+                    </div>
+                  ` : ''}
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
+
+        <!-- Scientific Dataset Stimulus & Graphical Plot (Visible & Rendered) -->
+        ${dataset ? `
+          <div style="margin-bottom: 16px; background-color: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 12px; page-break-inside: avoid; break-inside: avoid;">
+            <div style="font-size: 8.5pt; font-weight: bold; text-transform: uppercase; color: #0f172a; margin-bottom: 4px;">
+              Scientific Empirical Dataset Stimulus: ${sanitize(dataset.title || 'Experimental Observations')}
+            </div>
+            <div style="font-size: 8pt; color: #64748b; margin-bottom: 6px;">
+              Independent Variable: <strong>${sanitize(dataset.independent_variable || dataset.x_axis_label || 'X')}</strong> • Dependent Variable: <strong>${sanitize(dataset.dependent_variable || dataset.y_axis_label || 'Y')}</strong>
+            </div>
+
+            <!-- SVG Graph of Dataset -->
+            ${generateScientificDatasetSvg(dataset, 720, 190)}
+
+            <!-- Data Table -->
+            ${dataset.data_points && dataset.data_points.length > 0 ? `
+              <table style="width: 100%; border-collapse: collapse; font-size: 8pt; background: #ffffff; margin-top: 8px;">
+                <thead>
+                  <tr style="background-color: #f1f5f9; border-bottom: 1px solid #cbd5e1;">
+                    <th style="padding: 5px 8px; text-align: left; border: 1px solid #e2e8f0;">${sanitize(dataset.independent_variable || 'X')}</th>
+                    <th style="padding: 5px 8px; text-align: left; border: 1px solid #e2e8f0;">${sanitize(dataset.dependent_variable || 'Y')}</th>
+                    <th style="padding: 5px 8px; text-align: left; border: 1px solid #e2e8f0;">Observation Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${dataset.data_points.slice(0, 8).map((dp: any) => `
+                    <tr style="border-bottom: 1px solid #e2e8f0;">
+                      <td style="padding: 4px 8px; border: 1px solid #e2e8f0; font-weight: bold;">${sanitize(String(dp.x))}</td>
+                      <td style="padding: 4px 8px; border: 1px solid #e2e8f0;">${sanitize(String(dp.y))}</td>
+                      <td style="padding: 4px 8px; border: 1px solid #e2e8f0; color: #64748b;">${sanitize(dp.note || '—')}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            ` : ''}
+          </div>
+        ` : ''}
+
+        <!-- Official Question Paper Prompts (All Questions Clearly Visible) -->
+        <div style="background-color: #f1f5f9; border: 1.5px solid #cbd5e1; border-radius: 6px; padding: 12px; margin-bottom: 6px; page-break-inside: avoid; break-inside: avoid;">
+          <div style="font-size: 9pt; font-weight: bold; text-transform: uppercase; color: #1e1b4b; margin-bottom: 8px;">
+            Inquiry Questions Assigned to Students (${questionParts.length} Parts):
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 8px;">
+            ${questionParts.map((qp: any, qIdx: number) => `
+              <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 4px; padding: 10px 12px; font-size: 9pt;">
+                <div style="font-weight: bold; color: #1e1b4b; margin-bottom: 3px; line-height: 1.4;">
+                  <span style="display: inline-block; background-color: #4f46e5; color: #ffffff; font-size: 8pt; font-weight: bold; padding: 2px 7px; border-radius: 3px; margin-right: 6px; text-transform: uppercase;">
+                    Part ${sanitize(qp.label || String.fromCharCode(65 + qIdx))}
+                  </span>
+                  ${sanitize(qp.prompt)}
+                </div>
+                ${qp.criterion_assessed ? `
+                  <div style="font-size: 8pt; color: #64748b; margin-top: 3px;">Assessing Criterion: <strong style="color: #4338ca;">${sanitize(qp.criterion_assessed)}</strong></div>
+                ` : ''}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // PART I - SECTION 3: CONSOLIDATED STUDENT REFLECTIONS & METACOGNITIVE GROWTH (In First Few Pages)
+  const studentReflectionsList: { studentName: string; taskTitle: string; reflection: string; date?: string; score?: number | null }[] = [];
+  activeStudentNames.forEach((stName) => {
+    const stLogs = studentLogsMap[stName] || [];
+    stLogs.forEach((l) => {
+      const ref = (l.studentReflection || l.metacognitiveReflection || '').trim();
+      if (ref) {
+        studentReflectionsList.push({
+          studentName: stName,
+          taskTitle: l.taskTitle || l.topic || 'Inquiry Task',
+          reflection: ref,
+          date: l.date,
+          score: getTaskEffectiveScore(l)
+        });
+      }
+    });
+  });
+
+  const consolidatedReflectionsHtml = studentReflectionsList.length > 0 ? `
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      ${studentReflectionsList.map((sr) => `
+        <div style="background-color: #fdf4ff; border: 1px solid #f5d0fe; border-left: 3.5px solid #c026d3; border-radius: 6px; padding: 8px 12px; font-size: 8.5pt; page-break-inside: avoid; break-inside: avoid;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 3px;">
+            <strong style="color: #86198f; font-size: 9pt;">${sanitize(sr.studentName)}</strong>
+            <span style="font-size: 7.5pt; color: #a21caf;">${sanitize(sr.taskTitle)} ${sr.date ? `(${sanitize(sr.date)})` : ''}</span>
+          </div>
+          <div style="color: #4a044e; font-style: italic; line-height: 1.4;">
+            "${sanitize(sr.reflection)}"
+          </div>
+        </div>
+      `).join('')}
+    </div>
+  ` : `
+    <div style="background-color: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 6px; padding: 14px; text-align: center; color: #64748b; font-size: 8.5pt;">
+      Student reflective statements logged during task completion will appear here.
+    </div>
+  `;
+
+  // PART II: DETAILED STUDENT WRITTEN ANSWERS & CER EVIDENCE (Detachable Appendix at End)
+  const includeAppendix = params.includeStudentAnswersAppendix !== false;
+
+  const detailedAnswersAppendixHtml = includeAppendix ? Array.from(uniqueTasksMap.entries()).map(([taskKey, taskData], taskIdx) => {
+    const baseLog = taskData.taskMeta;
+    // Filter submissions to only students who have done/completed work
+    const taskSubmissions = taskData.submissions.filter((s) => {
+      if (!onlyDone) return true;
+      return (s.studentName && activeStudentNames.includes(s.studentName.trim()));
+    });
+
+    if (taskSubmissions.length === 0) return '';
+
+    return `
+      <div style="margin-top: 20px; margin-bottom: 24px; border: 1.5px solid #cbd5e1; border-radius: 8px; background-color: #ffffff; padding: 14px; page-break-inside: avoid; break-inside: avoid;">
+        <div style="border-bottom: 1.5px solid #4f46e5; padding-bottom: 6px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <div style="font-size: 8pt; font-weight: bold; text-transform: uppercase; color: #4338ca;">Task #${taskIdx + 1} Answers</div>
+            <strong style="font-size: 11pt; color: #1e1b4b;">${sanitize(baseLog.taskTitle || baseLog.topic)}</strong>
+          </div>
+          <span style="font-size: 8pt; color: #64748b;">${taskSubmissions.length} Student Responses</span>
+        </div>
+
+        ${taskSubmissions.map((sub) => {
+          const subScore = getTaskEffectiveScore(sub);
+          const isGraded = isTaskLogGraded(sub);
+          const subLevel = sub.teacherEvaluation?.level || sub.level || 'Applying';
+          const strengths = sub.feedback?.strengths || sub.teacherEvaluation?.strengths || [];
+          const nextSteps = sub.feedback?.next_steps || sub.teacherEvaluation?.nextSteps || [];
+          const studentAttachments = sub.studentAttachments || sub.responses?.flatMap((r) => r.attachments || []) || [];
+
+          const levelColor = subLevel === 'Extending' ? '#047857' : subLevel === 'Applying' ? '#4338ca' : '#b45309';
+          const levelBg = subLevel === 'Extending' ? '#ecfdf5' : subLevel === 'Applying' ? '#eef2ff' : '#fffbeb';
+
+          return `
+            <div style="margin-bottom: 14px; border: 1px solid #e2e8f0; border-radius: 6px; background-color: #ffffff; padding: 10px; page-break-inside: avoid; break-inside: avoid;">
+              <!-- Student Header -->
+              <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f1f5f9; padding-bottom: 6px; margin-bottom: 6px;">
+                <div>
+                  <strong style="font-size: 9.5pt; color: #0f172a;">${sanitize(sub.studentName)}</strong>
+                  <span style="font-size: 8pt; color: #64748b; margin-left: 6px;">
+                    ${sub.studentRollNumber || sub.rollNumber ? `ID: #${sanitize(sub.studentRollNumber || sub.rollNumber)} • ` : ''}
+                    Submitted: ${sanitize(sub.date || 'N/A')}
+                  </span>
+                </div>
+                <div style="text-align: right;">
+                  ${isGraded && typeof subScore === 'number' ? `
+                    <span style="font-size: 11pt; font-weight: 800; color: #1e1b4b; margin-right: 6px;">${subScore} / 8</span>
+                    <span style="font-size: 7.5pt; font-weight: bold; color: ${levelColor}; background-color: ${levelBg}; padding: 2px 7px; border-radius: 4px;">
+                      ${sanitize(subLevel)}
+                    </span>
+                  ` : `
+                    <span style="font-size: 7.5pt; font-weight: bold; color: #b45309; background-color: #fffbeb; padding: 2px 6px; border-radius: 4px;">
+                      Pending Grading
+                    </span>
+                  `}
+                </div>
+              </div>
+
+              <!-- Student Responses to Questions -->
+              <div style="font-size: 8pt; color: #334155; margin-bottom: 8px;">
+                <strong style="color: #475569; display: block; margin-bottom: 4px; text-transform: uppercase; font-size: 7.5pt;">Student Written Responses:</strong>
+                ${(sub.responses && sub.responses.length > 0) ? sub.responses.map((r, rIdx) => {
+                  const hasCer = r.claim || r.evidence || r.reasoning;
+                  return `
+                    <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 6px 8px; margin-bottom: 4px;">
+                      <div style="font-weight: bold; color: #1e1b4b; margin-bottom: 2px;">
+                        Part ${sanitize(r.label || String.fromCharCode(65 + rIdx))}: ${sanitize(r.prompt)}
+                      </div>
+                      ${hasCer ? `
+                        <div style="display: flex; flex-direction: column; gap: 3px; margin-top: 3px;">
+                          ${r.claim ? `<div style="background: #eff6ff; padding: 3px 6px; border-left: 2px solid #3b82f6; border-radius: 2px;"><strong style="color: #1e40af;">Claim:</strong> ${sanitize(r.claim)}</div>` : ''}
+                          ${r.evidence ? `<div style="background: #ecfdf5; padding: 3px 6px; border-left: 2px solid #10b981; border-radius: 2px;"><strong style="color: #065f46;">Evidence:</strong> ${sanitize(r.evidence)}</div>` : ''}
+                          ${r.reasoning ? `<div style="background: #faf5ff; padding: 3px 6px; border-left: 2px solid #8b5cf6; border-radius: 2px;"><strong style="color: #5b21b6;">Reasoning:</strong> ${sanitize(r.reasoning)}</div>` : ''}
+                        </div>
+                      ` : `
+                        <div style="background: #ffffff; padding: 4px 6px; border-radius: 3px; border: 1px solid #f1f5f9; color: #1e293b;">
+                          ${r.response ? sanitize(r.response) : '<em style="color: #94a3b8;">(Left blank)</em>'}
+                        </div>
+                      `}
+                      ${r.attachments && r.attachments.length > 0 ? `
+                        <div style="margin-top: 4px; display: flex; gap: 6px;">
+                          ${r.attachments.map((att) => `
+                            <img src="${att.url}" alt="${sanitize(att.caption || 'Student diagram')}" style="max-height: 80px; max-width: 110px; object-fit: contain; border-radius: 3px; border: 1px solid #cbd5e1;" />
+                          `).join('')}
+                        </div>
+                      ` : ''}
+                    </div>
+                  `;
+                }).join('') : `
+                  <div style="background: #ffffff; padding: 4px 6px; border-radius: 3px; border: 1px solid #f1f5f9; color: #1e293b;">
+                    ${sub.studentResponse ? sanitize(sub.studentResponse) : '<em style="color: #94a3b8;">(No response text recorded)</em>'}
+                  </div>
+                `}
+              </div>
+
+              <!-- Student Work Attachments -->
+              ${studentAttachments && studentAttachments.length > 0 ? `
+                <div style="margin-bottom: 6px; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 6px;">
+                  <div style="font-size: 7.5pt; font-weight: bold; text-transform: uppercase; color: #047857; margin-bottom: 4px;">
+                    Student Attached Diagrams & Evidence (${studentAttachments.length}):
+                  </div>
+                  <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                    ${studentAttachments.map((img) => `
+                      <img src="${img.url}" alt="${sanitize(img.caption || 'Artifact')}" style="max-height: 85px; max-width: 120px; object-fit: contain; border-radius: 3px; border: 1px solid #cbd5e1;" />
+                    `).join('')}
+                  </div>
+                </div>
+              ` : ''}
+
+              <!-- Evaluated Words Quoted From Answer -->
+              ${sub.feedback ? renderEvaluatedWordsHtml(sub.feedback, sanitize) : ''}
+
+              <!-- Teacher Feedback & Corrections -->
+              <div style="font-size: 8pt; color: #334155; margin-bottom: 6px; background-color: #f8fafc; border-left: 3px solid #4f46e5; padding: 6px 8px; border-radius: 3px;">
+                <strong style="color: #1e1b4b; text-transform: uppercase; font-size: 7.5pt; display: block;">Teacher Feedback & Scientific Corrections:</strong>
+                ${sanitize(formatTeacherComment(sub.teacherEvaluation?.feedback || sub.feedback?.summary || 'Task completed and verified against criterion rubrics.'))}
+              </div>
+
+              <!-- Strengths & Growth Areas Grid -->
+              ${(strengths.length > 0 || nextSteps.length > 0) ? `
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 7.5pt;">
+                  <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 4px; padding: 6px 8px;">
+                    <strong style="color: #166534; display: block; margin-bottom: 2px;">✓ Strengths (What Was Done Well):</strong>
+                    <ul style="margin: 0; padding-left: 12px; color: #14532d; line-height: 1.3;">
+                      ${strengths.slice(0, 3).map((s) => `<li>${sanitize(formatTeacherComment(s))}</li>`).join('')}
+                    </ul>
+                  </div>
+                  <div style="background-color: #eef2ff; border: 1px solid #c7d2fe; border-radius: 4px; padding: 6px 8px;">
+                    <strong style="color: #3730a3; display: block; margin-bottom: 2px;">→ Errors & Scientific Fixes:</strong>
+                    <ul style="margin: 0; padding-left: 12px; color: #312e81; line-height: 1.3;">
+                      ${nextSteps.slice(0, 3).map((ns) => `<li>${sanitize(formatTeacherComment(ns))}</li>`).join('')}
+                    </ul>
+                  </div>
+                </div>
+              ` : ''}
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }).join('') : '';
+
+  const reportDate = new Date().toLocaleDateString('en-US', {
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric'
+  });
+
+  return `
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <title>IB MYP ATL Class Record & Submission Portfolio - ${sanitize(params.className)}</title>
+      <style>
+        * {
+          box-sizing: border-box;
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+        }
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+          color: #0f172a;
+          background-color: #ffffff;
+          margin: 0;
+          padding: 24px;
+          line-height: 1.45;
+          font-size: 9pt;
+        }
+        @media print {
+          @page {
+            size: A4 portrait;
+            margin: 8mm 8mm 8mm 8mm;
+          }
+          body {
+            padding: 0;
+          }
+        }
+        .page-break-avoid {
+          page-break-inside: avoid;
+          break-inside: avoid;
+        }
+        .page-break-before {
+          page-break-before: always;
+          break-before: page;
+        }
+        .header-banner {
+          border-bottom: 3px solid #4f46e5;
+          padding-bottom: 12px;
+          margin-bottom: 16px;
+        }
+        .institution-title {
+          font-size: 8pt;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 1.2px;
+          color: #4338ca;
+        }
+        .report-title {
+          font-size: 18pt;
+          font-weight: 900;
+          color: #1e1b4b;
+          letter-spacing: -0.5px;
+          margin: 4px 0 2px 0;
+        }
+        .report-subtitle {
+          font-size: 9.5pt;
+          color: #475569;
+          font-weight: 500;
+        }
+        .meta-grid {
+          display: grid;
+          grid-template-columns: 1.2fr 1fr;
+          gap: 12px;
+          background-color: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          padding: 10px 14px;
+          margin-bottom: 16px;
+        }
+        .kpi-container {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 10px;
+          margin-bottom: 16px;
+        }
+        .kpi-card {
+          background-color: #f8fafc;
+          border: 1px solid #e2e8f0;
+          border-radius: 8px;
+          padding: 10px;
+          text-align: center;
+        }
+        .kpi-label {
+          font-size: 7.5pt;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          color: #64748b;
+          margin-bottom: 4px;
+        }
+        .kpi-value {
+          font-size: 15pt;
+          font-weight: 900;
+          color: #1e1b4b;
+        }
+        .kpi-sub {
+          font-size: 7.5pt;
+          color: #475569;
+          margin-top: 2px;
+          font-weight: 500;
+        }
+        .section-header {
+          font-size: 10.5pt;
+          font-weight: 800;
+          color: #1e1b4b;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          border-bottom: 2px solid #e2e8f0;
+          padding-bottom: 4px;
+          margin: 18px 0 10px 0;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+        table.standard-table {
+          width: 100%;
+          border-collapse: collapse;
+          margin-bottom: 14px;
+          font-size: 8pt;
+        }
+        table.standard-table th {
+          background-color: #f1f5f9;
+          color: #475569;
+          font-weight: 700;
+          text-transform: uppercase;
+          font-size: 7pt;
+          letter-spacing: 0.5px;
+          padding: 6px 8px;
+          border-bottom: 1px solid #cbd5e1;
+          text-align: left;
+        }
+        .signoff-section {
+          margin-top: 24px;
+          border-top: 1px solid #cbd5e1;
+          padding-top: 14px;
+          display: grid;
+          grid-template-columns: 1fr 1fr 1fr;
+          gap: 16px;
+          font-size: 8.5pt;
+        }
+        .coordinator-cut-notice {
+          margin-top: 18px;
+          background-color: #eef2ff;
+          border: 1.5px dashed #6366f1;
+          border-radius: 8px;
+          padding: 10px 14px;
+          font-size: 8pt;
+          color: #312e81;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+      </style>
+    </head>
+    <body>
+      <div style="max-width: 820px; margin: 0 auto;">
+        <!-- ================================================================= -->
+        <!-- PART I: COORDINATOR & CURRICULUM DOSSIER (FIRST FEW PAGES)       -->
+        <!-- ================================================================= -->
+
+        <!-- Header Banner -->
+        <div class="header-banner">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <div>
+              <div class="institution-title">
+                ${sanitize(params.schoolName || 'International Baccalaureate (IB) World School')} • Middle Years Programme (MYP)
+              </div>
+              <h1 class="report-title">Class ATL Submission Record & Dossier</h1>
+              <div class="report-subtitle">
+                Part I: Official Inquiry Questions, Growth Curves, Attainment Levels & Student Reflections
+              </div>
+            </div>
+            <div style="text-align: right; background-color: #eef2ff; border: 1px solid #c7d2fe; border-radius: 6px; padding: 6px 12px;">
+              <div style="font-size: 7.5pt; font-weight: bold; color: #4338ca; text-transform: uppercase;">Coordinator Dossier</div>
+              <div style="font-size: 9.5pt; font-weight: bold; color: #1e1b4b;">${sanitize(params.className)}</div>
+              <div style="font-size: 7.5pt; color: #64748b;">Academic Year ${sanitize(params.academicYear)}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Class Demographics & Metadata Grid -->
+        <div class="meta-grid">
+          <div>
+            <table style="width: 100%; font-size: 8.5pt;">
+              <tr>
+                <td style="color: #64748b; width: 100px; padding: 2px 0;"><strong>Class / Cohort:</strong></td>
+                <td style="color: #0f172a; font-weight: 800; font-size: 10pt;">${sanitize(params.className)}</td>
+              </tr>
+              <tr>
+                <td style="color: #64748b; padding: 2px 0;"><strong>Subject Group:</strong></td>
+                <td style="color: #1e1b4b; font-weight: 700;">${sanitize(params.subject || 'Sciences')}</td>
+              </tr>
+              <tr>
+                <td style="color: #64748b; padding: 2px 0;"><strong>Students Evaluated:</strong></td>
+                <td style="color: #0f172a; font-weight: 700;">
+                  ${activeStudentNames.length} Students ${onlyDone ? `<span style="font-size: 7.5pt; color: #047857; font-weight: normal;">(Completed work only • unsubmitted students omitted)</span>` : ''}
+                </td>
+              </tr>
+            </table>
+          </div>
+
+          <div>
+            <table style="width: 100%; font-size: 8.5pt;">
+              <tr>
+                <td style="color: #64748b; width: 110px; padding: 2px 0;"><strong>Reporting Scope:</strong></td>
+                <td style="color: #0f172a; font-weight: 600;">${sanitize(params.term || 'Full Academic Year')}</td>
+              </tr>
+              <tr>
+                <td style="color: #64748b; padding: 2px 0;"><strong>Generated Date:</strong></td>
+                <td style="color: #0f172a; font-weight: 600;">${sanitize(reportDate)}</td>
+              </tr>
+              <tr>
+                <td style="color: #64748b; padding: 2px 0;"><strong>Assessing Faculty:</strong></td>
+                <td style="color: #4338ca; font-weight: 700;">${sanitize(params.teacherName || 'Sciences Faculty')}</td>
+              </tr>
+            </table>
+          </div>
+        </div>
+
+        <!-- Executive Performance KPIs -->
+        <div class="kpi-container">
+          <div class="kpi-card" style="border-top: 3px solid #4f46e5;">
+            <div class="kpi-label">Class Average Score</div>
+            <div class="kpi-value">${avgClassScore} <span style="font-size: 9.5pt; color: #64748b; font-weight: normal;">/ 8</span></div>
+            <div class="kpi-sub">Across ${totalGraded} Graded Inquiries</div>
+          </div>
+
+          <div class="kpi-card" style="border-top: 3px solid #059669;">
+            <div class="kpi-label">Class Attainment Spread</div>
+            <div class="kpi-value" style="font-size: 11pt; margin-top: 4px;">
+              <span style="color: #047857;">${extPct}% Ext</span> •
+              <span style="color: #4338ca;">${appPct}% App</span> •
+              <span style="color: #b45309;">${devPct}% Dev</span>
+            </div>
+            <div class="kpi-sub">${extCount} Extending (${extPct}%)</div>
+          </div>
+
+          <div class="kpi-card" style="border-top: 3px solid #0284c7;">
+            <div class="kpi-label">Tasks & Inquiries</div>
+            <div class="kpi-value">${uniqueTasksMap.size} <span style="font-size: 9.5pt; color: #64748b; font-weight: normal;">Unique</span></div>
+            <div class="kpi-sub">${classLogs.length} Total Submissions</div>
+          </div>
+
+          <div class="kpi-card" style="border-top: 3px solid #d97706;">
+            <div class="kpi-label">Cohort Score Range</div>
+            <div class="kpi-value" style="font-size: 12pt;">
+              ${highestScore !== null ? `${lowestScore} - ${highestScore}` : '—'}
+              <span style="font-size: 8.5pt; color: #64748b; font-weight: normal;">/ 8</span>
+            </div>
+            <div class="kpi-sub">${pendingLogs.length > 0 ? `${pendingLogs.length} pending grading` : 'All graded'}</div>
+          </div>
+        </div>
+
+        <!-- SECTION 1: THE QUESTIONS & SCIENTIFIC STIMULUS (FIRST IN THE DOSSIER) -->
+        <div style="margin-bottom: 24px;">
+          <div class="section-header">
+            <span>1. Assigned Inquiry Questions & Scientific Stimulus Materials</span>
+            <span style="font-size: 7.5pt; font-weight: normal; color: #64748b;">Curriculum Prompts, Stimulus Diagrams & Datasets</span>
+          </div>
+          <div style="font-size: 8.5pt; color: #475569; margin-bottom: 12px; line-height: 1.45; background-color: #f8fafc; border-left: 3px solid #4f46e5; padding: 6px 10px; border-radius: 4px;">
+            The questions and large scientific stimulus diagrams below represent the authentic tasks assigned to this class. Students used these primary stimuli to construct their written responses and CER scientific evidence.
+          </div>
+          ${questionsOnlyPortfolioHtml}
+        </div>
+
+        <!-- SECTION 2: STUDENT ACHIEVEMENTS, ACHIEVING LEVELS & GROWTH CURVES TILL DATE -->
+        <div class="page-break-avoid" style="margin-bottom: 24px;">
+          <div class="section-header">
+            <span>2. Student Achievements, Achieving Levels & Longitudinal Growth Curves</span>
+            <span style="font-size: 7.5pt; font-weight: normal; color: #64748b;">Formative Score Progression (Till Date)</span>
+          </div>
+
+          <!-- Class Longitudinal Growth Curve -->
+          <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; margin-bottom: 14px;">
+            <div style="font-size: 8.5pt; color: #475569; margin-bottom: 8px; line-height: 1.4;">
+              <strong>Class Longitudinal Formative Growth Curve (Till Date):</strong> Maps average formative score progression over time across all assessed inquiry tasks:
+            </div>
+            ${generateClassGrowthCurveSvg(growthCurvePoints, 760, 220)}
+          </div>
+
+          <!-- Category Mastery Breakdown & Level Distribution -->
+          <div style="display: grid; grid-template-columns: 1.3fr 1fr; gap: 12px; margin-bottom: 14px;">
+            <div>
+              <div style="font-size: 8pt; font-weight: bold; text-transform: uppercase; color: #475569; margin-bottom: 4px;">
+                ATL Category Mastery Breakdown:
+              </div>
+              <table class="standard-table" style="background: #ffffff;">
+                <thead>
+                  <tr>
+                    <th>ATL Category</th>
+                    <th style="text-align: center;">Tasks</th>
+                    <th style="text-align: center;">Avg (/8)</th>
+                    <th>Mastery Gauge</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${categoryMasteryRowsHtml}
+                </tbody>
+              </table>
+            </div>
+
+            <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px; font-size: 8pt;">
+              <strong style="color: #1e1b4b; text-transform: uppercase; font-size: 7.5pt; display: block; margin-bottom: 4px;">
+                IB MYP Achieving Levels Continuum:
+              </strong>
+              <div style="margin-bottom: 5px; padding: 4px 8px; background: #ecfdf5; border-radius: 4px; border: 1px solid #a7f3d0;">
+                <strong style="color: #047857;">Extending (Levels 7-8):</strong> ${extCount} Students (${extPct}%)<br/>
+                <span style="font-size: 7pt; color: #065f46;">Consistently demonstrates comprehensive mastery and deep mechanistic reasoning.</span>
+              </div>
+              <div style="margin-bottom: 5px; padding: 4px 8px; background: #eef2ff; border-radius: 4px; border: 1px solid #c7d2fe;">
+                <strong style="color: #4338ca;">Applying (Levels 4-6):</strong> ${appCount} Students (${appPct}%)<br/>
+                <span style="font-size: 7pt; color: #3730a3;">Competently applies scientific knowledge and structures CER arguments with evidence.</span>
+              </div>
+              <div style="padding: 4px 8px; background: #fffbeb; border-radius: 4px; border: 1px solid #fde68a;">
+                <strong style="color: #b45309;">Developing (Levels 1-3):</strong> ${devCount} Students (${devPct}%)<br/>
+                <span style="font-size: 7pt; color: #92400e;">Acquiring foundational concepts with guided teacher feedback and scaffolding.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Class Student Roster Growth Table (Only completed students!) -->
+          <div>
+            <div style="font-size: 8.5pt; font-weight: bold; text-transform: uppercase; color: #1e1b4b; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
+              <span>Student Performance Roster & Trajectory (${activeStudentNames.length} Students):</span>
+              <span style="font-size: 7.5pt; color: #047857; font-weight: 600;">Showing only students who completed tasks</span>
+            </div>
+            <table class="standard-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>ID</th>
+                  <th>Student Name</th>
+                  <th style="text-align: center;">Tasks</th>
+                  <th style="text-align: center;">Growth Sparkline</th>
+                  <th style="text-align: center;">Initial ➔ Latest</th>
+                  <th style="text-align: center;">Avg (/8)</th>
+                  <th style="text-align: center;">Level</th>
+                  <th>Top ATL Skill</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${studentGrowthRowsHtml}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- SECTION 3: STUDENT REFLECTIONS & METACOGNITIVE GROWTH (IN FIRST FEW PAGES) -->
+        <div class="page-break-avoid" style="margin-bottom: 24px;">
+          <div class="section-header">
+            <span>3. Student Self-Reflections & Metacognitive Growth Takeaways</span>
+            <span style="font-size: 7.5pt; font-weight: normal; color: #64748b;">Metacognitive Insights from Completed Students</span>
+          </div>
+          <div style="font-size: 8.5pt; color: #475569; margin-bottom: 10px; line-height: 1.45;">
+            Below are student self-reflections and metacognitive takeaways recorded upon completing the inquiry tasks, illustrating how students evaluate their own learning process and thinking development:
+          </div>
+          ${consolidatedReflectionsHtml}
+        </div>
+
+        <!-- Institutional Sign-Off Section -->
+        <div class="signoff-section page-break-avoid">
+          <div>
+            <div style="font-size: 8pt; color: #64748b; margin-bottom: 24px;">Assessing Subject Teacher:</div>
+            <div style="font-weight: bold; color: #0f172a; border-bottom: 1px solid #94a3b8; padding-bottom: 2px;">
+              ${sanitize(params.teacherName || 'Subject Teacher')}
+            </div>
+            <div style="font-size: 7.5pt; color: #64748b; margin-top: 2px;">Signature & Verification</div>
+          </div>
+
+          <div>
+            <div style="font-size: 8pt; color: #64748b; margin-bottom: 24px;">Evaluation & Submission Date:</div>
+            <div style="font-weight: bold; color: #0f172a; border-bottom: 1px solid #94a3b8; padding-bottom: 2px;">
+              ${sanitize(reportDate)}
+            </div>
+            <div style="font-size: 7.5pt; color: #64748b; margin-top: 2px;">Official Reporting Date</div>
+          </div>
+
+          <div>
+            <div style="font-size: 8pt; color: #64748b; margin-bottom: 24px;">MYP Coordinator / Department Endorsement:</div>
+            <div style="font-weight: bold; color: #4338ca; border-bottom: 1px solid #94a3b8; padding-bottom: 2px;">
+              IB Middle Years Programme Faculty
+            </div>
+            <div style="font-size: 7.5pt; color: #64748b; margin-top: 2px;">Programme Moderation Endorsement</div>
+          </div>
+        </div>
+
+        <!-- Printout Cut / End of Coordinator Submission Notice -->
+        <div class="coordinator-cut-notice page-break-avoid">
+          <div>
+            <strong>✂ COORDINATOR SUBMISSION NOTICE:</strong> Part I above contains all curriculum questions, stimulus diagrams, student achievement levels, growth curves, and student reflections. If you do not wish to print or submit individual student answer sheets, you can stop the printout here.
+          </div>
+        </div>
+
+        <!-- ================================================================= -->
+        <!-- PART II: DETAILED STUDENT WRITTEN ANSWERS (END PAGES APPENDIX)   -->
+        <!-- ================================================================= -->
+        ${includeAppendix && detailedAnswersAppendixHtml ? `
+          <div class="page-break-before" style="margin-top: 30px;">
+            <div style="border-bottom: 3px solid #7c3aed; padding-bottom: 10px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: flex-start;">
+              <div>
+                <div style="font-size: 8pt; font-weight: 800; text-transform: uppercase; letter-spacing: 1.2px; color: #6d28d9;">
+                  Part II • Optional Detailed Submission Appendix
+                </div>
+                <h2 style="font-size: 16pt; font-weight: 900; color: #1e1b4b; margin: 3px 0 2px 0;">
+                  Detailed Student Responses & CER Evidence
+                </h2>
+                <div style="font-size: 8.5pt; color: #64748b;">
+                  Contains complete student written answers, Claim-Evidence-Reasoning structures, attached artifacts, and teacher feedback for moderation.
+                </div>
+              </div>
+              <div style="text-align: right; background-color: #faf5ff; border: 1px solid #e9d5ff; border-radius: 6px; padding: 6px 12px;">
+                <div style="font-size: 7pt; font-weight: bold; color: #7e22ce; text-transform: uppercase;">Detachable Appendix</div>
+                <div style="font-size: 8pt; color: #581c87;">Can be excluded from coordinator printout if not required</div>
+              </div>
+            </div>
+
+            ${detailedAnswersAppendixHtml}
+          </div>
+        ` : ''}
+
+        <div style="margin-top: 20px; border-top: 1px solid #cbd5e1; padding-top: 8px; font-size: 7.5pt; color: #94a3b8; text-align: center;">
+          * Generated by EduTN43 • IB MYP Approaches to Learning (ATL) Skills Assessment & Class Evidence Portfolio System. Official submission document.
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+}
+
+/**
+ * Downloads a high-resolution Class Record & Student Evidence Portfolio PDF directly using html2pdf.js.
+ */
+export async function exportClassRecordToPdf(
+  params: ClassRecordReportParams,
+  onProgress?: (status: string) => void
+): Promise<void> {
+  if (onProgress) onProgress('Compiling comprehensive class questions, graphs, and student evidence...');
+
+  const htmlContent = generateClassRecordHtml(params);
+  const element = document.createElement('div');
+  element.id = 'atl-class-record-pdf-target';
+  element.style.position = 'fixed';
+  element.style.left = '-9999px';
+  element.style.top = '0';
+  element.style.width = '820px';
+  element.style.backgroundColor = '#ffffff';
+  element.style.color = '#0f172a';
+  element.style.zIndex = '-9999';
+  element.innerHTML = htmlContent;
+  document.body.appendChild(element);
+
+  const cleanClass = (params.className || params.classKey || 'Class').replace(/[^a-zA-Z0-9_\-]/g, '_');
+  const cleanYear = (params.academicYear || 'Year').replace(/[^a-zA-Z0-9_\-]/g, '_');
+  const fileName = `ATL_Class_Record_${cleanClass}_${cleanYear}.pdf`;
+
+  const opt = {
+    margin: [8, 8, 8, 8] as [number, number, number, number],
+    filename: fileName,
+    image: { type: 'jpeg' as const, quality: 0.98 },
+    html2canvas: {
+      scale: 1.75,
+      useCORS: true,
+      logging: false,
+      windowWidth: 820
+    },
+    jsPDF: {
+      unit: 'mm',
+      format: 'a4',
+      orientation: 'portrait' as const
+    },
+    pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+  };
+
+  try {
+    if (onProgress) onProgress('Rendering vector growth curves, images, and student work to PDF...');
+    const html2pdfModule = await import('html2pdf.js');
+    const html2pdf = (html2pdfModule as any).default || html2pdfModule;
+    await html2pdf().set(opt).from(element).save();
+    if (onProgress) onProgress('Class Record PDF downloaded successfully!');
+  } finally {
+    if (element.parentNode) {
+      element.parentNode.removeChild(element);
+    }
+  }
+}
+
+/**
+ * Opens native browser print preview window for instantaneous 1-click printing or "Save as PDF".
+ */
+export function printClassRecord(params: ClassRecordReportParams): void {
+  const htmlContent = generateClassRecordHtml(params);
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) {
+    exportClassRecordToPdf(params);
+    return;
+  }
+
+  printWindow.document.open();
+  printWindow.document.write(htmlContent);
+  printWindow.document.close();
+
+  printWindow.focus();
+  setTimeout(() => {
+    printWindow.print();
+  }, 500);
+}
+
+/**
+ * Downloads a standalone, self-contained offline HTML file of the Class Record.
+ * Instantaneous (<100ms) download with 100% of questions, images, SVG graphs, and student answers.
+ */
+export function exportClassRecordToHtmlFile(params: ClassRecordReportParams): void {
+  const htmlContent = generateClassRecordHtml(params);
+  const cleanClass = (params.className || params.classKey || 'Class').replace(/[^a-zA-Z0-9_\-]/g, '_');
+  const cleanYear = (params.academicYear || 'Year').replace(/[^a-zA-Z0-9_\-]/g, '_');
+  const fileName = `ATL_Class_Record_${cleanClass}_${cleanYear}.html`;
+
+  const blob = new Blob(['\ufeff', htmlContent], { type: 'text/html;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Downloads a Microsoft Word (.doc) document for the Class Record.
+ */
+export function exportClassRecordToWordDoc(params: ClassRecordReportParams): void {
+  const htmlContent = generateClassRecordHtml(params);
+  const cleanClass = (params.className || params.classKey || 'Class').replace(/[^a-zA-Z0-9_\-]/g, '_');
+  const cleanYear = (params.academicYear || 'Year').replace(/[^a-zA-Z0-9_\-]/g, '_');
+  const fileName = `ATL_Class_Record_${cleanClass}_${cleanYear}.doc`;
+
+  const blob = new Blob(['\ufeff', htmlContent], { type: 'application/msword' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 
 

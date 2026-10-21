@@ -186,6 +186,8 @@ export interface ATLTaskLog {
   term: 'Term 1' | 'Term 2' | string;
   studentName: string;
   studentId?: string;
+  studentRollNumber?: string;
+  rollNumber?: string;
   classSection?: string;
   subject: string;
   topic: string;
@@ -218,6 +220,8 @@ export interface ATLTaskLog {
   atlSkillGuide?: ATLSkillGuide;
   atl_skill_guide?: ATLSkillGuide;
   status?: 'pending_review' | 'graded';
+  isGradeReleased?: boolean; // Whether the teacher has unlocked/released the marks and corrections to the student
+  releasedAt?: string; // Timestamp when teacher released grades
   aiSuggestedScore?: number; // AI preliminary score suggestion (1-8), non-official until teacher grades
   aiSuggestedLevel?: SkillLevel; // AI preliminary level suggestion, non-official until teacher grades
 }

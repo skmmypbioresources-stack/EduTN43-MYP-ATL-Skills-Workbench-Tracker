@@ -30,7 +30,7 @@ import {
 import { exportToPdf, exportToWordDoc } from '../lib/exportUtils';
 import { ImageZoomLightbox } from './ImageZoomLightbox';
 import { ScientificGraphStimulus } from './ScientificGraphStimulus';
-import { isTaskLogGraded, getTaskEffectiveScore } from '../lib/scoreUtils';
+import { isTaskLogGraded, getTaskEffectiveScore, isGradeReleasedToStudent } from '../lib/scoreUtils';
 import { formatTeacherComment } from '../lib/sanitizeTaskData';
 import {
   generateStimulusImagesForTopic,
@@ -175,9 +175,10 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
     }
   };
 
-  const gradingHandler = onGradeClick || onOpenGrading;
-  const evaluation = log.teacherEvaluation;
-  const badge = evaluation?.badgeAwarded || log.badgeAwarded;
+  const isReleased = isTeacherView ? true : isGradeReleasedToStudent(log);
+  const gradingHandler = isTeacherView ? (onGradeClick || onOpenGrading) : undefined;
+  const evaluation = isReleased ? log.teacherEvaluation : undefined;
+  const badge = isReleased ? (evaluation?.badgeAwarded || log.badgeAwarded) : undefined;
 
   const stimulusImages: TaskImageAttachment[] =
     (log.stimulusImages && log.stimulusImages.length > 0)
@@ -192,8 +193,9 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
     [];
 
   const isGraded = isTaskLogGraded(log);
-  const score = isGraded ? getTaskEffectiveScore(log) : undefined;
-  const level = isGraded ? (evaluation?.level ?? log.level ?? 'Applying') : undefined;
+  const showGradedResults = isTeacherView || (isReleased && isGraded);
+  const score = showGradedResults ? getTaskEffectiveScore(log) : undefined;
+  const level = showGradedResults ? (evaluation?.level ?? log.level ?? 'Applying') : undefined;
 
   const rawAtlIntro = log.atlPedagogicalIntro || log.originalTask?.atlPedagogicalIntro;
   const rawAtlGuide = log.atl_skill_guide || log.originalTask?.atl_skill_guide;
@@ -566,7 +568,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
               {/* Assessment & Formative Grade Card */}
               <div className="rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50/60 via-white to-purple-50/40 p-4 sm:p-5 space-y-4 shadow-xs">
                 <div className="flex items-center justify-between flex-wrap gap-3">
-                  {isGraded ? (
+                  {showGradedResults ? (
                     <div className="flex items-center gap-3">
                       <div className="w-12 h-12 rounded-2xl bg-indigo-600 text-white font-black text-2xl flex items-center justify-center shadow-md">
                         {score}
@@ -604,7 +606,7 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                         </span>
                         <div className="flex items-center gap-2 mt-0.5">
                           <span className="text-base font-extrabold text-slate-900">
-                            Awaiting Teacher Evaluation
+                            Under Teacher Review
                           </span>
                         </div>
                       </div>
@@ -658,13 +660,22 @@ export const TaskDetailModal: React.FC<TaskDetailModalProps> = ({
                 )}
 
                 {/* Teacher Feedback / Qualitative Summary */}
-                {evaluation?.feedback || log.feedback?.summary ? (
+                {showGradedResults && (evaluation?.feedback || log.feedback?.summary) ? (
                   <div className="space-y-1.5 pt-2 border-t border-indigo-100/60">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-700 block">
                       Teacher Feedback & Scientific Corrections:
                     </span>
                     <p className="text-xs text-slate-700 leading-relaxed font-medium bg-white/80 p-3 rounded-xl border border-indigo-50">
                       {formatTeacherComment(evaluation?.feedback || log.feedback?.summary)}
+                    </p>
+                  </div>
+                ) : !showGradedResults ? (
+                  <div className="p-3 rounded-xl bg-amber-50/70 border border-amber-200 text-xs text-amber-800 space-y-1">
+                    <span className="font-bold block uppercase text-[10px] text-amber-900">
+                      🔒 Grade & Corrections Locked
+                    </span>
+                    <p className="text-[11px] text-amber-700 leading-relaxed">
+                      Your responses are recorded and locked for evaluation. Marks, levels, and teacher scientific corrections will become visible as soon as your teacher finishes grading and releases permissions.
                     </p>
                   </div>
                 ) : null}

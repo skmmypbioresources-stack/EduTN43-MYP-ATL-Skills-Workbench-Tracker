@@ -9,7 +9,17 @@ import {
   AVAILABLE_ACADEMIC_YEARS,
   DEFAULT_ACADEMIC_YEAR
 } from '../types';
-import { exportToWordDoc, exportToPdf, exportToCsvSpreadsheet, getAvailableMonthsFromLogs } from '../lib/exportUtils';
+import {
+  exportToWordDoc,
+  exportToPdf,
+  exportToCsvSpreadsheet,
+  getAvailableMonthsFromLogs,
+  generateClassRecordHtml,
+  exportClassRecordToPdf,
+  printClassRecord,
+  exportClassRecordToHtmlFile,
+  exportClassRecordToWordDoc
+} from '../lib/exportUtils';
 import { ATL_DATA, ALL_CLUSTERS, ALL_STUDENTS_ROSTER } from '../data/atlData';
 import { MYPCriteriaSelector } from './MYPCriteriaSelector';
 import { ToddleLinkManagerModal } from './ToddleLinkManagerModal';
@@ -78,6 +88,7 @@ import {
   HelpCircle,
   Trophy,
   FolderUp,
+  FolderDown,
   Undo2,
 } from 'lucide-react';
 import { CustomTaskCreatorModal } from './CustomTaskCreatorModal';
@@ -546,6 +557,84 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [selectedExportMonth, setSelectedExportMonth] = useState<string>('ALL');
   const [selectedExportClass, setSelectedExportClass] = useState<string>('ALL');
   const [selectedExportSubject, setSelectedExportSubject] = useState<string>('ALL');
+
+  // Class Record & Student Evidence Portfolio Modal State
+  const [showClassRecordModal, setShowClassRecordModal] = useState<boolean>(false);
+  const [classRecordTargetClass, setClassRecordTargetClass] = useState<string>('1');
+  const [classRecordOnlyDone, setClassRecordOnlyDone] = useState<boolean>(true); // Show only students who completed tasks
+  const [classRecordIncludeAnswers, setClassRecordIncludeAnswers] = useState<boolean>(true); // Include student written answers at the end
+  const [isGeneratingClassPdf, setIsGeneratingClassPdf] = useState<boolean>(false);
+  const [classPdfProgressStatus, setClassPdfProgressStatus] = useState<string | null>(null);
+
+  // Helper to trigger comprehensive Class Record Download
+  const handleDownloadClassRecord = async (
+    targetClass?: string,
+    format: 'pdf' | 'print' | 'html' | 'word' | 'csv' = 'pdf',
+    customOverrides?: { onlySubmittedStudents?: boolean; includeStudentAnswersAppendix?: boolean }
+  ) => {
+    const classKey = targetClass || classRecordTargetClass || (selectedClass !== 'All' ? selectedClass : '1');
+    const className = formatClassLabel(classKey);
+    const classStudents = ALL_STUDENTS_ROSTER.filter(
+      (s) => classKey === 'All' || normalizeMypYear(s.mypYear) === classKey
+    );
+
+    const reportParams = {
+      classKey,
+      className,
+      academicYear,
+      term: selectedTerm !== 'All' ? selectedTerm : undefined,
+      subject: selectedSubject !== 'All' ? selectedSubject : 'Sciences',
+      teacherName: 'Sciences Faculty',
+      schoolName: 'International Baccalaureate (IB) World School',
+      logs,
+      assignedTasks,
+      classStudents,
+      onlySubmittedStudents: customOverrides?.onlySubmittedStudents !== undefined ? customOverrides.onlySubmittedStudents : classRecordOnlyDone,
+      includeStudentAnswersAppendix: customOverrides?.includeStudentAnswersAppendix !== undefined ? customOverrides.includeStudentAnswersAppendix : classRecordIncludeAnswers
+    };
+
+    if (format === 'print') {
+      printClassRecord(reportParams);
+      return;
+    }
+
+    if (format === 'html') {
+      exportClassRecordToHtmlFile(reportParams);
+      return;
+    }
+
+    if (format === 'word') {
+      exportClassRecordToWordDoc(reportParams);
+      return;
+    }
+
+    if (format === 'csv') {
+      const filtered = logs.filter(
+        (l) =>
+          l.academicYear === academicYear &&
+          (classKey === 'All' || normalizeMypYear(l.mypYear) === classKey)
+      );
+      exportToCsvSpreadsheet(
+        filtered,
+        `ATL_Class_Record_${classKey === 'All' ? 'All_Classes' : 'MYP' + classKey}`
+      );
+      return;
+    }
+
+    // Default: High-resolution PDF via html2pdf
+    try {
+      setIsGeneratingClassPdf(true);
+      setClassPdfProgressStatus('Compiling questions, growth curves & student evidence...');
+      await exportClassRecordToPdf(reportParams, (msg) => setClassPdfProgressStatus(msg));
+    } catch (err) {
+      console.error('Failed to generate Class Record PDF:', err);
+      // Fallback to print window
+      printClassRecord(reportParams);
+    } finally {
+      setIsGeneratingClassPdf(false);
+      setClassPdfProgressStatus(null);
+    }
+  };
 
   // Teacher, Class & Academic Year Filters for Published Common Tasks Panel
   const [assignedTeacherFilter, setAssignedTeacherFilter] = useState<string>('All');
@@ -1191,6 +1280,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </button>
 
             <button
+              onClick={() => {
+                setClassRecordTargetClass(selectedClass !== 'All' ? selectedClass : '1');
+                setShowClassRecordModal(true);
+              }}
+              className="flex items-center gap-1.5 rounded-xl border border-violet-200 bg-violet-50 px-3.5 py-2 text-xs font-bold text-violet-800 hover:border-violet-300 hover:bg-violet-100 transition-all cursor-pointer shadow-2xs"
+              title="Download full Class Record with all questions, student scores, growth curves, and diagrams"
+            >
+              <FolderDown className="h-4 w-4 text-violet-600" />
+              <span>Download Class Record</span>
+            </button>
+
+            <button
               onClick={() => setShowChangePasswordModal(true)}
               className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2 text-xs font-bold text-slate-700 hover:border-indigo-300 hover:bg-indigo-50/50 transition-all"
               title="Change default or custom teacher password"
@@ -1743,9 +1844,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </div>
                   </div>
 
-                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] font-bold text-indigo-600 group-hover:text-indigo-700">
-                    <span>View Class Analytics</span>
-                    <Sparkles className="h-3.5 w-3.5" />
+                  <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold text-indigo-600 group-hover:text-indigo-700 flex items-center gap-1">
+                      <span>View Analytics</span>
+                      <Sparkles className="h-3 w-3" />
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDownloadClassRecord(ckey, 'pdf');
+                      }}
+                      className="inline-flex items-center gap-1 rounded-lg bg-indigo-50 border border-indigo-200 px-2.5 py-1 text-[10px] font-extrabold text-indigo-700 hover:bg-indigo-100 transition-colors cursor-pointer"
+                      title={`1-Click download ${formatShortClassTag(ckey)} Record PDF`}
+                    >
+                      <Download className="h-3 w-3" />
+                      <span>Download</span>
+                    </button>
                   </div>
                 </div>
               );
@@ -1772,12 +1887,40 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
 
-          <button
-            onClick={() => setSelectedClass('All')}
-            className="self-start md:self-auto rounded-xl border border-indigo-200 bg-white px-3.5 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition-colors"
-          >
-            Switch to All Classes View
-          </button>
+          <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
+            <button
+              onClick={() => handleDownloadClassRecord(selectedClass, 'pdf')}
+              disabled={isGeneratingClassPdf}
+              className="flex items-center gap-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 px-4 py-2 text-xs font-bold text-white shadow-xs transition-all cursor-pointer disabled:opacity-60"
+              title={`One-click download of ${formatClassLabel(selectedClass)} complete record`}
+            >
+              {isGeneratingClassPdf ? (
+                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Download className="h-3.5 w-3.5" />
+              )}
+              <span>Download {formatShortClassTag(selectedClass)} Record (One-Click)</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setClassRecordTargetClass(selectedClass);
+                setShowClassRecordModal(true);
+              }}
+              className="rounded-xl border border-indigo-200 bg-white px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-50 transition-colors flex items-center gap-1 cursor-pointer"
+              title="Open all export formats (PDF, Print, HTML, Word, CSV) for this class"
+            >
+              <Sliders className="h-3.5 w-3.5" />
+              <span>Options</span>
+            </button>
+
+            <button
+              onClick={() => setSelectedClass('All')}
+              className="rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50 transition-colors cursor-pointer"
+            >
+              Switch to All Classes
+            </button>
+          </div>
         </div>
       )}
 
@@ -2254,15 +2397,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </p>
           </div>
 
-          <button
-            onClick={() => exportToCsvSpreadsheet(filteredLogs, `ATL_Task_Logs_${selectedClass === 'All' ? 'All_Classes' : 'MYP' + selectedClass}`)}
-            disabled={filteredLogs.length === 0}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
-            title="Export currently filtered history logs as Excel spreadsheet (.csv)"
-          >
-            <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
-            <span>Export History Spreadsheet (.csv)</span>
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => {
+                setClassRecordTargetClass(selectedClass !== 'All' ? selectedClass : '1');
+                setShowClassRecordModal(true);
+              }}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-violet-200 bg-violet-50 px-3.5 py-2 text-xs font-bold text-violet-800 hover:bg-violet-100 transition-all cursor-pointer shrink-0"
+              title="Download full Class Record with all questions, student scores, growth curves, and diagrams"
+            >
+              <FolderDown className="h-4 w-4 text-violet-600" />
+              <span>Download Class Record</span>
+            </button>
+
+            <button
+              onClick={() => exportToCsvSpreadsheet(filteredLogs, `ATL_Task_Logs_${selectedClass === 'All' ? 'All_Classes' : 'MYP' + selectedClass}`)}
+              disabled={filteredLogs.length === 0}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs font-bold text-emerald-800 hover:bg-emerald-100 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+              title="Export currently filtered history logs as Excel spreadsheet (.csv)"
+            >
+              <FileSpreadsheet className="h-4 w-4 text-emerald-600" />
+              <span>Export History Spreadsheet (.csv)</span>
+            </button>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -3782,6 +3939,268 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       )}
 
+      {/* Class ATL Submission Record & Evidence Portfolio Export Modal */}
+      {showClassRecordModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 animate-in fade-in duration-200">
+          <div className="relative w-full max-w-xl rounded-2xl bg-white p-6 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-4 mb-4">
+              <div className="flex items-center gap-3">
+                <div className="rounded-xl bg-violet-100 p-2.5 text-violet-700">
+                  <FolderDown className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-900">Download Class ATL Record</h3>
+                  <p className="text-xs text-slate-500">
+                    Questions, Student Scores, Growth Curves & Stimulus Images
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowClassRecordModal(false)}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs text-slate-600">
+              {/* Class Selector */}
+              <div>
+                <label className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                  Select Class / Grade Level
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {MYP_CLASS_KEYS.map((ckey) => {
+                    const count = logs.filter(
+                      (l) => l.academicYear === academicYear && normalizeMypYear(l.mypYear) === ckey
+                    ).length;
+                    const stCount = (studentsByClassMap[ckey] || []).length;
+                    const isSelected = classRecordTargetClass === ckey;
+                    return (
+                      <button
+                        key={ckey}
+                        type="button"
+                        onClick={() => setClassRecordTargetClass(ckey)}
+                        className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                          isSelected
+                            ? 'border-indigo-600 bg-indigo-50/80 shadow-xs ring-1 ring-indigo-600 text-indigo-950 font-bold'
+                            : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 text-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-extrabold text-sm">{formatShortClassTag(ckey)}</span>
+                          {isSelected && <Check className="h-4 w-4 text-indigo-600" />}
+                        </div>
+                        <div className="text-[11px] text-slate-500 mt-1">
+                          {stCount} students • {count} tasks
+                        </div>
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => setClassRecordTargetClass('All')}
+                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                      classRecordTargetClass === 'All'
+                        ? 'border-indigo-600 bg-indigo-50/80 shadow-xs ring-1 ring-indigo-600 text-indigo-950 font-bold'
+                        : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 text-slate-700'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-extrabold text-sm">All Classes</span>
+                      {classRecordTargetClass === 'All' && <Check className="h-4 w-4 text-indigo-600" />}
+                    </div>
+                    <div className="text-[11px] text-slate-500 mt-1">
+                      Full Cohort (MYP 1-5)
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* What is Included in this Class Record */}
+              <div className="rounded-xl border border-violet-100 bg-violet-50/60 p-4 space-y-2.5">
+                <div className="flex items-center justify-between font-bold text-violet-950 text-xs">
+                  <span>Selected: {formatClassLabel(classRecordTargetClass)}</span>
+                  <span className="bg-violet-200/80 px-2.5 py-0.5 rounded-lg text-violet-900 font-extrabold">
+                    Academic Year {academicYear}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-violet-200/60 text-[11px] text-violet-900">
+                  <div className="flex items-center gap-2 bg-white/80 p-2 rounded-lg border border-violet-100">
+                    <CheckCircle className="h-4 w-4 text-emerald-600 shrink-0" />
+                    <span><strong>All Questions Visible:</strong> Prompts, parts & criteria</span>
+                  </div>
+                  <div className="flex items-center gap-2 bg-white/80 p-2 rounded-lg border border-violet-100">
+                    <CheckCircle className="h-4 w-4 text-emerald-600 shrink-0" />
+                    <span><strong>Stimulus Images:</strong> All diagrams & figures</span>
+                  </div>
+                  <div className="flex items-center gap-2 bg-white/80 p-2 rounded-lg border border-violet-100">
+                    <CheckCircle className="h-4 w-4 text-emerald-600 shrink-0" />
+                    <span><strong>Growth Curves:</strong> Score trajectory till date</span>
+                  </div>
+                  <div className="flex items-center gap-2 bg-white/80 p-2 rounded-lg border border-violet-100">
+                    <CheckCircle className="h-4 w-4 text-emerald-600 shrink-0" />
+                    <span><strong>Scientific Graphs:</strong> Observation datasets</span>
+                  </div>
+                  <div className="flex items-center gap-2 bg-white/80 p-2 rounded-lg border border-violet-100">
+                    <CheckCircle className="h-4 w-4 text-emerald-600 shrink-0" />
+                    <span><strong>Student Submissions:</strong> Full work & CER</span>
+                  </div>
+                  <div className="flex items-center gap-2 bg-white/80 p-2 rounded-lg border border-violet-100">
+                    <CheckCircle className="h-4 w-4 text-emerald-600 shrink-0" />
+                    <span><strong>Teacher Grading:</strong> Scores, feedback & quotes</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Print & Submission Options */}
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 space-y-3">
+                <div className="flex items-center justify-between text-xs font-bold text-slate-800">
+                  <span>Print & Coordinator Submission Options</span>
+                  <span className="text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Customise Layout</span>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={classRecordOnlyDone}
+                      onChange={(e) => setClassRecordOnlyDone(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 block">
+                        Show only students who have done/completed tasks
+                      </span>
+                      <span className="text-[11px] text-slate-500 block leading-tight">
+                        Excludes students who have not completed tasks from the roster, achievement graphs, and printout.
+                      </span>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-2.5 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={classRecordIncludeAnswers}
+                      onChange={(e) => setClassRecordIncludeAnswers(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                    />
+                    <div>
+                      <span className="text-xs font-bold text-slate-800 block">
+                        Include detailed student written answers (Part II Appendix at end)
+                      </span>
+                      <span className="text-[11px] text-slate-500 block leading-tight">
+                        First pages display questions, big diagrams, growth curves, levels, and reflections. Detailed student answers are placed only at the end so they can be detached or ignored when printing.
+                      </span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Progress Indicator if generating */}
+              {isGeneratingClassPdf && (
+                <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4 text-center space-y-2">
+                  <div className="inline-flex items-center gap-2 text-indigo-700 font-bold">
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    <span>{classPdfProgressStatus || 'Generating high-resolution Class Record PDF...'}</span>
+                  </div>
+                  <p className="text-[11px] text-indigo-600">
+                    Compiling question prompts, scientific datasets, SVG vector growth curves, and student submissions.
+                  </p>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="pt-3 border-t border-slate-100 space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    disabled={isGeneratingClassPdf}
+                    onClick={() => handleDownloadClassRecord(classRecordTargetClass, 'pdf')}
+                    className="flex items-center justify-center gap-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 px-4 py-3 font-bold text-white shadow-sm transition-all cursor-pointer disabled:opacity-50 text-xs sm:text-sm"
+                  >
+                    {isGeneratingClassPdf ? (
+                      <RefreshCw className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4" />
+                    )}
+                    <span>Download Full PDF {classRecordIncludeAnswers ? '(With Appendix)' : '(Coordinator Only)'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isGeneratingClassPdf}
+                    onClick={() =>
+                      handleDownloadClassRecord(classRecordTargetClass, 'pdf', {
+                        onlySubmittedStudents: true,
+                        includeStudentAnswersAppendix: false
+                      })
+                    }
+                    className="flex items-center justify-center gap-2 rounded-xl bg-violet-700 hover:bg-violet-800 px-4 py-3 font-bold text-white shadow-sm transition-all cursor-pointer disabled:opacity-50 text-xs sm:text-sm"
+                    title="Downloads only the first pages (Questions, big images, achievements, growth curve & reflections) without student answers"
+                  >
+                    <CheckCircle className="h-4 w-4 text-emerald-300" />
+                    <span>Coordinator Dossier (No Answers)</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-4 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleDownloadClassRecord(classRecordTargetClass, 'print');
+                      setShowClassRecordModal(false);
+                    }}
+                    className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 py-2 font-bold text-slate-700 transition-colors cursor-pointer text-xs"
+                    title="Open browser print window for instant native Save as PDF"
+                  >
+                    <span>🖨️ Print View</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleDownloadClassRecord(classRecordTargetClass, 'html');
+                      setShowClassRecordModal(false);
+                    }}
+                    className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 py-2 font-bold text-slate-700 transition-colors cursor-pointer text-xs"
+                    title="Instant download of standalone offline HTML file"
+                  >
+                    <span>🌐 Standalone HTML</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleDownloadClassRecord(classRecordTargetClass, 'word');
+                      setShowClassRecordModal(false);
+                    }}
+                    className="flex items-center justify-center gap-1.5 rounded-xl border border-blue-200 bg-blue-50/60 hover:bg-blue-100 py-2 font-bold text-blue-700 transition-colors cursor-pointer text-xs"
+                    title="Download Word (.doc) document"
+                  >
+                    <span>📄 Word (.doc)</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      handleDownloadClassRecord(classRecordTargetClass, 'csv');
+                      setShowClassRecordModal(false);
+                    }}
+                    className="flex items-center justify-center gap-1.5 rounded-xl border border-emerald-200 bg-emerald-50/60 hover:bg-emerald-100 py-2 font-bold text-emerald-700 transition-colors cursor-pointer text-xs"
+                    title="Download Excel spreadsheet (.csv)"
+                  >
+                    <span>📊 Excel (.csv)</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Toddle & LMS Standalone Evidence Link Manager Modal */}
       {showToddleManagerModal && (
         <ToddleLinkManagerModal
@@ -3888,13 +4307,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           log={teacherGradingLog}
           onUpdateTaskLog={onUpdateTaskLog}
           onDeleteLog={onDeleteLog}
-          onSaveGrade={async (evalData, badge) => {
+          onSaveGrade={async (evalData, badge, isGradeReleased = true) => {
             if (teacherGradingLog && onUpdateTaskLog) {
               const effectiveScore = evalData.formativeScore ?? evalData.score ?? 5;
               await onUpdateTaskLog(teacherGradingLog.id, {
                 formativeScore: effectiveScore,
                 level: evalData.level,
                 status: 'graded',
+                isGradeReleased: isGradeReleased,
+                releasedAt: isGradeReleased ? new Date().toISOString() : undefined,
                 feedback: {
                   formativeScore: effectiveScore,
                   level: evalData.level,

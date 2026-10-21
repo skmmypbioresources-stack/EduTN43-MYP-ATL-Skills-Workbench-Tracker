@@ -52,7 +52,8 @@ interface TeacherGradingModalProps {
   ) => Promise<void>;
   onSaveGrade?: (
     evalData: TeacherEvaluation,
-    badgeAwarded?: DigitalBadge
+    badgeAwarded?: DigitalBadge,
+    isGradeReleased?: boolean
   ) => Promise<void>;
   teacherName?: string;
   onUpdateTaskLog?: (logId: string, partial: Partial<ATLTaskLog>) => Promise<void>;
@@ -143,6 +144,7 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
     (existingEval?.nextSteps ?? log.feedback?.next_steps ?? []).join('\n')
   );
   const [aiAppliedNotice, setAiAppliedNotice] = useState<string | null>(null);
+  const [isReleaseGrade, setIsReleaseGrade] = useState<boolean>(log.isGradeReleased !== false);
 
   // Selected Badge State
   const initialBadge = existingEval?.badgeAwarded ?? log.badgeAwarded;
@@ -335,9 +337,9 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
       };
 
       if (onSaveEvaluation) {
-        await onSaveEvaluation(log.id, evaluation, badgeToAward);
+        await (onSaveEvaluation as any)(log.id, evaluation, badgeToAward, isReleaseGrade);
       } else if (onSaveGrade) {
-        await onSaveGrade(evaluation, badgeToAward);
+        await onSaveGrade(evaluation, badgeToAward, isReleaseGrade);
       }
       setSaveSuccess(true);
       setTimeout(() => {
@@ -1217,10 +1219,22 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
               {isExportingPdf ? <Loader2 className="w-4 h-4 animate-spin text-indigo-600" /> : <Download className="w-4 h-4 text-emerald-600" />}
               <span>{isExportingPdf ? 'Exporting PDF...' : 'Export PDF'}</span>
             </button>
+
+            {/* Permission to release marks & corrections to student */}
+            <label className="flex items-center gap-2 cursor-pointer bg-white px-3 py-2 rounded-xl border border-slate-300 text-xs font-bold text-slate-700 shadow-2xs hover:bg-slate-50 transition-colors">
+              <input
+                type="checkbox"
+                checked={isReleaseGrade}
+                onChange={(e) => setIsReleaseGrade(e.target.checked)}
+                className="rounded text-indigo-600 focus:ring-indigo-500 h-4 w-4"
+              />
+              <span>{isReleaseGrade ? 'Release to Student' : 'Draft (Keep Locked)'}</span>
+            </label>
+
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 font-semibold text-xs transition-colors"
+              className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 font-semibold text-xs transition-colors cursor-pointer"
             >
               Cancel
             </button>
@@ -1228,10 +1242,14 @@ export const TeacherGradingModal: React.FC<TeacherGradingModalProps> = ({
               type="button"
               onClick={handleSave}
               disabled={isSaving}
-              className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold text-xs hover:from-indigo-700 hover:to-purple-700 shadow-md transition-all flex items-center gap-2 disabled:opacity-50"
+              className={`px-5 py-2.5 rounded-xl text-white font-bold text-xs shadow-md transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer ${
+                isReleaseGrade
+                  ? 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700'
+                  : 'bg-slate-800 hover:bg-slate-900'
+              }`}
             >
               <Save className="w-4 h-4" />
-              {isSaving ? 'Saving Evaluation...' : 'Save & Record Grade'}
+              {isSaving ? 'Saving...' : isReleaseGrade ? 'Save & Release Grade' : 'Save Draft'}
             </button>
           </div>
         </div>

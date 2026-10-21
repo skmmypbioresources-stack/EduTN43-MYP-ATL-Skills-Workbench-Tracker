@@ -9,7 +9,7 @@ import {
   DigitalBadge,
   TeacherEvaluation
 } from '../types';
-import { ATL_DATA, ALL_CLUSTERS, SAMPLE_ASSIGNED_TASKS } from '../data/atlData';
+import { ATL_DATA, ALL_CLUSTERS, SAMPLE_ASSIGNED_TASKS, ALL_STUDENTS_ROSTER } from '../data/atlData';
 import { exportToWordDoc, exportToPdf, resolveSkillIndicators } from '../lib/exportUtils';
 import {
   copyToClipboard,
@@ -18,16 +18,17 @@ import {
   generateStudentUniqueId,
   getCustomStudents,
   findCanonicalStudent,
-  isSameStudent
+  isSameStudent,
+  findStudentByRollNumber,
+  saveCustomStudent
 } from '../lib/evidenceUtils';
 import { evaluateTaskClient, generateTaskClient } from '../lib/geminiClient';
-import { resolveFormativeScore, isTaskLogGraded, getTaskEffectiveScore } from '../lib/scoreUtils';
+import { resolveFormativeScore, isTaskLogGraded, getTaskEffectiveScore, isGradeReleasedToStudent } from '../lib/scoreUtils';
 import { calculateStudentMilestoneBadges } from '../lib/badgeUtils';
 import { compressImage } from '../utils/imageOptimizer';
 import { safeGetLocalStorageItem } from '../lib/safeStorage';
 import { formatTeacherComment } from '../lib/sanitizeTaskData';
 import { TaskDetailModal } from './TaskDetailModal';
-import { TeacherGradingModal } from './TeacherGradingModal';
 import { DigitalBadgesGallery } from './DigitalBadgesGallery';
 import { ScientificGraphStimulus } from './ScientificGraphStimulus';
 import {
@@ -83,7 +84,10 @@ import {
   Eye,
   X,
   ZoomIn,
-  Maximize2
+  Maximize2,
+  Hash,
+  FolderCheck,
+  CheckCircle2
 } from 'lucide-react';
 import { ImageZoomLightbox } from './ImageZoomLightbox';
 import {
@@ -169,17 +173,40 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
 }) => {
   // Navigation within student folder: 'assigned' | 'analytics' | 'portfolio' | 'badges'
   const [activeTab, setActiveTab] = useState<'assigned' | 'analytics' | 'portfolio' | 'badges'>('assigned');
+  // Folder sub-filter inside assigned tasks: 'active' (to-do) vs 'completed' (done)
+  const [assignedFolderFilter, setAssignedFolderFilter] = useState<'active' | 'completed'>('active');
 
-  // Local Student Name & Class state (allows student to enter / update their name and class)
+  // Local Student Roll Number, Name & Class state (strictly enforced with Roll No)
+  const [currentRollNumber, setCurrentRollNumber] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('atl_current_student_roll_no');
+      if (saved && saved.trim()) return saved.trim();
+    } catch (e) {}
+    if (studentName && studentName !== 'Student') {
+      const resolved = findCanonicalStudent(studentName, mypYear);
+      if (resolved.studentId && resolved.studentId !== '0000') return resolved.studentId;
+    }
+    return '';
+  });
+
   const [currentStudentName, setCurrentStudentName] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('atl_current_student_name');
+      if (saved && saved.trim()) return saved.trim();
+    } catch (e) {}
     return studentName && studentName !== 'Student' ? studentName : '';
   });
   const [currentMypYear, setCurrentMypYear] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('atl_current_student_year');
+      if (saved && saved.trim()) return saved.trim();
+    } catch (e) {}
     return mypYear || '3';
   });
   const [showNameModal, setShowNameModal] = useState<boolean>(false);
   const [taskPendingName, setTaskPendingName] = useState<AssignedTask | null>(null);
-  const [tempNameInput, setTempNameInput] = useState<string>('');
+  const [tempRollInput, setTempRollInput] = useState<string>(() => currentRollNumber);
+  const [tempNameInput, setTempNameInput] = useState<string>(() => currentStudentName);
   const [tempClassInput, setTempClassInput] = useState<string>(() => mypYear || '3');
 
   // Keep currentMypYear in sync if mypYear prop changes
@@ -200,9 +227,8 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [showAllSchoolTasks, setShowAllSchoolTasks] = useState<boolean>(false);
 
-  // Modals for Task Detail, Grading, and Image Preview
+  // Modals for Task Detail and Image Preview (TeacherGradingModal strictly removed from student view)
   const [detailModalLog, setDetailModalLog] = useState<ATLTaskLog | null>(null);
-  const [gradingModalLog, setGradingModalLog] = useState<ATLTaskLog | null>(null);
   const [previewModalImage, setPreviewModalImage] = useState<string | null>(null);
   const [previewAssignedTaskModal, setPreviewAssignedTaskModal] = useState<AssignedTask | null>(null);
 
@@ -232,32 +258,52 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
   const [savedSuccessMsg, setSavedSuccessMsg] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Canonical student identity resolution
+  // Canonical student identity resolution with Roll Number priority (typo-proof)
   const canonicalStudent = useMemo(() => {
     return findCanonicalStudent(
       currentStudentName || studentName || evidenceToken,
-      currentMypYear || mypYear
+      currentMypYear || mypYear,
+      currentRollNumber
     );
-  }, [currentStudentName, studentName, evidenceToken, currentMypYear, mypYear]);
+  }, [currentStudentName, studentName, evidenceToken, currentMypYear, mypYear, currentRollNumber]);
 
   const effectiveStudentName = canonicalStudent.canonicalName;
   const effectiveMypYear = canonicalStudent.mypYear;
   const effectiveToken = canonicalStudent.canonicalToken;
-  const studentId = canonicalStudent.studentId;
+  const studentId = canonicalStudent.studentId || currentRollNumber;
   const studentSubject = canonicalStudent.subject;
   const studentClassSection = canonicalStudent.classSection;
   const evidenceUrl = useMemo(() => {
     return getStudentEvidenceUrl(effectiveToken, effectiveStudentName, effectiveMypYear);
   }, [effectiveToken, effectiveStudentName, effectiveMypYear]);
 
-  // Filter logs for this specific student and academic year using robust canonical matching
+  // Filter logs for this specific student and academic year using exact Roll Number and canonical matching
   const studentLogs = useMemo(() => {
     return logs.filter((log) => {
-      const isStudentMatch =
-        isSameStudent(log.studentName || '', effectiveStudentName, log.mypYear, effectiveMypYear) ||
-        (studentId && log.studentId && log.studentId === studentId) ||
-        (log.evidenceToken && log.evidenceToken.toLowerCase() === effectiveToken.toLowerCase());
+      // 1. Exact Roll Number match (100% typo-proof across misspelled names)
+      const rollMatch = Boolean(
+        studentId &&
+        ((log.studentId && log.studentId.trim() === studentId.trim()) ||
+         (log.studentRollNumber && log.studentRollNumber.trim() === studentId.trim()) ||
+         (log.rollNumber && log.rollNumber.trim() === studentId.trim()))
+      );
 
+      // 2. Canonical / Name match
+      const nameMatch = isSameStudent(
+        log.studentName || '',
+        effectiveStudentName,
+        log.mypYear,
+        effectiveMypYear,
+        log.studentId || log.studentRollNumber || log.rollNumber,
+        studentId
+      );
+
+      // 3. Evidence token match
+      const tokenMatch = Boolean(
+        log.evidenceToken && log.evidenceToken.toLowerCase() === effectiveToken.toLowerCase()
+      );
+
+      const isStudentMatch = rollMatch || nameMatch || tokenMatch;
       const matchYear = !academicYear || !log.academicYear || log.academicYear === academicYear;
       return isStudentMatch && matchYear;
     });
@@ -408,6 +454,18 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
     return assignedTasksWithStatus.filter((t) => !t.isCompleted).length;
   }, [assignedTasksWithStatus]);
 
+  const completedAssignedCount = useMemo(() => {
+    return assignedTasksWithStatus.filter((t) => t.isCompleted).length;
+  }, [assignedTasksWithStatus]);
+
+  // Tasks filtered by folder tab: Active (To-Do) vs Completed (Done)
+  const displayedAssignedTasks = useMemo(() => {
+    if (assignedFolderFilter === 'completed') {
+      return assignedTasksWithStatus.filter((t) => t.isCompleted);
+    }
+    return assignedTasksWithStatus.filter((t) => !t.isCompleted);
+  }, [assignedTasksWithStatus, assignedFolderFilter]);
+
   // Filtered Evidence Logs for Portfolio
   const filteredEvidenceLogs = useMemo(() => {
     return studentLogs.filter((log) => {
@@ -540,9 +598,14 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
 
   // Start Solving an Assigned Task
   const handleStartAssignedTask = (task: AssignedTask) => {
-    if (!currentStudentName.trim() || currentStudentName.trim().toLowerCase() === 'student') {
+    if (
+      !currentStudentName.trim() ||
+      currentStudentName.trim().toLowerCase() === 'student' ||
+      !currentRollNumber.trim()
+    ) {
       setTaskPendingName(task);
       setTempNameInput(currentStudentName === 'Student' ? '' : currentStudentName);
+      setTempRollInput(currentRollNumber || '');
       setShowNameModal(true);
       return;
     }
@@ -571,8 +634,32 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
 
   const handleConfirmStudentNameAndStart = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    const finalName = tempNameInput.trim() || 'Student';
+    const finalRoll = tempRollInput.trim().replace(/\D/g, '');
+    const finalName = tempNameInput.trim();
     const finalClass = tempClassInput || currentMypYear || '3';
+
+    if (!finalRoll || finalRoll.length < 3) {
+      setErrorMessage('Please enter your official 4-digit Roll Number / Student ID.');
+      return;
+    }
+    if (!finalName || finalName.toLowerCase() === 'student') {
+      setErrorMessage('Please enter your full student name.');
+      return;
+    }
+
+    try {
+      localStorage.setItem('atl_current_student_roll_no', finalRoll);
+      localStorage.setItem('atl_current_student_name', finalName);
+      localStorage.setItem('atl_current_student_year', finalClass);
+    } catch (err) {}
+
+    // Check if custom student needs saving
+    const exists = ALL_STUDENTS_ROSTER.some((s) => s.id === finalRoll);
+    if (!exists) {
+      saveCustomStudent(finalName, finalClass, undefined, finalRoll);
+    }
+
+    setCurrentRollNumber(finalRoll);
     setCurrentStudentName(finalName);
     setCurrentMypYear(finalClass);
     setShowNameModal(false);
@@ -745,12 +832,18 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
 
       const allAttachments = Object.values(studentAttachments).flat();
 
+      const resolvedRoll = studentId || currentRollNumber || canonicalStudent.studentId;
+
       const newLog: ATLTaskLog = {
         id: `log_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
         date: new Date().toISOString().split('T')[0],
         academicYear,
         term: activeSolvingTask?.term || 'Term 1',
         studentName: effectiveStudentName,
+        studentId: resolvedRoll,
+        studentRollNumber: resolvedRoll,
+        rollNumber: resolvedRoll,
+        classSection: studentClassSection,
         subject: activeSolvingTask?.subject || practiceMeta.subject,
         topic: activeSolvingTask?.topic || practiceMeta.topic,
         mypYear: effectiveMypYear,
@@ -759,6 +852,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
         level: undefined,
         formativeScore: undefined,
         status: 'pending_review',
+        isGradeReleased: false,
         taskTitle: currentTask.title,
         skillIndicators: currentTask.skill_indicators || [
           'Demonstrates understanding of concepts',
@@ -783,7 +877,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
       };
 
       await onSaveTaskLog(newLog);
-      setSavedSuccessMsg('Work submitted successfully! Your teacher can now review, correct, and grade your task.');
+      setSavedSuccessMsg(`Work submitted successfully! Task "${currentTask.title}" has moved to your Completed Submissions Folder and is locked awaiting teacher evaluation.`);
       setTimeout(() => {
         setActiveSolvingTask(null);
         setCustomPracticeTask(null);
@@ -844,7 +938,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                 </span>
               )}
               <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 border border-blue-200/80 px-3 py-1 text-xs font-bold text-blue-900 font-mono shadow-2xs">
-                ID: {studentId}
+                Roll No: #{studentId || currentRollNumber || 'Required'}
               </span>
               <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600">
                 <Calendar className="h-3.5 w-3.5 text-slate-500" />
@@ -852,26 +946,33 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
               </span>
             </div>
 
-            {/* Student Name */}
+            {/* Student Name & Roll Number */}
             <div className="flex items-center gap-3.5 pt-1">
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-600 text-white font-black text-xl shrink-0 shadow-md">
                 {effectiveStudentName.charAt(0).toUpperCase()}
               </div>
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-slate-900">
                     {effectiveStudentName}
                   </h1>
+                  {studentId && (
+                    <span className="inline-flex items-center gap-1 rounded-xl bg-indigo-50 border border-indigo-200 px-2.5 py-1 text-xs font-mono font-bold text-indigo-700 shadow-2xs">
+                      <span>Roll No / ID:</span>
+                      <span className="font-black text-indigo-900">{studentId}</span>
+                    </span>
+                  )}
                   <button
                     type="button"
                     onClick={() => {
                       setTempNameInput(effectiveStudentName === 'Student' ? '' : effectiveStudentName);
+                      setTempRollInput(studentId || currentRollNumber || '');
                       setShowNameModal(true);
                     }}
-                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-bold text-indigo-600 hover:bg-indigo-50 transition-colors shadow-2xs cursor-pointer"
-                    title="Change or set your full name"
+                    className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-indigo-600 hover:bg-indigo-50 transition-colors shadow-2xs cursor-pointer flex items-center gap-1"
+                    title="Change or verify your name and roll number"
                   >
-                    Edit Name
+                    <span>Edit Name & Roll No</span>
                   </button>
                   <span className="text-xs font-bold px-2.5 py-0.5 rounded-lg bg-blue-100/80 text-blue-800 font-mono">
                     ATL Portal
@@ -1663,8 +1764,8 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                     onClick={() => setShowAllSchoolTasks((prev) => !prev)}
                     className={`inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-bold transition-all cursor-pointer shadow-2xs ${
                       showAllSchoolTasks
-                        ? 'border-purple-300 bg-purple-100 text-purple-900'
-                        : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50'
+                        ? "border-purple-300 bg-purple-100 text-purple-900"
+                        : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                     }`}
                   >
                     <Layers className="h-3.5 w-3.5 text-purple-600" />
@@ -1677,25 +1778,97 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                 </div>
               </div>
 
-              {assignedTasksWithStatus.length === 0 ? (
-                <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-12 text-center space-y-3">
-                  <CheckSquare className="mx-auto h-10 w-10 text-emerald-500" />
-                  <h3 className="text-base font-bold text-slate-800">All caught up! No pending assignments.</h3>
-                  <p className="text-xs text-slate-500 max-w-md mx-auto">
-                    Your teacher has not assigned any new common tasks right now. Once your teacher publishes a task for your class, it will appear here automatically.
-                  </p>
+              {/* Strict Folder View Toggle: Active Tasks (To-Do) vs Completed Tasks (Done) */}
+              <div className="flex items-center justify-between border-b border-slate-200 pb-3 flex-wrap gap-3">
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={() => setActiveTab('portfolio')}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-50 border border-indigo-200 px-4 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition-colors cursor-pointer mt-2"
+                    onClick={() => setAssignedFolderFilter('active')}
+                    className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all cursor-pointer ${
+                      assignedFolderFilter === 'active'
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
                   >
-                    <BookOpen className="h-3.5 w-3.5 text-indigo-600" />
-                    <span>View Completed Portfolio ({studentLogs.length})</span>
+                    <Clock className="h-3.5 w-3.5" />
+                    <span>Active Tasks (To-Do)</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                      assignedFolderFilter === 'active' ? 'bg-amber-400 text-slate-900' : 'bg-slate-200 text-slate-700'
+                    }`}>
+                      {pendingAssignedCount}
+                    </span>
                   </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setAssignedFolderFilter('completed')}
+                    className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-bold transition-all cursor-pointer ${
+                      assignedFolderFilter === 'completed'
+                        ? 'bg-emerald-600 text-white shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    <span>Completed Tasks Folder</span>
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                      assignedFolderFilter === 'completed' ? 'bg-white text-emerald-900' : 'bg-slate-200 text-slate-700'
+                    }`}>
+                      {completedAssignedCount}
+                    </span>
+                  </button>
+                </div>
+
+                <div className="text-xs text-slate-500 font-medium">
+                  {assignedFolderFilter === 'active' ? (
+                    <span>Tasks automatically move to Completed once you submit responses.</span>
+                  ) : (
+                    <span className="text-emerald-700 font-bold flex items-center gap-1">
+                      <Check className="h-3.5 w-3.5 text-emerald-600" />
+                      <span>{completedAssignedCount} completed task{completedAssignedCount === 1 ? '' : 's'} recorded & archived.</span>
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {displayedAssignedTasks.length === 0 ? (
+                <div className="rounded-3xl border border-dashed border-slate-200 bg-white p-12 text-center space-y-3">
+                  {assignedFolderFilter === 'active' ? (
+                    <>
+                      <CheckSquare className="mx-auto h-10 w-10 text-emerald-500" />
+                      <h3 className="text-base font-bold text-slate-800">All caught up! No active tasks to do.</h3>
+                      <p className="text-xs text-slate-500 max-w-md mx-auto">
+                        You have completed all assignments assigned to your class! All your completed work has moved to your Completed Tasks folder.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setAssignedFolderFilter('completed')}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-2 text-xs font-bold text-emerald-700 hover:bg-emerald-100 transition-colors cursor-pointer mt-2"
+                      >
+                        <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" />
+                        <span>View Completed Tasks Folder ({completedAssignedCount})</span>
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <Clock className="mx-auto h-10 w-10 text-slate-400" />
+                      <h3 className="text-base font-bold text-slate-800">No completed tasks yet in this folder</h3>
+                      <p className="text-xs text-slate-500 max-w-md mx-auto">
+                        As soon as you complete an assigned task and submit it to your teacher, it will automatically move here into your Completed Tasks Folder.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setAssignedFolderFilter('active')}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-50 border border-indigo-200 px-4 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-100 transition-colors cursor-pointer mt-2"
+                      >
+                        <ListTodo className="h-3.5 w-3.5 text-indigo-600" />
+                        <span>View Active Tasks To-Do ({pendingAssignedCount})</span>
+                      </button>
+                    </>
+                  )}
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {assignedTasksWithStatus.map((task) => (
+                  {displayedAssignedTasks.map((task) => (
                     <div
                       key={task.id}
                       className={`rounded-3xl border p-5 flex flex-col justify-between gap-4 transition-all ${
@@ -2226,8 +2399,8 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                 <div className="space-y-4">
                   {filteredEvidenceLogs.map((log) => {
                     const isExpanded = expandedLogId === log.id;
-                    const isGraded = isTaskLogGraded(log);
-                    const score = isGraded ? getTaskEffectiveScore(log) : undefined;
+                    const isPermittedAndGraded = isGradeReleasedToStudent(log);
+                    const score = isPermittedAndGraded ? getTaskEffectiveScore(log) : undefined;
 
                     return (
                       <div
@@ -2255,54 +2428,37 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                             </p>
                           </div>
 
-                          {/* Score & Attainment Badge & Delete */}
+                          {/* Score & Attainment Badge */}
                           <div className="flex flex-wrap items-center gap-2 shrink-0">
-                            {(log.teacherEvaluation?.badgeAwarded || log.badgeAwarded) && (
+                            {isPermittedAndGraded && (log.teacherEvaluation?.badgeAwarded || log.badgeAwarded) && (
                               <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-2xl bg-gradient-to-r from-amber-500/15 via-amber-400/20 to-orange-400/15 border border-amber-300 text-amber-900 font-bold text-xs shadow-2xs">
                                 <Trophy className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                                 <span>{(log.teacherEvaluation?.badgeAwarded || log.badgeAwarded)?.name}</span>
                               </div>
                             )}
 
-                            {isGraded ? (
+                            {isPermittedAndGraded ? (
                               <div className="flex items-center gap-2 rounded-2xl bg-indigo-50 border border-indigo-100 px-3.5 py-1.5">
                                 <div className="text-xl font-black text-indigo-700">{score}/8</div>
                                 <div className="text-left">
                                   <div className="text-[10px] font-bold text-indigo-800 uppercase">{log.level || 'Applying'}</div>
-                                  <div className="text-[9px] text-indigo-600">Teacher Graded</div>
+                                  <div className="text-[9px] text-indigo-600">Teacher Graded & Released</div>
                                 </div>
                               </div>
                             ) : (
                               <div className="flex items-center gap-2 rounded-2xl bg-amber-50 border border-amber-200 px-3.5 py-1.5 text-amber-800">
-                                <Clock className="w-4 h-4 text-amber-600 animate-pulse" />
+                                <Lock className="w-4 h-4 text-amber-600" />
                                 <div className="text-left">
-                                  <div className="text-[10px] font-bold text-amber-900 uppercase">Awaiting Grade</div>
-                                  <div className="text-[9px] text-amber-700">Submitted to Teacher</div>
+                                  <div className="text-[10px] font-bold text-amber-900 uppercase">Under Teacher Review</div>
+                                  <div className="text-[9px] text-amber-700">Grades & Corrections Locked</div>
                                 </div>
                               </div>
-                            )}
-
-                            {onDeleteLog && (
-                              <button
-                                type="button"
-                                onClick={async (e) => {
-                                  e.stopPropagation();
-                                  if (window.confirm(`Permanently delete this submitted work record for "${log.taskTitle || log.topic}"?`)) {
-                                    await onDeleteLog(log.id);
-                                  }
-                                }}
-                                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-2xl border border-slate-200 bg-white hover:bg-rose-50 hover:border-rose-200 text-slate-400 hover:text-rose-600 transition-colors text-xs font-semibold cursor-pointer shadow-2xs"
-                                title="Delete this submission record"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                                <span>Delete Submission</span>
-                              </button>
                             )}
                           </div>
                         </div>
 
                         {/* Teacher Written Feedback & Scientific Guidance */}
-                        {(log.teacherEvaluation?.feedback || log.feedback?.summary) && (() => {
+                        {isPermittedAndGraded && (log.teacherEvaluation?.feedback || log.feedback?.summary) && (() => {
                           const comment = formatTeacherComment(log.teacherEvaluation?.feedback || log.feedback?.summary);
                           if (!comment) return null;
                           return (
@@ -2323,6 +2479,20 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                             </div>
                           );
                         })()}
+
+                        {!isPermittedAndGraded && (
+                          <div className="rounded-2xl border border-amber-200/80 bg-amber-50/50 p-3.5 flex items-start gap-2.5">
+                            <Lock className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                            <div className="space-y-0.5">
+                              <div className="text-xs font-bold text-amber-900">
+                                Locked Under Teacher Review
+                              </div>
+                              <p className="text-[11px] text-amber-700 leading-relaxed font-medium">
+                                Your answers have been recorded and locked for teacher grading. Formative scores, criteria rubrics, and teacher scientific corrections will become visible as soon as your teacher finishes marking your work and grants permission to view grades.
+                              </p>
+                            </div>
+                          </div>
+                        )}
 
                         {/* Metacognitive Reflection if logged */}
                         {log.studentReflection && (
@@ -2352,24 +2522,6 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                                       <div className="font-bold text-slate-800">
                                         Part {resp.label}: {resp.prompt}
                                       </div>
-                                      {onUpdateTaskLog && (
-                                        <button
-                                          type="button"
-                                          onClick={async (e) => {
-                                            e.stopPropagation();
-                                            const pLabel = resp.label || String(rIdx + 1);
-                                            if (window.confirm(`Are you sure you want to delete Question Part ${pLabel} from this submitted work?\n\nThis will remove the question prompt and recorded response from this submission.`)) {
-                                              const updated = log.responses!.filter((_, i) => i !== rIdx);
-                                              await onUpdateTaskLog(log.id, { responses: updated });
-                                            }
-                                          }}
-                                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer shrink-0"
-                                          title={`Delete Question Part ${resp.label || rIdx + 1} from this submission`}
-                                        >
-                                          <Trash2 className="w-3 h-3" />
-                                          <span>Delete Part</span>
-                                        </button>
-                                      )}
                                     </div>
                                     {resp.claim || resp.evidence || resp.reasoning ? (
                                       <div className="space-y-1.5 pt-1">
@@ -2402,36 +2554,38 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                               </div>
                             )}
 
-                            {/* Strengths & Next Steps */}
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                              {log.feedback?.strengths && log.feedback.strengths.length > 0 && (
-                                <div className="rounded-xl bg-emerald-50/60 border border-emerald-200 p-3 space-y-1">
-                                  <span className="text-[10px] font-bold uppercase text-emerald-800 flex items-center gap-1">
-                                    <Check className="h-3 w-3 text-emerald-600" />
-                                    <span>What You Did Well:</span>
-                                  </span>
-                                  <ul className="text-xs text-slate-700 space-y-1">
-                                    {log.feedback.strengths.map((s, idx) => (
-                                      <li key={idx}>• {formatTeacherComment(s)}</li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              )}
+                            {/* Strengths & Next Steps (Only shown when permission is granted) */}
+                            {isPermittedAndGraded && (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                                {log.feedback?.strengths && log.feedback.strengths.length > 0 && (
+                                  <div className="rounded-xl bg-emerald-50/60 border border-emerald-200 p-3 space-y-1">
+                                    <span className="text-[10px] font-bold uppercase text-emerald-800 flex items-center gap-1">
+                                      <Check className="h-3 w-3 text-emerald-600" />
+                                      <span>What You Did Well:</span>
+                                    </span>
+                                    <ul className="text-xs text-slate-700 space-y-1">
+                                      {log.feedback.strengths.map((s, idx) => (
+                                        <li key={idx}>• {formatTeacherComment(s)}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
 
-                              {log.feedback?.next_steps && log.feedback.next_steps.length > 0 && (
-                                <div className="rounded-xl bg-amber-50/60 border border-amber-200 p-3 space-y-1">
-                                  <span className="text-[10px] font-bold uppercase text-amber-800 flex items-center gap-1">
-                                    <Target className="h-3 w-3 text-amber-600" />
-                                    <span>Identified Errors & Scientific Corrections:</span>
-                                  </span>
-                                  <ul className="text-xs text-slate-700 space-y-1">
-                                    {log.feedback.next_steps.map((n, idx) => (
-                                      <li key={idx}>• {formatTeacherComment(n)}</li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              )}
-                            </div>
+                                {log.feedback?.next_steps && log.feedback.next_steps.length > 0 && (
+                                  <div className="rounded-xl bg-amber-50/60 border border-amber-200 p-3 space-y-1">
+                                    <span className="text-[10px] font-bold uppercase text-amber-800 flex items-center gap-1">
+                                      <Target className="h-3 w-3 text-amber-600" />
+                                      <span>Identified Errors & Scientific Corrections:</span>
+                                    </span>
+                                    <ul className="text-xs text-slate-700 space-y-1">
+                                      {log.feedback.next_steps.map((n, idx) => (
+                                        <li key={idx}>• {formatTeacherComment(n)}</li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                              </div>
+                            )}
 
                             {/* Export Single Log Report */}
                             <div className="flex items-center justify-end gap-2 pt-2">
@@ -2520,18 +2674,6 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                               <Eye className="h-3.5 w-3.5 text-indigo-600" />
                               <span>View Complete Task</span>
                             </button>
-
-                            {onUpdateTaskLog && (
-                              <button
-                                type="button"
-                                onClick={() => setGradingModalLog(log)}
-                                className="inline-flex items-center gap-1.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 px-3 py-1.5 text-xs font-bold hover:bg-amber-100 transition-colors cursor-pointer shadow-2xs"
-                                title="Teacher evaluation, corrections, and badge awarding"
-                              >
-                                <Award className="h-3.5 w-3.5 text-amber-600" />
-                                <span>Teacher Grade & Badge</span>
-                              </button>
-                            )}
                           </div>
 
                           <button
@@ -2596,8 +2738,38 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
 
             <form onSubmit={handleConfirmStudentNameAndStart} className="space-y-4 pt-1">
               <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1.5 flex items-center justify-between">
+                  <span>Student Roll Number / Student ID</span>
+                  <span className="text-[10px] text-indigo-600 font-bold uppercase tracking-wider">Required (4 Digits)</span>
+                </label>
+                <input
+                  type="text"
+                  value={tempRollInput}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setTempRollInput(raw);
+                    const clean = raw.trim().replace(/\D/g, '');
+                    if (clean.length >= 3) {
+                      const matched = findStudentByRollNumber(clean, tempClassInput);
+                      if (matched && matched.canonicalName) {
+                        setTempNameInput(matched.canonicalName);
+                        if (matched.mypYear) setTempClassInput(matched.mypYear);
+                      }
+                    }
+                  }}
+                  placeholder="Enter your 4-digit Roll Number (e.g. 8588)..."
+                  className="w-full rounded-xl border border-slate-300 bg-slate-50 p-3 text-sm font-mono font-bold text-slate-900 focus:bg-white focus:border-indigo-600 focus:outline-none"
+                  autoFocus
+                  required
+                />
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Typing your official Roll Number automatically looks up and verifies your registered name.
+                </p>
+              </div>
+
+              <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1.5">
-                  Student Name (e.g. Maya Chen)
+                  Student Full Name (e.g. SHRESTH RUIA)
                 </label>
                 <input
                   type="text"
@@ -2605,7 +2777,6 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
                   onChange={(e) => setTempNameInput(e.target.value)}
                   placeholder="Enter your first and last name..."
                   className="w-full rounded-xl border border-slate-300 bg-slate-50 p-3 text-sm font-semibold text-slate-900 focus:bg-white focus:border-indigo-600 focus:outline-none"
-                  autoFocus
                   required
                 />
               </div>
@@ -2901,55 +3072,9 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
           isOpen={!!detailModalLog}
           onClose={() => setDetailModalLog(null)}
           log={detailModalLog}
-          isTeacherView={true}
-          onUpdateLog={onUpdateTaskLog}
-          onGradeClick={
-            onUpdateTaskLog
-              ? () => {
-                  const targetLog = detailModalLog;
-                  setDetailModalLog(null);
-                  setGradingModalLog(targetLog);
-                }
-              : undefined
-          }
-        />
-      )}
-
-      {/* ========================================================================= */}
-      {/* TEACHER GRADING, CORRECTION & BADGE AWARDING MODAL */}
-      {/* ========================================================================= */}
-      {gradingModalLog && (
-        <TeacherGradingModal
-          isOpen={!!gradingModalLog}
-          onClose={() => setGradingModalLog(null)}
-          log={gradingModalLog}
-          onUpdateTaskLog={onUpdateTaskLog}
-          onDeleteLog={onDeleteLog}
-          onSaveGrade={async (evalData, badge) => {
-            if (gradingModalLog && onUpdateTaskLog) {
-              const finalScore = evalData.formativeScore ?? (evalData as any).score ?? 5;
-              await onUpdateTaskLog(gradingModalLog.id, {
-                formativeScore: finalScore,
-                level: evalData.level,
-                status: 'graded',
-                feedback: {
-                  formativeScore: finalScore,
-                  level: evalData.level,
-                  summary: evalData.feedback || (evalData as any).overallFeedback || 'Teacher evaluation completed.',
-                  strengths: evalData.strengths || [],
-                  next_steps: evalData.nextSteps || [],
-                  rubric_matrix: (evalData as any).rubricMatrix || []
-                },
-                teacherEvaluation: {
-                  ...evalData,
-                  formativeScore: finalScore,
-                  badgeAwarded: badge
-                },
-                badgeAwarded: badge || gradingModalLog.badgeAwarded
-              });
-            }
-            setGradingModalLog(null);
-          }}
+          isTeacherView={false}
+          onUpdateLog={undefined}
+          onGradeClick={undefined}
         />
       )}
 
