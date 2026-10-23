@@ -86,6 +86,7 @@ export const ToddleLinkManagerModal: React.FC<ToddleLinkManagerModalProps> = ({
   onOpenStudentPortal
 }) => {
   const [selectedClass, setSelectedClass] = useState<string>('All');
+  const [selectedSection, setSelectedSection] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedAll, setCopiedAll] = useState<boolean>(false);
@@ -115,17 +116,26 @@ export const ToddleLinkManagerModal: React.FC<ToddleLinkManagerModalProps> = ({
     return buildStudentEvidenceRoster(logs, academicYear, sampleStudents);
   }, [logs, academicYear, sampleStudents, rosterRefreshKey]);
 
-  // Filter roster by class and search
+  // Filter roster by class, section, and search
   const filteredRoster = useMemo(() => {
     return fullRoster.filter((item) => {
       const matchClass = selectedClass === 'All' || item.mypYear === selectedClass || `MYP ${item.mypYear}` === selectedClass;
+      
+      let matchSection = true;
+      if (selectedSection !== 'All') {
+        const itemSec = (item.classSection || '').toUpperCase();
+        matchSection = itemSec.includes(selectedSection.toUpperCase());
+      }
+
       const matchSearch = !searchQuery ||
         item.studentName.toLowerCase().includes(searchQuery.toLowerCase()) ||
         item.evidenceToken.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (item.studentId && item.studentId.toLowerCase().includes(searchQuery.toLowerCase()));
-      return matchClass && matchSearch;
+        (item.studentId && item.studentId.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (item.classSection && item.classSection.toLowerCase().includes(searchQuery.toLowerCase()));
+
+      return matchClass && matchSection && matchSearch;
     });
-  }, [fullRoster, selectedClass, searchQuery]);
+  }, [fullRoster, selectedClass, selectedSection, searchQuery]);
 
   // Class counts summary
   const classSummary = useMemo(() => {
@@ -254,7 +264,7 @@ export const ToddleLinkManagerModal: React.FC<ToddleLinkManagerModalProps> = ({
                 </span>
                 <span className="rounded-full bg-purple-100 text-purple-800 px-2.5 py-0.5 text-[11px] font-bold flex items-center gap-1">
                   <Globe className="h-3 w-3 text-purple-600" />
-                  <span>Vercel Hosted: edu-tn-43-myp-atl-skills-workbench</span>
+                  <span>Live Student Links Active</span>
                 </span>
               </div>
               <h2 className="text-xl font-bold text-slate-900 tracking-tight">
@@ -300,15 +310,30 @@ export const ToddleLinkManagerModal: React.FC<ToddleLinkManagerModalProps> = ({
                   <Settings className="h-3 w-3" />
                   <span>Change Domain</span>
                 </button>
-                {getConfiguredBaseUrl() !== DEFAULT_PRODUCTION_URL && (
-                  <button
-                    type="button"
-                    onClick={handleResetToVercel}
-                    className="text-[11px] font-bold text-slate-500 hover:text-slate-800 underline cursor-pointer"
-                  >
-                    Reset to Vercel
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof window !== 'undefined' && window.location.origin) {
+                      const origin = window.location.origin;
+                      setBaseUrlInput(origin);
+                      setConfiguredBaseUrl(origin);
+                      setBaseUrlSavedMsg(true);
+                      setRosterRefreshKey((k) => k + 1);
+                      setTimeout(() => setBaseUrlSavedMsg(false), 3000);
+                    }
+                  }}
+                  className="text-[11px] font-bold text-emerald-700 hover:text-emerald-900 underline cursor-pointer"
+                  title="Force base URL to match current browser origin"
+                >
+                  Use Live App Origin
+                </button>
+                <button
+                  type="button"
+                  onClick={handleResetToVercel}
+                  className="text-[11px] font-bold text-slate-500 hover:text-slate-800 underline cursor-pointer"
+                >
+                  Reset to Vercel
+                </button>
               </>
             ) : (
               <form onSubmit={handleSaveBaseUrl} className="flex items-center gap-1.5 animate-in fade-in">
@@ -342,32 +367,85 @@ export const ToddleLinkManagerModal: React.FC<ToddleLinkManagerModalProps> = ({
         <div className="p-5 border-b border-slate-100 bg-white space-y-4">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             {/* Class Tabs */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-              <button
-                type="button"
-                onClick={() => setSelectedClass('All')}
-                className={`rounded-xl px-3 py-1.5 text-xs font-bold transition-all shrink-0 cursor-pointer ${
-                  selectedClass === 'All'
-                    ? 'bg-blue-600 text-white shadow-2xs'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                }`}
-              >
-                All Classes ({fullRoster.length})
-              </button>
-              {['1', '2', '3', '4', '5'].map((yr) => (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
                 <button
-                  key={yr}
                   type="button"
-                  onClick={() => setSelectedClass(yr)}
+                  onClick={() => { setSelectedClass('All'); setSelectedSection('All'); }}
                   className={`rounded-xl px-3 py-1.5 text-xs font-bold transition-all shrink-0 cursor-pointer ${
-                    selectedClass === yr
+                    selectedClass === 'All'
                       ? 'bg-blue-600 text-white shadow-2xs'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                   }`}
                 >
-                  MYP {yr} ({classSummary[yr] || 0})
+                  All Classes ({fullRoster.length})
                 </button>
-              ))}
+                {['1', '2', '3', '4', '5'].map((yr) => (
+                  <button
+                    key={yr}
+                    type="button"
+                    onClick={() => { setSelectedClass(yr); setSelectedSection('All'); }}
+                    className={`rounded-xl px-3 py-1.5 text-xs font-bold transition-all shrink-0 cursor-pointer ${
+                      selectedClass === yr
+                        ? 'bg-blue-600 text-white shadow-2xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    MYP {yr} ({classSummary[yr] || 0})
+                  </button>
+                ))}
+              </div>
+
+              {/* Section Filter Pills for MYP 4 */}
+              {selectedClass === '4' && (
+                <div className="flex items-center gap-1.5 animate-in fade-in">
+                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mr-1">Section:</span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSection('All')}
+                    className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition-all cursor-pointer ${
+                      selectedSection === 'All'
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    All MYP 4
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSection('4A')}
+                    className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition-all cursor-pointer ${
+                      selectedSection === '4A'
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    MYP 4A
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSection('4B')}
+                    className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition-all cursor-pointer ${
+                      selectedSection === '4B'
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    MYP 4B
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSection('4C')}
+                    className={`rounded-lg px-2.5 py-1 text-[11px] font-bold transition-all cursor-pointer ${
+                      selectedSection === '4C'
+                        ? 'bg-emerald-600 text-white shadow-2xs'
+                        : 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100'
+                    }`}
+                  >
+                    MYP 4C (7 Students)
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Action Buttons */}

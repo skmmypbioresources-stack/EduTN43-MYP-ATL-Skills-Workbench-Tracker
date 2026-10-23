@@ -209,13 +209,29 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
   const [tempNameInput, setTempNameInput] = useState<string>(() => currentStudentName);
   const [tempClassInput, setTempClassInput] = useState<string>(() => mypYear || '3');
 
-  // Keep currentMypYear in sync if mypYear prop changes
+  // Keep student identity and class year in sync if props change (from direct URL or Toddle link)
   useEffect(() => {
-    if (mypYear) {
+    if (studentName && studentName !== 'Student') {
+      const canonical = findCanonicalStudent(studentName, mypYear);
+      setCurrentStudentName(canonical.canonicalName);
+      setCurrentRollNumber(canonical.studentId);
+      setCurrentMypYear(canonical.mypYear);
+      setTempNameInput(canonical.canonicalName);
+      setTempRollInput(canonical.studentId);
+      setTempClassInput(canonical.mypYear);
+    } else if (evidenceToken && evidenceToken !== 'student-portal') {
+      const canonical = findCanonicalStudent(evidenceToken, mypYear);
+      setCurrentStudentName(canonical.canonicalName);
+      setCurrentRollNumber(canonical.studentId);
+      setCurrentMypYear(canonical.mypYear);
+      setTempNameInput(canonical.canonicalName);
+      setTempRollInput(canonical.studentId);
+      setTempClassInput(canonical.mypYear);
+    } else if (mypYear) {
       setCurrentMypYear(mypYear);
       setTempClassInput(mypYear);
     }
-  }, [mypYear]);
+  }, [studentName, evidenceToken, mypYear]);
 
   // Filter States for Evidence Portfolio
   const [selectedSubject, setSelectedSubject] = useState<string>('All');
@@ -379,22 +395,35 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
 
       // 1. If targeted to specific students:
       if (hasSpecificTargetStudents) {
-        return t.targetStudentNames!.some((n) =>
-          isSameStudent(n, effectiveStudentName, t.mypYear, effectiveMypYear) ||
-          (studentId && n.includes(studentId)) ||
-          n.trim().toLowerCase() === effectiveStudentName.trim().toLowerCase()
-        );
+        return t.targetStudentNames!.some((n) => {
+          const cleanTarget = (n || '').trim().toLowerCase();
+          const cleanEffective = effectiveStudentName.trim().toLowerCase();
+          if (cleanTarget === cleanEffective) return true;
+          if (studentId && cleanTarget.includes(studentId)) return true;
+          if (canonicalStudent.aliases && canonicalStudent.aliases.some((a) => cleanTarget === a.toLowerCase() || cleanTarget.includes(a.toLowerCase()))) {
+            return true;
+          }
+          return isSameStudent(n, effectiveStudentName, t.mypYear, effectiveMypYear, undefined, studentId);
+        });
       }
 
       // 2. Class / Whole School matching (for tasks without specific individual targets):
       const cleanTaskYear = t.mypYear ? normalizeMypYear(t.mypYear) : '';
-      const isClassMatch =
+      const isYearMatch =
         t.mypYear === 'All' ||
         !t.mypYear ||
         cleanTaskYear === cleanStudentYear ||
         cleanTaskYear === '';
 
-      return isClassMatch;
+      // Section-level check: if task explicitly specifies a class section (e.g. "MYP 4C" or "4C")
+      const taskSection = ((t as any).classSection || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      const studentSec = (studentClassSection || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (taskSection && taskSection !== 'all' && studentSec) {
+        if (taskSection === studentSec) return true;
+        // If task is general 'myp4' and student is 'myp4c', year match handles it
+      }
+
+      return isYearMatch;
     });
 
     if (matched.length === 0) {
@@ -411,7 +440,7 @@ export const StudentEvidenceView: React.FC<StudentEvidenceViewProps> = ({
     }
 
     return matched;
-  }, [assignedTasks, effectiveMypYear, effectiveStudentName, studentId, showAllSchoolTasks]);
+  }, [assignedTasks, effectiveMypYear, effectiveStudentName, studentId, studentClassSection, canonicalStudent.aliases, showAllSchoolTasks]);
 
   // Check completion status for assigned tasks
   const assignedTasksWithStatus = useMemo(() => {

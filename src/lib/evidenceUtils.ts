@@ -15,13 +15,8 @@ export function getConfiguredBaseUrl(): string {
     const saved = localStorage.getItem(CUSTOM_BASE_URL_KEY);
     if (saved && saved.trim()) {
       const cleanSaved = saved.trim().replace(/\/+$/, '');
-      // If the saved URL is a temporary dev container or localhost, discard it
-      if (
-        !cleanSaved.includes('run.app') &&
-        !cleanSaved.includes('localhost') &&
-        !cleanSaved.includes('127.0.0.1') &&
-        !cleanSaved.includes('ai.studio')
-      ) {
+      // If the user configured an explicit custom URL that is not the broken default, return it
+      if (cleanSaved !== DEFAULT_PRODUCTION_URL) {
         return cleanSaved;
       }
     }
@@ -29,22 +24,15 @@ export function getConfiguredBaseUrl(): string {
     console.error('Failed to read custom base URL:', e);
   }
 
-  // If the user is currently browsing on a live non-sandbox custom domain (e.g. on Vercel), use that origin
+  // Live auto-detection: Return current window origin & pathname (e.g. *.run.app in AI Studio or school domain)
   if (typeof window !== 'undefined' && window.location && window.location.origin) {
-    const origin = window.location.origin.replace(/\/+$/, '');
-    const isSandboxOrDev =
-      origin.includes('localhost') ||
-      origin.includes('run.app') ||
-      origin.includes('ai.studio') ||
-      origin.includes('webcontainer') ||
-      origin.includes('127.0.0.1') ||
-      origin === 'null';
-    if (!isSandboxOrDev && origin.startsWith('http')) {
-      return origin;
+    const { origin, pathname } = window.location;
+    if (origin && origin !== 'null') {
+      const cleanPath = pathname === '/' || !pathname ? '' : pathname.replace(/\/+$/, '');
+      return `${origin}${cleanPath}`;
     }
   }
 
-  // Default to the official live Vercel production URL for all student and Toddle links
   return DEFAULT_PRODUCTION_URL;
 }
 
@@ -438,13 +426,18 @@ export function findCanonicalStudent(
     const finalSubject = subject || 'Science • Biology';
     const canonicalToken = computeCanonicalToken(canonicalName, studentId, mypYear);
 
+    const extraCandidateAliases = [...extraAliases];
+    if (studentId === '7767' || canonicalName.toUpperCase().includes('VIVAAN') || canonicalName.toUpperCase().includes('VIHAAN')) {
+      extraCandidateAliases.push('vihaan', 'vihaan sangiliraj', 'vivaan', 'vivaan sangiliraj', '7767');
+    }
+
     const aliases = Array.from(new Set([
       canonicalName.toLowerCase(),
       studentId,
       canonicalToken.toLowerCase(),
       slugifyStudentName(canonicalName),
       ...canonicalName.toLowerCase().split(/\s+/),
-      ...extraAliases.map((a) => a.toLowerCase().trim())
+      ...extraCandidateAliases.map((a) => a.toLowerCase().trim())
     ])).filter(Boolean);
 
     const info: CanonicalStudentInfo = {
@@ -476,6 +469,23 @@ export function findCanonicalStudent(
   // If empty or default generic, return student fallback
   if (!clean || lower === 'student') {
     return buildCanonical('Student', '0000', cleanYear || '2', 'MYP 2C', 'Science • Biology');
+  }
+
+  // 0. Extract any 4-digit sequence from the identifier (e.g. "8440 miraya", "vihaan 7767", "neel 8046", "8668", "8084", "8294", "8378")
+  const extracted4Digit = clean.match(/\b\d{4}\b/)?.[0];
+  if (extracted4Digit) {
+    const officialById = ALL_STUDENTS_ROSTER.find((s) => s.id === extracted4Digit);
+    if (officialById) {
+      const canonYear = (officialById.mypYear || cleanYear || '2').replace(/\D/g, '') || '2';
+      return buildCanonical(
+        officialById.name,
+        officialById.id,
+        canonYear,
+        officialById.classSection,
+        officialById.subject,
+        [clean, officialById.name.toLowerCase(), extracted4Digit]
+      );
+    }
   }
 
   // 1. Direct match on 4-digit Student ID in official roster
@@ -689,20 +699,14 @@ export function getAppBaseUrl(preferProduction: boolean = true): string {
     const configured = getConfiguredBaseUrl();
     if (configured) return configured;
   }
-  if (typeof window === 'undefined') return DEFAULT_PRODUCTION_URL;
-  const { protocol, host, pathname } = window.location;
-  if (
-    host.includes('run.app') ||
-    host.includes('localhost') ||
-    host.includes('ai.studio') ||
-    host.includes('127.0.0.1') ||
-    host.includes('webcontainer')
-  ) {
-    return DEFAULT_PRODUCTION_URL;
+  if (typeof window !== 'undefined' && window.location && window.location.origin) {
+    const { origin, pathname } = window.location;
+    if (origin && origin !== 'null') {
+      const cleanPath = pathname === '/' || !pathname ? '' : pathname.replace(/\/+$/, '');
+      return `${origin}${cleanPath}`;
+    }
   }
-  // Ensure we get clean origin and pathname
-  const cleanPath = pathname === '/' ? '' : pathname;
-  return `${protocol}//${host}${cleanPath}`;
+  return DEFAULT_PRODUCTION_URL;
 }
 
 /**
